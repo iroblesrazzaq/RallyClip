@@ -28,49 +28,48 @@ SKELETON_EDGES = {
     (12, 14): 'c', (14, 16): 'c'
 }
 
-def draw_keypoints(frame, keypoints, confidence_threshold=0.3):
+def draw_keypoints(frame, keypoints, color, confidence_threshold=0.3):
     """Draws keypoints on the frame."""
     y, x, _ = frame.shape
     for kp in keypoints:
         ky, kx, kp_conf = kp
         if kp_conf > confidence_threshold:
-            cv2.circle(frame, (int(kx * x), int(ky * y)), 4, (0, 255, 0), -1)
+            cv2.circle(frame, (int(kx * x), int(ky * y)), 4, color, -1)
 
-def draw_skeleton(frame, keypoints, confidence_threshold=0.3):
+def draw_skeleton(frame, keypoints, color, confidence_threshold=0.3):
     """Draws the skeleton on the frame."""
     y, x, _ = frame.shape
-    for edge, color in SKELETON_EDGES.items():
-        p1, p2 = edge
-        y1, x1, c1 = keypoints[p1]
-        y2, x2, c2 = keypoints[p2]
-        
-        if c1 > confidence_threshold and c2 > confidence_threshold:
-            cv2.line(frame, (int(x1 * x), int(y1 * y)), (int(x2 * x), int(y2 * y)), (0, 255, 255), 2)
-
-def draw_keypoints_absolute(frame, keypoints, color, confidence_threshold=0.3):
-    """Draws keypoints on the frame using absolute coordinates."""
-    height, width, _ = frame.shape
-    for kp in keypoints:
-        ky, kx, kp_conf = kp
-        if kp_conf > confidence_threshold:
-            cv2.circle(frame, (int(kx * width), int(ky * height)), 4, color, -1)
-
-def draw_skeleton_absolute(frame, keypoints, color, confidence_threshold=0.3):
-    """Draws the skeleton on the frame using absolute coordinates."""
-    height, width, _ = frame.shape
     for edge, _ in SKELETON_EDGES.items():
         p1, p2 = edge
         y1, x1, c1 = keypoints[p1]
         y2, x2, c2 = keypoints[p2]
         
         if c1 > confidence_threshold and c2 > confidence_threshold:
-            cv2.line(frame, (int(x1 * width), int(y1 * height)), (int(x2 * width), int(y2 * height)), color, 2)
+            cv2.line(frame, (int(x1 * x), int(y1 * y)), (int(x2 * x), int(y2 * y)), color, 2)
+
+def draw_keypoints_absolute(frame, keypoints, color, confidence_threshold=0.3):
+    """Draws keypoints on the frame using absolute coordinates."""
+    for kp in keypoints:
+        ky, kx, kp_conf = kp
+        if kp_conf > confidence_threshold:
+            cv2.circle(frame, (int(kx), int(ky)), 4, color, -1)
+
+def draw_skeleton_absolute(frame, keypoints, color, confidence_threshold=0.3):
+    """Draws the skeleton on the frame using absolute coordinates."""
+    for edge, _ in SKELETON_EDGES.items():
+        p1, p2 = edge
+        y1, x1, c1 = keypoints[p1]
+        y2, x2, c2 = keypoints[p2]
+        
+        if c1 > confidence_threshold and c2 > confidence_threshold:
+            cv2.line(frame, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
 
 # --- Main Processing Loop ---
 video = cv2.VideoCapture(VIDEO_PATH)
 fps = video.get(cv2.CAP_PROP_FPS)
 width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+screen_center_x = width / 2
 frame_limit = int(fps * SECONDS_TO_PROCESS)
 
 # Setup video writer to save the output
@@ -80,9 +79,10 @@ out = cv2.VideoWriter(OUTPUT_VIDEO_PATH, fourcc, fps, (width, height))
 print(f"🏃‍♂️ Starting dual-player video processing for {SECONDS_TO_PROCESS} seconds...")
 frame_count = 0
 
-# Initialize player role assignments for tracking
-far_player_id = None
-near_player_id = None
+# --- Stateful Tracking Initialization ---
+# Store the last known track IDs
+last_far_player_id = None
+last_near_player_id = None
 
 while video.isOpened() and frame_count < frame_limit:
     success, frame = video.read()
@@ -92,26 +92,62 @@ while video.isOpened() and frame_count < frame_limit:
     # 1. Track players with YOLO (using tracking instead of detection)
     results = yolo_model.track(frame, persist=True, classes=[0], verbose=False)
 
-    # 2. Assign player roles on first few frames
-    if far_player_id is None and results[0].boxes is not None and results[0].boxes.id is not None:
-        # Find players and assign roles based on position
-        players = []
-        for i, box in enumerate(results[0].boxes):
+    # --- STATEFUL HEURISTIC DYNAMIC ROLE ASSIGNMENT ---
+
+    # 1. Initialize current frame IDs to None
+    far_player_id = None
+    near_player_id = None
+
+    # 2. Filter all detected persons to find plausible candidates for our match.
+    candidate_players = []
+    # Create a dictionary of current candidates for quick lookups by track_id
+    current_candidates_map = {}
+
+    if results[0].boxes is not None and results[0].boxes.id is not None:
+        for box in results[0].boxes:
             if box.id is not None:
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
                 track_id = int(box.id.cpu().numpy()[0])
-                players.append((track_id, y1))  # (id, y_position)
-        
-        if len(players) >= 2:
-            # Sort by y position (lowest y = highest on screen = far player)
-            players.sort(key=lambda x: x[1])
-            far_player_id = players[0][0]  # Highest on screen (lowest y)
-            near_player_id = players[1][0]  # Lowest on screen (highest y)
-            print(f"🎾 Assigned player roles: Far player ID={far_player_id} (Blue), Near player ID={near_player_id} (Green)")
-        elif len(players) == 1:
-            # Only one player detected, assign as far player for now
-            far_player_id = players[0][0]
-            print(f"🎾 Only one player detected: Far player ID={far_player_id} (Blue)")
+                
+                # We no longer need a strict centrality filter, but can keep a loose one
+                # to discard very obvious outliers if needed. For now, let's trust the memory.
+                
+                box_area = (x2 - x1) * (y2 - y1)
+                player_data = {
+                    "track_id": track_id, "y1": y1, "y2": y2, "area": box_area
+                }
+                candidate_players.append(player_data)
+                current_candidates_map[track_id] = player_data
+
+    # 3. --- Re-acquisition Step (Priority 1) ---
+    # Try to find the players we were tracking in the last frame.
+    if last_far_player_id in current_candidates_map:
+        far_player_id = last_far_player_id
+    if last_near_player_id in current_candidates_map:
+        near_player_id = last_near_player_id
+
+    # 4. --- Heuristic Acquisition Step (Priority 2) ---
+    # If any player is still missing, try to find them using heuristics among the *unassigned* candidates.
+    unassigned_candidates = [p for p in candidate_players if p['track_id'] not in [far_player_id, near_player_id]]
+
+    if far_player_id is None and len(unassigned_candidates) > 0:
+        # Find far player: highest on screen.
+        unassigned_candidates.sort(key=lambda p: p['y1'])
+        far_player_id = unassigned_candidates[0]['track_id']
+        # Remove the newly assigned player from the pool
+        unassigned_candidates = [p for p in unassigned_candidates if p['track_id'] != far_player_id]
+
+    if near_player_id is None and len(unassigned_candidates) > 0:
+        # Find near player: largest bounding box among what's left.
+        unassigned_candidates.sort(key=lambda p: p['area'], reverse=True)
+        near_player_id = unassigned_candidates[0]['track_id']
+
+    # 5. --- Update Memory for Next Frame ---
+    # This ensures the "stickiness" of the tracking.
+    last_far_player_id = far_player_id
+    last_near_player_id = near_player_id
+
+    # --- END STATEFUL ASSIGNMENT ---
 
     # 3. Process and visualize both players
     if results[0].boxes is not None and results[0].boxes.id is not None:
@@ -150,8 +186,8 @@ while video.isOpened() and frame_count < frame_limit:
 
                         # Convert relative keypoints to absolute coordinates for drawing on full frame
                         keypoints_absolute = np.zeros_like(keypoints_relative)
-                        keypoints_absolute[:, 0] = keypoints_relative[:, 0] * (y2 - y1) / height + y1 / height  # y-coordinate
-                        keypoints_absolute[:, 1] = keypoints_relative[:, 1] * (x2 - x1) / width + x1 / width   # x-coordinate
+                        keypoints_absolute[:, 0] = keypoints_relative[:, 0] * (y2 - y1) + y1  # y-coordinate
+                        keypoints_absolute[:, 1] = keypoints_relative[:, 1] * (x2 - x1) + x1  # x-coordinate
                         keypoints_absolute[:, 2] = keypoints_relative[:, 2]  # confidence score
 
                         # Draw skeleton and keypoints on the full frame
