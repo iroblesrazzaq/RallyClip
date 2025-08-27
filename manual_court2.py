@@ -19,6 +19,11 @@ def main():
     video_path = 'raw_videos/Monica Greene unedited tennis match play.mp4'
     video_path = vid_paths[0]
     for video_path in vid_paths1:
+        #if video_path != './raw_videos/Ryan Parkins - Unedited matchplay.mp4':
+        #    continue
+        #if video_path !='./raw_videos/9⧸5⧸15 Singles Uncut.mp4':
+        #    continue
+        
         print(video_path.split('/')[-1])
         # %%
         cap = cv2.VideoCapture(video_path)
@@ -85,9 +90,9 @@ def main():
         roi_mask = np.zeros((height, width), dtype=np.uint8)
 
         # Define the cutoff points for the top and corners
-        top_cutoff = int(height * 0.20)
-        corner_cut_width = int(width * 0.20)
-        corner_cut_height = int(0.8 * corner_cut_width)
+        top_cutoff = int(height * 0.35)
+        corner_cut_width = int(width * 0.15)
+        corner_cut_height = int(0.5 * corner_cut_width)
 
         # Define the vertices of the polygon you want to KEEP
         roi_vertices = np.array([
@@ -98,6 +103,14 @@ def main():
             (width, top_cutoff + corner_cut_height),      # Right edge, below the corner cut
             (width, height)                               # Bottom-right
         ], dtype=np.int32)
+        # trying without corner mask
+        roi_vertices = np.array([
+            (0, height),                                  # Bottom-left
+            (0, top_cutoff),          # Left edge, below the corner cut
+            (width, top_cutoff),      # Right edge, below the corner cut
+            (width, height)                               # Bottom-right
+        ], dtype=np.int32)
+
 
         # Fill the polygon area on the single-channel mask with white (255)
         cv2.fillPoly(roi_mask, [roi_vertices], 255)
@@ -112,9 +125,7 @@ def main():
         cv2.destroyAllWindows()
 
                 
-        # (Your existing code to get linesP...)
-# (Your existing code to get linesP...)
-        linesP = cv2.HoughLinesP(masked_result, 1, np.pi / 180, threshold=100, minLineLength=50, maxLineGap=40)
+        linesP = cv2.HoughLinesP(masked_result, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=40)
 
         # --- Draw the ORIGINAL, UNMERGED lines for comparison ---
         unmerged_lines_image = src.copy()
@@ -196,16 +207,20 @@ def main():
         cv2.destroyAllWindows()
 
 
+  
+        # --- 1. DEFINE THE VISUAL MERGING FUNCTION (MODIFIED TO RETURN MASKS) ---
         def merge_lines_visually(lines_to_merge, image_shape, kernel_size=(5,25), iterations=2, min_contour_area=50):
             """
             Merges line segments by drawing them on a mask, using morphology to connect them,
             and finding the best-fit line for the resulting contours.
+            NOW ALSO RETURNS THE INTERMEDIATE MASKS FOR VISUALIZATION.
             """
-            if not lines_to_merge:
-                return []
-
-            # Create a blank mask and draw the raw line segments on it
+            # Create a blank mask for the initial drawing
             mask = np.zeros(image_shape[:2], dtype=np.uint8)
+            if not lines_to_merge:
+                # Return empty results if no lines are passed in
+                return [], mask, np.zeros_like(mask)
+
             for line in lines_to_merge:
                 x1, y1, x2, y2 = line[0]
                 cv2.line(mask, (x1, y1), (x2, y2), 255, 3)
@@ -219,15 +234,11 @@ def main():
             
             final_merged_lines = []
             for contour in contours:
-                # Filter out small contours that are likely noise
                 if cv2.contourArea(contour) < min_contour_area:
                     continue
                 
-                # Find the two most distant points in the contour to define the final line
                 max_dist = 0
                 p1_final, p2_final = None, None
-                
-                # Reshape contour points for easier iteration
                 points = contour.reshape(-1, 2)
                 
                 for p1 in points:
@@ -241,18 +252,25 @@ def main():
                     final_line = [[int(p1_final[0]), int(p1_final[1]), int(p2_final[0]), int(p2_final[1])]]
                     final_merged_lines.append(final_line)
             
-            return final_merged_lines
+            # Return the final lines AND the two intermediate masks
+            return final_merged_lines, mask, closed_mask
 
         # --- 2. SET TUNABLE PARAMETERS FOR EACH LINE TYPE ---
-        # For Horizontal lines, use a wide, short kernel to connect horizontal gaps
         horiz_kernel = (5, 30) 
-        # For Diagonals, a more square kernel might be better
         diag_kernel = (2, 2)
         
-        # --- 3. CALL THE FUNCTION FOR EACH CATEGORY ---
-        final_horiz_lines = merge_lines_visually(horiz, src.shape, kernel_size=horiz_kernel, iterations=1)
-        final_sr_lines = merge_lines_visually(sr_l_diag, src.shape, kernel_size=diag_kernel, iterations=1)
-        final_sl_lines = merge_lines_visually(sl_r_diag, src.shape, kernel_size=diag_kernel, iterations=1)
+        # --- 3. CALL FUNCTIONS AND VISUALIZE INTERMEDIATE STEPS ---
+        
+        # Process Horizontal Lines
+        final_horiz_lines, horiz_mask, horiz_closed = merge_lines_visually(horiz, src.shape, kernel_size=horiz_kernel, iterations=2)
+       
+
+        # Process Right-Side Diagonals
+        final_sr_lines, sr_mask, sr_closed = merge_lines_visually(sr_l_diag, src.shape, kernel_size=diag_kernel, iterations=2)
+
+        # Process Left-Side Diagonals
+        final_sl_lines, sl_mask, sl_closed = merge_lines_visually(sl_r_diag, src.shape, kernel_size=diag_kernel, iterations=2)
+
 
         # --- 4. DRAW FINAL MERGED LINES TO THE IMAGE ---
         final_lines_image = src.copy()
@@ -276,6 +294,7 @@ def main():
         cv2.imshow('Final Visually Merged Lines', final_lines_image)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
+
 
 
 
