@@ -123,95 +123,81 @@ def main():
 # Create a copy of the source image for drawing
         colored_lines_image = src.copy()
 
-        if linesP is not None:
-            # Define font settings for displaying the text
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.5
-            font_color = (255, 255, 255)  # BGR: White for high contrast
-            font_thickness = 1
+        if linesP is None:
+            raise TypeError('linesP is none, no hough lines detected')
+    
+        # Define font settings for displaying the text
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.5
+        font_color = (255, 255, 255)  # BGR: White for high contrast
+        font_thickness = 1
+        
+        # Get the horizontal center of the screen once
+        screen_center_x = src.shape[1] / 2
+        horiz, vert, sl_r_diag, sr_l_diag = [],  [],  [],  []
+
+
+
             
-            # Get the horizontal center of the screen once
-            screen_center_x = src.shape[1] / 2
 
-            for line in linesP:
-                x1, y1, x2, y2 = line[0]
-                
-                # --- NEW: Write the endpoint coordinates onto the image ---
-                coord_font_scale = 0.4 # Use a slightly smaller font for coordinates
-                #cv2.putText(colored_lines_image, f'({x1},{y1})', (x1, y1 - 10), font, 
-                #            coord_font_scale, font_color, font_thickness, cv2.LINE_AA)
-                #cv2.putText(colored_lines_image, f'({x2},{y2})', (x2, y2 - 10), font, 
-                #            coord_font_scale, font_color, font_thickness, cv2.LINE_AA)
 
-                # Calculate the line's original angle and its midpoint
-                _, angle_deg = get_polar_angle(line[0])
-                mid_x = (x1 + x2) / 2
-                mid_y = (y1 + y2) / 2
-                
-                # Normalize the angle to a [0, 180) degree range
-                normalized_angle = int(angle_deg % 180)
 
-                # Determine if the line is on the Left or Right side
-                side_label = "L" if mid_x < screen_center_x else "R"
 
-                # Default color is gray
-                color = (128, 128, 182)  # BGR: Gray
 
-                # Updated classification using normalized angle AND side label
-                if normalized_angle < 15 or normalized_angle > 165: # Horizontal
-                    color = (0, 255, 0)        # BGR: Green
-                elif 75 < normalized_angle < 105: # Vertical
-                    color = (0, 0, 0)          # BGR: Black
-                elif 15 <= normalized_angle <= 75: # Positive Slope
-                    if side_label == "R":
-                        color = (255, 0, 0)    # BGR: Blue
-                elif 105 <= normalized_angle <= 165: # Negative Slope
-                    if side_label == "L":
-                        color = (0, 0, 255)    # BGR: Red
-                
-                # Draw the line with the determined color
-                cv2.line(colored_lines_image, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
+        for line in linesP:
+            x1, y1, x2, y2 = line[0]
+            
+            # --- NEW: Write the endpoint coordinates onto the image ---
+            coord_font_scale = 0.4 # Use a slightly smaller font for coordinates
 
-                # Display the angle AND the side label
-                display_text = f"{normalized_angle}{side_label}" # e.g., "42L" or "131R"
-                text_position = (int(mid_x) + 5, int(mid_y))
-                
-                cv2.putText(colored_lines_image, display_text, text_position, font, 
-                            font_scale, font_color, font_thickness, cv2.LINE_AA)
+
+            _, angle_deg = get_polar_angle(line[0])
+            mid_x = (x1 + x2) / 2
+            mid_y = (y1 + y2) / 2
+            
+            # Normalize the angle to a [0, 180) degree range
+            normalized_angle = int(angle_deg % 180)
+
+            # Determine if the line is on the Left or Right side
+            side_label = "L" if mid_x < screen_center_x else "R"
+
+            # Default color is gray
+            color = (128, 128, 182)  # BGR: Gray
+
+            # Updated classification using normalized angle AND side label
+            if normalized_angle < 15 or normalized_angle > 165: # Horizontal
+                color = (0, 255, 0)        # BGR: Green
+                horiz.append(line) # No need to store angle_deg for this version
+
+            elif 75 < normalized_angle < 105: # Vertical
+                color = (0, 0, 0)          # BGR: Black
+                vert.append(line)
+
+            elif 15 <= normalized_angle <= 75: # Positive Slope
+                if side_label == "R":
+                    color = (255, 0, 0)    # BGR: Blue
+                    sr_l_diag.append(line)
+
+            elif 105 <= normalized_angle <= 165: # Negative Slope
+                if side_label == "L":
+                    color = (0, 0, 255)    # BGR: Red
+                    sl_r_diag.append(line)
+            
+            # Draw the line with the determined color
+            cv2.line(colored_lines_image, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
+
+            # Display the angle AND the side label
+            display_text = f"{normalized_angle}{side_label}" # e.g., "42L" or "131R"
+            text_position = (int(mid_x) + 5, int(mid_y))
+            
+            cv2.putText(colored_lines_image, display_text, text_position, font, 
+                        font_scale, font_color, font_thickness, cv2.LINE_AA)
 
         # Display the final result
         cv2.imshow('Angle and Side Classification', colored_lines_image)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-
-
-
-
-
-
-
-
-        # --- Task 1, 2, 3, & 4 Implementation ---
-
-        # Initialize lists to classify raw line segments
-# --- Simplified Implementation for Debugging ---
-
-        # Initialize lists to classify raw line segments
-        horiz, vert, sl_r_diag, sr_l_diag = [],  [],  [],  []
-        screen_center_x = src.shape[1] / 2
-        
-        # Classify all detected linesP into orientation categories
-        for line in linesP:
-            x1, y1, x2, y2 = line[0]
-            _, angle_deg = get_polar_angle(line[0])
-            mid_x = (x1 + x2) / 2
-            
-            normalized_angle = int(angle_deg % 180)
-
-            if normalized_angle < 15 or normalized_angle > 165: # Horizontal
-                horiz.append(line) # No need to store angle_deg for this version
-            # (Other line classifications are ignored for now)
 
         # --- 1. CLUSTER HORIZONTAL LINES (BUG FIXED) ---
         horiz_clusters = [] 
