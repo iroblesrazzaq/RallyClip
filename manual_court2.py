@@ -196,122 +196,92 @@ def main():
         cv2.destroyAllWindows()
 
 
-        # --- 1. CLUSTER HORIZONTAL LINES (BUG FIXED) ---
-        # --- 1. CLUSTER AND MERGE HORIZONTAL LINES (Existing Code) ---
-        horiz_clusters = [] 
-        HORIZ_TOL = 30 
-        MIN_HORIZONTAL_LINE_LENGTH = 300
+        def merge_lines_visually(lines_to_merge, image_shape, kernel_size=(5,25), iterations=2, min_contour_area=50):
+            """
+            Merges line segments by drawing them on a mask, using morphology to connect them,
+            and finding the best-fit line for the resulting contours.
+            """
+            if not lines_to_merge:
+                return []
 
-        for line in horiz:
-            x1, y1, x2, y2 = line[0]
-            mean_y = (y1 + y2) / 2
-            
-            found_cluster = False
-            for i, cluster in enumerate(horiz_clusters):
-                cluster_mean_y = cluster[0]
-                if abs(cluster_mean_y - mean_y) <= HORIZ_TOL:
-                    horiz_clusters[i].append(line)
-                    num_lines = len(cluster) - 1
-                    new_mean = ((cluster_mean_y * num_lines) + mean_y) / (num_lines + 1)
-                    horiz_clusters[i][0] = new_mean
-                    found_cluster = True
-                    break
-            
-            if not found_cluster:
-                horiz_clusters.append([mean_y, line])
-
-        final_horiz_lines = []
-        for cluster in horiz_clusters:
-            mean_y, *lines_in_cluster = cluster
-            if not lines_in_cluster: continue 
-
-            xmax, xmin = -10000, 10000
-            for line in lines_in_cluster:
-                x1, y1, x2, y2 = line[0]
-                xmin = min(xmin, x1, x2)
-                xmax = max(xmax, x1, x2)
-
-            if xmax - xmin >= MIN_HORIZONTAL_LINE_LENGTH:
-                final_line = [[int(xmin), int(mean_y), int(xmax), int(mean_y)]]
-                final_horiz_lines.append(final_line)
-
-        # --- 2. DEFINE REUSABLE MERGING FUNCTION FOR DIAGONALS ---
-        def merge_lines(lines_to_merge, RHO_TOL, THETA_TOL):
-            clusters = []
+            # Create a blank mask and draw the raw line segments on it
+            mask = np.zeros(image_shape[:2], dtype=np.uint8)
             for line in lines_to_merge:
                 x1, y1, x2, y2 = line[0]
-                _, angle_deg = get_polar_angle(line[0])
-                
-                normalized_angle = angle_deg % 180
-                theta_rad = np.deg2rad(normalized_angle)
-                rho = x1 * np.cos(theta_rad) + y1 * np.sin(theta_rad)
+                cv2.line(mask, (x1, y1), (x2, y2), 255, 3)
 
-                found_cluster = False
-                for i, cluster in enumerate(clusters):
-                    mean_rho, mean_theta_rad = cluster[0], cluster[1]
-                    if abs(rho - mean_rho) < RHO_TOL and abs(theta_rad - mean_theta_rad) < np.deg2rad(THETA_TOL):
-                        clusters[i].append(line)
-                        # Update cluster's mean rho and theta
-                        clusters[i][0] = (mean_rho * (len(cluster)-2) + rho) / (len(cluster)-1)
-                        clusters[i][1] = (mean_theta_rad * (len(cluster)-2) + theta_rad) / (len(cluster)-1)
-                        found_cluster = True
-                        break
-                
-                if not found_cluster:
-                    # Structure: [mean_rho, mean_theta_rad, line1, line2, ...]
-                    clusters.append([rho, theta_rad, line])
+            # Use a morphological CLOSE operation to connect nearby segments
+            kernel = np.ones(kernel_size, np.uint8)
+            closed_mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=iterations)
+            
+            # Find the contours of the connected blobs
+            contours, _ = cv2.findContours(closed_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             final_merged_lines = []
-            for cluster in clusters:
-                _mean_rho, _mean_theta_rad, *lines_in_cluster = cluster
-                if len(lines_in_cluster) < 2: continue # Don't merge single segments
-
-                all_points = np.array([line[0] for line in lines_in_cluster]).reshape(-1, 2)
+            for contour in contours:
+                # Filter out small contours that are likely noise
+                if cv2.contourArea(contour) < min_contour_area:
+                    continue
                 
-                # Find the two most distant points to define the final line's extent
+                # Find the two most distant points in the contour to define the final line
                 max_dist = 0
                 p1_final, p2_final = None, None
-                for p1 in all_points:
-                    for p2 in all_points:
+                
+                # Reshape contour points for easier iteration
+                points = contour.reshape(-1, 2)
+                
+                for p1 in points:
+                    for p2 in points:
                         dist = np.linalg.norm(p1 - p2)
                         if dist > max_dist:
                             max_dist = dist
                             p1_final, p2_final = p1, p2
                 
                 if p1_final is not None:
-                    final_merged_lines.append([[int(p1_final[0]), int(p1_final[1]), int(p2_final[0]), int(p2_final[1])]])
-
+                    final_line = [[int(p1_final[0]), int(p1_final[1]), int(p2_final[0]), int(p2_final[1])]]
+                    final_merged_lines.append(final_line)
+            
             return final_merged_lines
 
-        # --- 3. CLUSTER AND MERGE BOTH SETS OF DIAGONALS ---
-        DIAG_RHO_TOL = 25  # pixels
-        DIAG_THETA_TOL = 7 # degrees
+        # --- 2. SET TUNABLE PARAMETERS FOR EACH LINE TYPE ---
+        # For Horizontal lines, use a wide, short kernel to connect horizontal gaps
+        horiz_kernel = (5, 30) 
+        # For Diagonals, a more square kernel might be better
+        diag_kernel = (2, 2)
         
-        final_sr_lines = merge_lines(sr_l_diag, DIAG_RHO_TOL, DIAG_THETA_TOL)
-        final_sl_lines = merge_lines(sl_r_diag, DIAG_RHO_TOL, DIAG_THETA_TOL)
+        # --- 3. CALL THE FUNCTION FOR EACH CATEGORY ---
+        final_horiz_lines = merge_lines_visually(horiz, src.shape, kernel_size=horiz_kernel, iterations=1)
+        final_sr_lines = merge_lines_visually(sr_l_diag, src.shape, kernel_size=diag_kernel, iterations=1)
+        final_sl_lines = merge_lines_visually(sl_r_diag, src.shape, kernel_size=diag_kernel, iterations=1)
 
         # --- 4. DRAW FINAL MERGED LINES TO THE IMAGE ---
         final_lines_image = src.copy()
         
-        # Draw horizontal lines (Red)
+        # Draw horizontal lines (Green)
         for line in final_horiz_lines:
             x1, y1, x2, y2 = line[0]
-            cv2.line(final_lines_image, (x1, y1), (x2, y2), (0, 0, 255), 3)
+            cv2.line(final_lines_image, (x1, y1), (x2, y2), (0, 255, 0), 3)
 
         # Draw right-side diagonals (Blue)
         for line in final_sr_lines:
             x1, y1, x2, y2 = line[0]
             cv2.line(final_lines_image, (x1, y1), (x2, y2), (255, 0, 0), 3)
 
-        # Draw left-side diagonals green
+        # Draw left-side diagonals (Red)
         for line in final_sl_lines:
             x1, y1, x2, y2 = line[0]
-            cv2.line(final_lines_image, (x1, y1), (x2, y2), (0, 255, 0), 3)
+            cv2.line(final_lines_image, (x1, y1), (x2, y2), (0, 0, 255), 3)
 
         # Display the image with all final merged lines
-        cv2.imshow('Final Merged Court Lines', final_lines_image)
+        cv2.imshow('Final Visually Merged Lines', final_lines_image)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
+
+
+
+
+
+
 
 
 
