@@ -7,9 +7,17 @@ import numpy as np
 import os
 import math
 
+# Import YOLO directly
+try:
+    from ultralytics import YOLO
+    YOLO_AVAILABLE = True
+except ImportError:
+    YOLO_AVAILABLE = False
+    print("Warning: YOLO not available. Install ultralytics and ensure yolov8n.pt exists.")
+
 # %%
 
-MIN_BASELINE_LEN = 500
+MIN_BASELINE_LEN = 300
 def main():
     # cell 1: get image 1 minute in - in prod have to make sure nothing is covering doubles lines at that point (players)
 
@@ -26,8 +34,8 @@ def main():
         #if video_path !='./raw_videos/9⧸5⧸15 Singles Uncut.mp4':
         #    continue
 
-        if video_path != './raw_videos/Brady Knackstedt (Blue Shirt⧸Black Shorts)(4.0 UTR) Unedited Match Play vs. opponent (5.54 UTR).mp4':
-            continue
+        #if video_path != './raw_videos/Brady Knackstedt (Blue Shirt⧸Black Shorts)(4.0 UTR) Unedited Match Play vs. opponent (5.54 UTR).mp4':
+        #    continue
 
         print(video_path.split('/')[-1])
         # %%
@@ -35,21 +43,190 @@ def main():
         if not cap.isOpened():
             raise RuntimeError(f"Failed to open video: {video_path}")
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        frame_num = fps*60 # 1 minute after recording starts
-
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num - 1)
-
-        ret, src = cap.read()
-        if not ret or src is None:
-            cap.release()
-            raise RuntimeError("Could not read first frame for playable area detection.")
-
-        # %%
-        cv2.imshow('window', src)
-        cv2.waitKey(0)
-
-        cv2.destroyAllWindows()
+        
+        # Robust Background Reconstruction using YOLO and Homography
+        if not YOLO_AVAILABLE:
+            print("YOLO not available, falling back to single frame at 1 minute mark")
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(fps * 60))
+            ret, src = cap.read()
+            if not ret or src is None:
+                cap.release()
+                raise RuntimeError("Could not read frame at 1 minute mark.")
+        else:
+            print("Using YOLO + Homography for robust background reconstruction")
+            
+            # Load YOLO model directly
+            try:
+                yolo_model = YOLO('yolov8n.pt')
+                print("YOLO model loaded successfully")
+            except Exception as e:
+                print(f"YOLO model failed to load: {e}, falling back to single frame")
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(fps * 60))
+                ret, src = cap.read()
+                if not ret or src is None:
+                    cap.release()
+                    raise RuntimeError("Could not read frame at 1 minute mark.")
+                else:
+                    # Continue with the rest of the processing
+                    pass
+            else:
+                # Step 1: Select base frame and find occlusions
+                base_time = 60  # 60 seconds
+                base_frame_num = int(base_time * fps)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, base_frame_num)
+                ret, base_frame = cap.read()
+                if not ret or base_frame is None:
+                    cap.release()
+                    raise RuntimeError("Could not read base frame at 60 seconds.")
+                
+                # Run YOLO on base frame to detect players
+                results = yolo_model.predict(source=base_frame, verbose=False)[0]
+                player_bboxes = []
+                for box in getattr(results, "boxes", []):
+                    try:
+                        cls_id = int(box.cls.item())
+                        if cls_id == 0:  # person class
+                            conf = float(box.conf.item())
+                            if conf > 0.5:  # confidence threshold
+                                xyxy = box.xyxy.cpu().numpy().reshape(-1)
+                                x0, y0, x1, y1 = [int(v) for v in xyxy]
+                                player_bboxes.append((x0, y0, x1-x0, y1-y0))
+                    except Exception:
+                        continue
+                
+                print(f"Detected {len(player_bboxes)} players in base frame")
+                
+                # Step 2: Find suitable reference frame
+                reference_frame = None
+                reference_time = None
+                
+                # Search nearby frames for a clear view (15s increments for better player movement)
+                search_times = [45, 75]  # 15 seconds before and after base frame
+                for search_time in search_times:
+                    frame_num = int(search_time * fps)
+                    if frame_num >= total_frames:
+                        continue
+                        
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+                    ret, candidate_frame = cap.read()
+                    if not ret or candidate_frame is None:
+                        continue
+                    
+                    # Run YOLO on candidate frame
+                    results = yolo_model.predict(source=candidate_frame, verbose=False)[0]
+                    candidate_bboxes = []
+                    for box in getattr(results, "boxes", []):
+                        try:
+                            cls_id = int(box.cls.item())
+                            if cls_id == 0:  # person class
+                                conf = float(box.conf.item())
+                                if conf > 0.5:
+                                    xyxy = box.xyxy.cpu().numpy().reshape(-1)
+                                    x0, y0, x1, y1 = [int(v) for v in xyxy]
+                                    candidate_bboxes.append((x0, y0, x1-x0, y1-y0))
+                        except Exception:
+                            continue
+                    
+                    # Check if this frame has clear areas where base frame has players
+                    is_suitable = True
+                    for base_bbox in player_bboxes:
+                        bx, by, bw, bh = base_bbox
+                        base_center = (bx + bw//2, by + bh//2)
+                        
+                        # Check if any player in candidate frame overlaps significantly with base occlusion
+                        for cand_bbox in candidate_bboxes:
+                            cx, cy, cw, ch = cand_bbox
+                            cand_center = (cx + cw//2, cy + ch//2)
+                            
+                            # Calculate overlap
+                            overlap_x = max(0, min(bx + bw, cx + cw) - max(bx, cx))
+                            overlap_y = max(0, min(by + bh, cy + ch) - max(by, cy))
+                            overlap_area = overlap_x * overlap_y
+                            base_area = bw * bh
+                            
+                            if overlap_area > 0.3 * base_area:  # 30% overlap threshold
+                                is_suitable = False
+                                break
+                        if not is_suitable:
+                            break
+                    
+                    if is_suitable:
+                        reference_frame = candidate_frame
+                        reference_time = search_time
+                        print(f"Found suitable reference frame at {search_time}s")
+                        break
+                
+                if reference_frame is None:
+                    print("No suitable reference frame found, using base frame")
+                    src = base_frame
+                else:
+                    # Step 3: Align frames using homography
+                    print("Aligning frames using homography...")
+                    
+                    # Initialize ORB detector
+                    orb = cv2.ORB_create(nfeatures=1000)
+                    
+                    # Find keypoints and descriptors
+                    kp1, des1 = orb.detectAndCompute(base_frame, None)
+                    kp2, des2 = orb.detectAndCompute(reference_frame, None)
+                    
+                    if des1 is not None and des2 is not None:
+                        # Match descriptors
+                        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+                        matches = bf.match(des1, des2)
+                        matches = sorted(matches, key=lambda x: x.distance)
+                        
+                        # Keep only the best matches
+                        good_matches = matches[:min(100, len(matches))]
+                        
+                        if len(good_matches) >= 10:  # Need minimum matches for homography
+                            # Get coordinates of good matches
+                            src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+                            dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+                            
+                            # Calculate the Homography matrix
+                            M, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
+                            
+                            if M is not None:
+                                # Step 4: Warp and combine
+                                h, w, c = base_frame.shape
+                                warped_ref_frame = cv2.warpPerspective(reference_frame, M, (w, h))
+                                
+                                # Create occlusion mask from player bounding boxes
+                                occlusion_mask = np.zeros(base_frame.shape[:2], dtype=np.uint8)
+                                for bbox in player_bboxes:
+                                    x, y, w_bbox, h_bbox = bbox
+                                    cv2.rectangle(occlusion_mask, (x, y), (x+w_bbox, y+h_bbox), 255, -1)
+                                
+                                # Dilate mask slightly to ensure complete coverage
+                                kernel = np.ones((5, 5), np.uint8)
+                                occlusion_mask = cv2.dilate(occlusion_mask, kernel, iterations=1)
+                                
+                                # Create the final clean frame
+                                # Where mask is white (255), use warped_ref_frame; otherwise use base_frame
+                                clean_frame = np.where(occlusion_mask[:, :, None] == 255, warped_ref_frame, base_frame)
+                                src = clean_frame.astype(np.uint8)
+                                
+                                print("Successfully created clean frame using homography alignment")
+                            else:
+                                print("Homography calculation failed, using base frame")
+                                src = base_frame
+                        else:
+                            print("Insufficient feature matches, using base frame")
+                            src = base_frame
+                    else:
+                        print("Feature detection failed, using base frame")
+                        src = base_frame
+                
+                # Show comparison
+                cap.set(cv2.CAP_PROP_POS_FRAMES, base_frame_num)
+                ret, original_frame = cap.read()
+                if ret:
+                    cv2.imshow('Original Frame with Players', original_frame)
+                    cv2.imshow('Clean Court Frame (Players Removed)', src)
+                    cv2.waitKey(0)
+                    cv2.destroyAllWindows()
         # --- 1. PRE-PROCESSING FOR EDGE DETECTION ---
         gray = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (7, 7), 0)
@@ -491,6 +668,9 @@ def main():
                 cv2.imshow('Identified Doubles Sidelines', final_lines_image3)
                 cv2.waitKey(0)
                 cv2.destroyAllWindows()
+        
+        # Always release the video capture object at the end of each iteration
+        cap.release()
             
 
 
