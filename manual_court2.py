@@ -219,14 +219,7 @@ def main():
                         print("Feature detection failed, using base frame")
                         src = base_frame
                 
-                # Show comparison
-                cap.set(cv2.CAP_PROP_POS_FRAMES, base_frame_num)
-                ret, original_frame = cap.read()
-                if ret:
-                    cv2.imshow('Original Frame with Players', original_frame)
-                    cv2.imshow('Clean Court Frame (Players Removed)', src)
-                    cv2.waitKey(0)
-                    cv2.destroyAllWindows()
+                        # No intermediate displays - proceed directly to line detection
         # --- 1. PRE-PROCESSING FOR EDGE DETECTION ---
         gray = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (7, 7), 0)
@@ -257,13 +250,7 @@ def main():
         # --- 5. VISUALIZE THE RESULTS ---
         final_result = cv2.bitwise_and(src, src, mask=refined_lines_mask)
 
-        cv2.imshow('Original "Loose" White Mask', white_mask)
-        cv2.imshow('Dilated Canny Edges (Zone of Interest)', dilated_edges_mask)
-        cv2.imshow('Refined Lines Mask (Final)', refined_lines_mask)
-
-
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        # No intermediate displays - proceed to ROI masking
         
         height, width = src.shape[:2]
 
@@ -301,10 +288,7 @@ def main():
         masked_result = cv2.bitwise_and(refined_lines_mask, refined_lines_mask, mask=roi_mask)
 
 
-        cv2.imshow("ROI Mask", roi_mask)
-        cv2.imshow("masked result", masked_result)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        # No intermediate displays - proceed to line detection
 
                 
         linesP = cv2.HoughLinesP(masked_result, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=40)
@@ -383,10 +367,7 @@ def main():
             cv2.putText(colored_lines_image, display_text, text_position, font, 
                         font_scale, font_color, font_thickness, cv2.LINE_AA)
 
-        # Display the final result
-        cv2.imshow('Angle and Side Classification', colored_lines_image)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        # No intermediate displays - proceed to line merging
 
 
   
@@ -473,10 +454,7 @@ def main():
             x1, y1, x2, y2 = line[0]
             cv2.line(final_lines_image, (x1, y1), (x2, y2), (0, 0, 255), 3)
 
-        # Display the image with all final merged lines
-        cv2.imshow('Final Visually Merged Lines', final_lines_image)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        # No intermediate displays - proceed to court line detection
 
         # --- COURT LINE DETECTION PIPELINE ---
         
@@ -502,6 +480,9 @@ def main():
         # Step 3: Draw final results
         final_result_image = src.copy()
         
+        # Track what failed for display
+        failures = []
+        
         # Draw baseline
         cv2.line(final_result_image, (baseline[0][0], baseline[0][1]), 
                  (baseline[0][2], baseline[0][3]), (0, 255, 0), 3)
@@ -513,6 +494,7 @@ def main():
             print("Right doubles sideline: FOUND")
         else:
             print("Right doubles sideline: NOT FOUND")
+            failures.append("RIGHT SIDELINE")
             
         if left_doubles_sideline is not None:
             cv2.line(final_result_image, (left_doubles_sideline[0][0], left_doubles_sideline[0][1]), 
@@ -520,6 +502,35 @@ def main():
             print("Left doubles sideline: FOUND")
         else:
             print("Left doubles sideline: NOT FOUND")
+            failures.append("LEFT SIDELINE")
+        
+        # Add failure text to image
+        if failures:
+            # Set up text properties
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 1.0
+            font_color = (0, 0, 255)  # Red for failures
+            font_thickness = 2
+            
+            # Create failure message
+            failure_text = "FAILED: " + ", ".join(failures)
+            
+            # Get text size for positioning
+            (text_width, text_height), baseline_text = cv2.getTextSize(failure_text, font, font_scale, font_thickness)
+            
+            # Position text in top-left corner with some padding
+            text_x = 20
+            text_y = 40
+            
+            # Add black background rectangle for better visibility
+            cv2.rectangle(final_result_image, 
+                         (text_x - 10, text_y - text_height - 10),
+                         (text_x + text_width + 10, text_y + 10),
+                         (0, 0, 0), -1)
+            
+            # Add the failure text
+            cv2.putText(final_result_image, failure_text, (text_x, text_y), 
+                       font, font_scale, font_color, font_thickness, cv2.LINE_AA)
         
         cv2.imshow('Final Court Detection Result', final_result_image)
         cv2.waitKey(0)
