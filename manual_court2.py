@@ -25,7 +25,10 @@ def main():
         #    continue
         #if video_path !='./raw_videos/9⧸5⧸15 Singles Uncut.mp4':
         #    continue
-        
+
+        if video_path != './raw_videos/Brady Knackstedt (Blue Shirt⧸Black Shorts)(4.0 UTR) Unedited Match Play vs. opponent (5.54 UTR).mp4':
+            continue
+
         print(video_path.split('/')[-1])
         # %%
         cap = cv2.VideoCapture(video_path)
@@ -382,7 +385,7 @@ def main():
                 baseline_width_percentage = (baseline_width / image_width) * 100
                 
                 # Adjust tolerance based on baseline width
-                if baseline_width_percentage <= 95:
+                if baseline_width_percentage <= 98.5:
                     tolerance = 100  # Baseline is mostly visible
                 else:
                     tolerance = 150  # Baseline is cut off, doubles sidelines might not reach it
@@ -401,40 +404,95 @@ def main():
             print(f"Right-side diagonal lines: {len(final_sr_lines)}")
             print(f"Left-side diagonal lines: {len(final_sl_lines)}")
             
-            # Handle cases where we have exactly 2 diagonal lines on each side
-            if len(final_sr_lines) == 2 and len(final_sl_lines) == 2:
-                # Process right-side diagonals (ideal case)
+            # Handle mixed cases: process each side independently
+            right_doubles_sideline = None
+            left_doubles_sideline = None
+            right_valid = False
+            left_valid = False
+            
+            # Process right-side diagonals
+            if len(final_sr_lines) == 2:
+                # Ideal case for right side
                 right_doubles_sideline = find_outer_line(final_sr_lines)
-                
-                # Process left-side diagonals (ideal case)
-                left_doubles_sideline = find_outer_line(final_sl_lines)
-                
-                # Validate both sidelines are close enough to baseline
                 right_valid = validate_sideline_candidate(right_doubles_sideline, baseline, src.shape[1])
+                print(f"Right side: ideal case, validation: {right_valid}")
+            elif len(final_sr_lines) > 2:
+                # Red herring case for right side - check if baseline is fully visible
+                bx1, by1, bx2, by2 = baseline[0]
+                baseline_width = abs(bx2 - bx1)
+                baseline_width_percentage = (baseline_width / src.shape[1]) * 100
+                
+                if baseline_width_percentage <= 98.5:
+                    baseline_right_x = max(bx1, bx2)
+                    baseline_y = (by1 + by2) / 2
+                    min_distance = float('inf')
+                    
+                    for line in final_sr_lines:
+                        x1, y1, x2, y2 = line[0]
+                        near_end_x = x1 if y1 > y2 else x2
+                        near_end_y = max(y1, y2)
+                        distance = np.sqrt((near_end_x - baseline_right_x)**2 + (near_end_y - baseline_y)**2)
+                        
+                        if distance < min_distance:
+                            min_distance = distance
+                            right_doubles_sideline = line
+                    
+                    right_valid = validate_sideline_candidate(right_doubles_sideline, baseline, src.shape[1])
+                    print(f"Right side: red herring case, validation: {right_valid}")
+            
+            # Process left-side diagonals
+            if len(final_sl_lines) == 2:
+                # Ideal case for left side
+                left_doubles_sideline = find_outer_line(final_sl_lines)
                 left_valid = validate_sideline_candidate(left_doubles_sideline, baseline, src.shape[1])
+                print(f"Left side: ideal case, validation: {left_valid}")
+            elif len(final_sl_lines) > 2:
+                # Red herring case for left side - check if baseline is fully visible
+                bx1, by1, bx2, by2 = baseline[0]
+                baseline_width = abs(bx2 - bx1)
+                baseline_width_percentage = (baseline_width / src.shape[1]) * 100
                 
-                print(f"Right sideline validation: {right_valid}")
-                print(f"Left sideline validation: {left_valid}")
+                if baseline_width_percentage <= 98.5:
+                    baseline_left_x = min(bx1, bx2)
+                    baseline_y = (by1 + by2) / 2
+                    min_distance = float('inf')
+                    
+                    for line in final_sl_lines:
+                        x1, y1, x2, y2 = line[0]
+                        near_end_x = x1 if y1 > y2 else x2
+                        near_end_y = max(y1, y2)
+                        distance = np.sqrt((near_end_x - baseline_left_x)**2 + (near_end_y - baseline_y)**2)
+                        
+                        if distance < min_distance:
+                            min_distance = distance
+                            left_doubles_sideline = line
+                    
+                    left_valid = validate_sideline_candidate(left_doubles_sideline, baseline, src.shape[1])
+                    print(f"Left side: red herring case, validation: {left_valid}")
+            
+            # Draw results if at least one sideline is valid
+            if right_valid or left_valid:
+                final_lines_image3 = src.copy()
                 
-                if right_valid and left_valid:
-                    # Draw the identified doubles sidelines
-                    final_lines_image3 = src.copy()
-                    
-                    # Draw baseline
-                    cv2.line(final_lines_image3, (baseline[0][0], baseline[0][1]), 
-                             (baseline[0][2], baseline[0][3]), (0, 255, 0), 3)
-                    
-                    # Draw right doubles sideline
+                # Draw baseline
+                cv2.line(final_lines_image3, (baseline[0][0], baseline[0][1]), 
+                         (baseline[0][2], baseline[0][3]), (0, 255, 0), 3)
+                
+                # Draw right doubles sideline (if valid)
+                if right_valid:
                     cv2.line(final_lines_image3, (right_doubles_sideline[0][0], right_doubles_sideline[0][1]), 
                              (right_doubles_sideline[0][2], right_doubles_sideline[0][3]), (255, 0, 0), 5)
-                    
-                    # Draw left doubles sideline
+                
+                # Draw left doubles sideline (if valid)
+                if left_valid:
                     cv2.line(final_lines_image3, (left_doubles_sideline[0][0], left_doubles_sideline[0][1]), 
                              (left_doubles_sideline[0][2], left_doubles_sideline[0][3]), (0, 0, 255), 5)
-                    
-                    cv2.imshow('Identified Doubles Sidelines (Ideal Case)', final_lines_image3)
-                    cv2.waitKey(0)
-                    cv2.destroyAllWindows()
+                
+                cv2.imshow('Identified Doubles Sidelines', final_lines_image3)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
+            
+
 
 
 
