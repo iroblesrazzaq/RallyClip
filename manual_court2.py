@@ -17,7 +17,7 @@ except ImportError:
 
 # %%
 
-MIN_BASELINE_LEN = 300
+MIN_BASELINE_LEN = 500
 def main():
     # cell 1: get image 1 minute in - in prod have to make sure nothing is covering doubles lines at that point (players)
 
@@ -34,8 +34,8 @@ def main():
         #if video_path !='./raw_videos/9⧸5⧸15 Singles Uncut.mp4':
         #    continue
 
-        #if video_path != './raw_videos/Brady Knackstedt (Blue Shirt⧸Black Shorts)(4.0 UTR) Unedited Match Play vs. opponent (5.54 UTR).mp4':
-        #    continue
+        if video_path != './raw_videos/Unedited Points - Fall 2021 - Erkin Tootoonchi Moghaddam.mp4':
+            continue
 
         print(video_path.split('/')[-1])
         # %%
@@ -478,196 +478,52 @@ def main():
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-        # before getting into complex heuristics, let's do the ideal case: we have 2 of each type of diagonal line and the baseline
-        baseline = None
-        for line in final_horiz_lines:
-            x1, y1, x2, y2 = line[0]
-            if abs(x2-x1) >= MIN_BASELINE_LEN: # long enough for baseline
-                if baseline is None:
-                    baseline = line
-                elif (y1+y2)/2 > (baseline[0][1]+baseline[0][3])/2: # mean y of current line is greater than mean y of previous baseline
-                    baseline = line
+        # --- COURT LINE DETECTION PIPELINE ---
+        
+        # Step 1: Gather necessary information
+        baseline = find_baseline(final_horiz_lines)
         if baseline is None:
+            print("No valid baseline found, skipping this video")
             continue
+            
+        right_line_count = len(final_sr_lines)
+        left_line_count = len(final_sl_lines)
+        
+        print(f"Baseline found: width = {abs(baseline[0][2] - baseline[0][0])}px")
+        print(f"Right-side diagonal lines: {right_line_count}")
+        print(f"Left-side diagonal lines: {left_line_count}")
+        
+        # Step 2: Process each side independently using decision tree
+        right_doubles_sideline = process_side_decision_tree(
+            final_sr_lines, baseline, src.shape[1], "right")
+        left_doubles_sideline = process_side_decision_tree(
+            final_sl_lines, baseline, src.shape[1], "left")
+        
+        # Step 3: Draw final results
+        final_result_image = src.copy()
+        
+        # Draw baseline
+        cv2.line(final_result_image, (baseline[0][0], baseline[0][1]), 
+                 (baseline[0][2], baseline[0][3]), (0, 255, 0), 3)
+        
+        # Draw doubles sidelines (if found)
+        if right_doubles_sideline is not None:
+            cv2.line(final_result_image, (right_doubles_sideline[0][0], right_doubles_sideline[0][1]), 
+                     (right_doubles_sideline[0][2], right_doubles_sideline[0][3]), (255, 0, 0), 5)
+            print("Right doubles sideline: FOUND")
         else:
+            print("Right doubles sideline: NOT FOUND")
             
-            # now we're gonna get the 2 outer diagonals:
-            # the trick is that at the same shared x point, the outer line will be higher visually on screen = lower y value
-            # how to get the shared x point? heuristic - midpoint of one line, look at the y value there vs the y value of the other line eval at x
-            # if that midpoint x is not in domain of the other line, try the other direction
-            # else, raise error, will handle this later
-            
-            def get_line_equation(line):
-                """Get slope and y-intercept for a line segment"""
-                x1, y1, x2, y2 = line[0]
-                if x2 - x1 == 0:  # vertical line
-                    return None, x1  # slope=None, x_intercept
-                slope = (y2 - y1) / (x2 - x1)
-                y_intercept = y1 - slope * x1
-                return slope, y_intercept
-            
-            def get_y_at_x(line, x):
-                """Get y-coordinate of line at given x-coordinate"""
-                slope, y_intercept = get_line_equation(line)
-                if slope is None:  # vertical line
-                    return None
-                return slope * x + y_intercept
-            
-            def is_x_in_line_domain(line, x):
-                """Check if x-coordinate is within the domain of the line segment"""
-                x1, y1, x2, y2 = line[0]
-                return min(x1, x2) <= x <= max(x1, x2)
-            
-            def find_outer_line(lines):
-                """Find the outer line (lower y-coordinate) from a list of lines"""
-                if len(lines) < 2:
-                    return lines[0] if lines else None
-                
-                # Try to find a shared x-point to compare y-values
-                line1, line2 = lines[0], lines[1]
-                
-                # Try midpoint of line1
-                x1, y1, x2, y2 = line1[0]
-                mid_x1 = (x1 + x2) / 2
-                
-                if is_x_in_line_domain(line2, mid_x1):
-                    y1_at_mid = get_y_at_x(line1, mid_x1)
-                    y2_at_mid = get_y_at_x(line2, mid_x1)
-                    if y1_at_mid is not None and y2_at_mid is not None:
-                        return line1 if y1_at_mid < y2_at_mid else line2
-                
-                # Try midpoint of line2
-                x1, y1, x2, y2 = line2[0]
-                mid_x2 = (x1 + x2) / 2
-                
-                if is_x_in_line_domain(line1, mid_x2):
-                    y1_at_mid = get_y_at_x(line1, mid_x2)
-                    y2_at_mid = get_y_at_x(line2, mid_x2)
-                    if y1_at_mid is not None and y2_at_mid is not None:
-                        return line1 if y1_at_mid < y2_at_mid else line2
-                
-                # If no shared x-point found, use the line with lower average y-coordinate
-                avg_y1 = (line1[0][1] + line1[0][3]) / 2
-                avg_y2 = (line2[0][1] + line2[0][3]) / 2
-                return line1 if avg_y1 < avg_y2 else line2
-            
-            def validate_sideline_candidate(candidate, baseline, image_width):
-                """Check if candidate line is close enough to baseline"""
-                if candidate is None or baseline is None:
-                    return False
-                
-                # Calculate baseline width as percentage of screen width
-                bx1, by1, bx2, by2 = baseline[0]
-                baseline_width = abs(bx2 - bx1)
-                baseline_width_percentage = (baseline_width / image_width) * 100
-                
-                # Adjust tolerance based on baseline width
-                if baseline_width_percentage <= 98.5:
-                    tolerance = 100  # Baseline is mostly visible
-                else:
-                    tolerance = 150  # Baseline is cut off, doubles sidelines might not reach it
-                
-                # Get the bottom endpoint of the candidate (higher y-coordinate)
-                x1, y1, x2, y2 = candidate[0]
-                candidate_bottom_y = max(y1, y2)
-                
-                # Get the y-coordinate of the baseline
-                baseline_y = (by1 + by2) / 2
-                
-                # Check if the candidate's bottom is close to the baseline
-                return abs(candidate_bottom_y - baseline_y) <= tolerance
-            
-            # Print line counts for debugging
-            print(f"Right-side diagonal lines: {len(final_sr_lines)}")
-            print(f"Left-side diagonal lines: {len(final_sl_lines)}")
-            
-            # Handle mixed cases: process each side independently
-            right_doubles_sideline = None
-            left_doubles_sideline = None
-            right_valid = False
-            left_valid = False
-            
-            # Process right-side diagonals
-            if len(final_sr_lines) == 2:
-                # Ideal case for right side
-                right_doubles_sideline = find_outer_line(final_sr_lines)
-                right_valid = validate_sideline_candidate(right_doubles_sideline, baseline, src.shape[1])
-                print(f"Right side: ideal case, validation: {right_valid}")
-            elif len(final_sr_lines) > 2:
-                # Red herring case for right side - check if baseline is fully visible
-                bx1, by1, bx2, by2 = baseline[0]
-                baseline_width = abs(bx2 - bx1)
-                baseline_width_percentage = (baseline_width / src.shape[1]) * 100
-                
-                if baseline_width_percentage <= 98.5:
-                    baseline_right_x = max(bx1, bx2)
-                    baseline_y = (by1 + by2) / 2
-                    min_distance = float('inf')
-                    
-                    for line in final_sr_lines:
-                        x1, y1, x2, y2 = line[0]
-                        near_end_x = x1 if y1 > y2 else x2
-                        near_end_y = max(y1, y2)
-                        distance = np.sqrt((near_end_x - baseline_right_x)**2 + (near_end_y - baseline_y)**2)
-                        
-                        if distance < min_distance:
-                            min_distance = distance
-                            right_doubles_sideline = line
-                    
-                    right_valid = validate_sideline_candidate(right_doubles_sideline, baseline, src.shape[1])
-                    print(f"Right side: red herring case, validation: {right_valid}")
-            
-            # Process left-side diagonals
-            if len(final_sl_lines) == 2:
-                # Ideal case for left side
-                left_doubles_sideline = find_outer_line(final_sl_lines)
-                left_valid = validate_sideline_candidate(left_doubles_sideline, baseline, src.shape[1])
-                print(f"Left side: ideal case, validation: {left_valid}")
-            elif len(final_sl_lines) > 2:
-                # Red herring case for left side - check if baseline is fully visible
-                bx1, by1, bx2, by2 = baseline[0]
-                baseline_width = abs(bx2 - bx1)
-                baseline_width_percentage = (baseline_width / src.shape[1]) * 100
-                
-                if baseline_width_percentage <= 98.5:
-                    baseline_left_x = min(bx1, bx2)
-                    baseline_y = (by1 + by2) / 2
-                    min_distance = float('inf')
-                    
-                    for line in final_sl_lines:
-                        x1, y1, x2, y2 = line[0]
-                        near_end_x = x1 if y1 > y2 else x2
-                        near_end_y = max(y1, y2)
-                        distance = np.sqrt((near_end_x - baseline_left_x)**2 + (near_end_y - baseline_y)**2)
-                        
-                        if distance < min_distance:
-                            min_distance = distance
-                            left_doubles_sideline = line
-                    
-                    left_valid = validate_sideline_candidate(left_doubles_sideline, baseline, src.shape[1])
-                    print(f"Left side: red herring case, validation: {left_valid}")
-            
-            # Draw results if at least one sideline is valid
-            if right_valid or left_valid:
-                final_lines_image3 = src.copy()
-                
-                # Draw baseline
-                cv2.line(final_lines_image3, (baseline[0][0], baseline[0][1]), 
-                         (baseline[0][2], baseline[0][3]), (0, 255, 0), 3)
-                
-                # Draw right doubles sideline (if valid)
-                if right_valid:
-                    cv2.line(final_lines_image3, (right_doubles_sideline[0][0], right_doubles_sideline[0][1]), 
-                             (right_doubles_sideline[0][2], right_doubles_sideline[0][3]), (255, 0, 0), 5)
-                
-                # Draw left doubles sideline (if valid)
-                if left_valid:
-                    cv2.line(final_lines_image3, (left_doubles_sideline[0][0], left_doubles_sideline[0][1]), 
-                             (left_doubles_sideline[0][2], left_doubles_sideline[0][3]), (0, 0, 255), 5)
-                
-                cv2.imshow('Identified Doubles Sidelines', final_lines_image3)
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
+        if left_doubles_sideline is not None:
+            cv2.line(final_result_image, (left_doubles_sideline[0][0], left_doubles_sideline[0][1]), 
+                     (left_doubles_sideline[0][2], left_doubles_sideline[0][3]), (0, 0, 255), 5)
+            print("Left doubles sideline: FOUND")
+        else:
+            print("Left doubles sideline: NOT FOUND")
+        
+        cv2.imshow('Final Court Detection Result', final_result_image)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
         
         # Always release the video capture object at the end of each iteration
         cap.release()
@@ -705,6 +561,130 @@ very easy - entire baseline is visible, sidelines are connecting or very close, 
 
 
 
+def process_full_width_baseline_case(diagonal_lines, baseline, image_width, side):
+    """
+    Process the case where baseline is full-width (>98.5%) and there are more than 2 diagonal lines.
+    
+    Args:
+        diagonal_lines: List of diagonal lines for one side
+        baseline: The baseline line
+        image_width: Width of the image
+        side: "left" or "right" to indicate which side of the court
+    
+    Returns:
+        tuple: (selected_doubles_sideline, is_valid)
+    """
+    bx1, by1, bx2, by2 = baseline[0]
+    baseline_y = (by1 + by2) / 2
+    tolerance = 100  # pixels - lines are "close" if within this distance of baseline
+    
+    # Find lines that are vertically close to the baseline
+    close_lines = []
+    for line in diagonal_lines:
+        x1, y1, x2, y2 = line[0]
+        # Get the lowest point (highest y-coordinate) of the line
+        lowest_y = max(y1, y2)
+        # Check if this line is close to the baseline
+        if abs(lowest_y - baseline_y) < tolerance:
+            close_lines.append(line)
+    
+    print(f"{side.capitalize()} side: Found {len(close_lines)} lines close to baseline out of {len(diagonal_lines)} total")
+    
+    # Decision tree based on number of close lines
+    if len(close_lines) == 1:
+        # Branch 1: Exactly ONE line is close to baseline
+        print(f"{side.capitalize()} side: Branch 1 - One close line (assumed singles sideline)")
+        
+        singles_line = close_lines[0]
+        far_lines = [line for line in diagonal_lines if line not in close_lines]
+        
+        # Get midpoint of the assumed singles line
+        sx1, sy1, sx2, sy2 = singles_line[0]
+        mid_x = (sx1 + sx2) / 2
+        mid_y = (sy1 + sy2) / 2
+        
+        # Calculate reference x (x-coordinate of singles line at mid_y)
+        slope_singles, y_intercept_singles = get_line_equation(singles_line)
+        if slope_singles is None:  # vertical line
+            x_reference = sx1
+        else:
+            x_reference = (mid_y - y_intercept_singles) / slope_singles
+        
+        # Find the best candidate from far lines
+        best_candidate = None
+        min_distance = float('inf')
+        
+        for line in far_lines:
+            x1, y1, x2, y2 = line[0]
+            slope_candidate, y_intercept_candidate = get_line_equation(line)
+            
+            if slope_candidate is None:  # vertical line
+                x_candidate = x1
+            else:
+                x_candidate = (mid_y - y_intercept_candidate) / slope_candidate
+            
+            # Check for "outwardness"
+            if side == "right" and x_candidate > x_reference:
+                distance = abs(x_candidate - x_reference)
+                if distance < min_distance:
+                    min_distance = distance
+                    best_candidate = line
+            elif side == "left" and x_candidate < x_reference:
+                distance = abs(x_candidate - x_reference)
+                if distance < min_distance:
+                    min_distance = distance
+                    best_candidate = line
+        
+        if best_candidate is not None:
+            return best_candidate, True
+        else:
+            print(f"{side.capitalize()} side: No valid outward candidate found")
+            return None, False
+            
+    elif len(close_lines) == 2:
+        # Branch 2: Exactly TWO lines are close to baseline
+        print(f"{side.capitalize()} side: Branch 2 - Two close lines (singles and doubles sidelines)")
+        
+        line1, line2 = close_lines[0], close_lines[1]
+        
+        # Get midpoint of first line
+        x1, y1, x2, y2 = line1[0]
+        mid_x = (x1 + x2) / 2
+        
+        # Check if mid_x is within domain of second line
+        x3, y3, x4, y4 = line2[0]
+        if not (min(x3, x4) <= mid_x <= max(x3, x4)):
+            # Use midpoint of second line instead
+            mid_x = (x3 + x4) / 2
+        
+        # Calculate y-coordinates for both lines at shared mid_x
+        slope1, y_intercept1 = get_line_equation(line1)
+        slope2, y_intercept2 = get_line_equation(line2)
+        
+        if slope1 is None:  # vertical line
+            y1_at_mid = y1
+        else:
+            y1_at_mid = slope1 * mid_x + y_intercept1
+            
+        if slope2 is None:  # vertical line
+            y2_at_mid = y3
+        else:
+            y2_at_mid = slope2 * mid_x + y_intercept2
+        
+        # Select the outer line (lower y-coordinate = higher on screen)
+        if y1_at_mid < y2_at_mid:
+            outer_line = line1
+        else:
+            outer_line = line2
+        
+        return outer_line, True
+        
+    else:
+        # Branch 3: ZERO or MORE THAN TWO lines are close to baseline
+        print(f"{side.capitalize()} side: Branch 3 - Ambiguous case ({len(close_lines)} close lines)")
+        return None, False
+
+
 def get_polar_angle(line):
     """Calculate the polar angle of a line given its endpoints."""
     x1, y1, x2, y2 = line
@@ -715,6 +695,175 @@ def get_polar_angle(line):
     if angle_deg < 0:
         angle_deg += 360
     return angle_rad, angle_deg
+
+def find_baseline(horizontal_lines):
+    """Find the baseline from horizontal lines"""
+    baseline = None
+    for line in horizontal_lines:
+        x1, y1, x2, y2 = line[0]
+        if abs(x2-x1) >= MIN_BASELINE_LEN:  # long enough for baseline
+            if baseline is None:
+                baseline = line
+            elif (y1+y2)/2 > (baseline[0][1]+baseline[0][3])/2:  # mean y of current line is greater than mean y of previous baseline
+                baseline = line
+    return baseline
+
+def find_outer_line(lines):
+    """Find the outer line (lower y-coordinate) from a list of lines"""
+    if len(lines) < 2:
+        return lines[0] if lines else None
+    
+    # Try to find a shared x-point to compare y-values
+    line1, line2 = lines[0], lines[1]
+    
+    # Try midpoint of line1
+    x1, y1, x2, y2 = line1[0]
+    mid_x1 = (x1 + x2) / 2
+    
+    if is_x_in_line_domain(line2, mid_x1):
+        y1_at_mid = get_y_at_x(line1, mid_x1)
+        y2_at_mid = get_y_at_x(line2, mid_x1)
+        if y1_at_mid is not None and y2_at_mid is not None:
+            return line1 if y1_at_mid < y2_at_mid else line2
+    
+    # Try midpoint of line2
+    x1, y1, x2, y2 = line2[0]
+    mid_x2 = (x1 + x2) / 2
+    
+    if is_x_in_line_domain(line1, mid_x2):
+        y1_at_mid = get_y_at_x(line1, mid_x2)
+        y2_at_mid = get_y_at_x(line2, mid_x2)
+        if y1_at_mid is not None and y2_at_mid is not None:
+            return line1 if y1_at_mid < y2_at_mid else line2
+    
+    # If no shared x-point found, use the line with lower average y-coordinate
+    avg_y1 = (line1[0][1] + line1[0][3]) / 2
+    avg_y2 = (line2[0][1] + line2[0][3]) / 2
+    return line1 if avg_y1 < avg_y2 else line2
+
+def validate_sideline_candidate(candidate, baseline, image_width):
+    """Check if candidate line is close enough to baseline"""
+    if candidate is None or baseline is None:
+        return False
+    
+    # Calculate baseline width as percentage of screen width
+    bx1, by1, bx2, by2 = baseline[0]
+    baseline_width = abs(bx2 - bx1)
+    baseline_width_percentage = (baseline_width / image_width) * 100
+    
+    # Adjust tolerance based on baseline width
+    if baseline_width_percentage <= 98.5:
+        tolerance = 100  # Baseline is mostly visible
+    else:
+        tolerance = 150  # Baseline is cut off, doubles sidelines might not reach it
+    
+    # Get the bottom endpoint of the candidate (higher y-coordinate)
+    x1, y1, x2, y2 = candidate[0]
+    candidate_bottom_y = max(y1, y2)
+    
+    # Get the y-coordinate of the baseline
+    baseline_y = (by1 + by2) / 2
+    
+    # Check if the candidate's bottom is close to the baseline
+    return abs(candidate_bottom_y - baseline_y) <= tolerance
+
+def process_side_decision_tree(diagonal_lines, baseline, image_width, side):
+    """
+    Main decision tree for processing one side of the court.
+    Returns the doubles sideline for that side, or None if not found.
+    """
+    line_count = len(diagonal_lines)
+    
+    if line_count == 0:
+        print(f"{side.capitalize()} side: No diagonal lines found")
+        return None
+    elif line_count == 1:
+        print(f"{side.capitalize()} side: Only one diagonal line found")
+        return None
+    elif line_count == 2:
+        # Ideal case: exactly 2 lines
+        print(f"{side.capitalize()} side: Ideal case (2 lines)")
+        doubles_sideline = find_outer_line(diagonal_lines)
+        if validate_sideline_candidate(doubles_sideline, baseline, image_width):
+            return doubles_sideline
+        else:
+            print(f"{side.capitalize()} side: Validation failed for ideal case")
+            return None
+    else:
+        # Red herring case: more than 2 lines
+        print(f"{side.capitalize()} side: Red herring case ({line_count} lines)")
+        
+        # Check baseline width to determine strategy
+        bx1, by1, bx2, by2 = baseline[0]
+        baseline_width = abs(bx2 - bx1)
+        baseline_width_percentage = (baseline_width / image_width) * 100
+        
+        if baseline_width_percentage > 98.5:
+            # Full-width baseline case - use sophisticated decision tree
+            doubles_sideline, is_valid = process_full_width_baseline_case(
+                diagonal_lines, baseline, image_width, side)
+            if is_valid:
+                return doubles_sideline
+            else:
+                print(f"{side.capitalize()} side: Full-width baseline case failed")
+                return None
+        else:
+            # Partially visible baseline - use distance-based approach
+            doubles_sideline = process_partial_baseline_case(
+                diagonal_lines, baseline, image_width, side)
+            if validate_sideline_candidate(doubles_sideline, baseline, image_width):
+                return doubles_sideline
+            else:
+                print(f"{side.capitalize()} side: Partial baseline case failed")
+                return None
+
+def process_partial_baseline_case(diagonal_lines, baseline, image_width, side):
+    """Process case where baseline is partially visible (≤98.5% width)"""
+    bx1, by1, bx2, by2 = baseline[0]
+    baseline_y = (by1 + by2) / 2
+    
+    if side == "right":
+        baseline_end_x = max(bx1, bx2)
+    else:  # left
+        baseline_end_x = min(bx1, bx2)
+    
+    min_distance = float('inf')
+    best_candidate = None
+    
+    for line in diagonal_lines:
+        x1, y1, x2, y2 = line[0]
+        # Find the end of the line closest to the baseline end
+        near_end_x = x1 if y1 > y2 else x2
+        near_end_y = max(y1, y2)
+        distance = np.sqrt((near_end_x - baseline_end_x)**2 + (near_end_y - baseline_y)**2)
+        
+        if distance < min_distance:
+            min_distance = distance
+            best_candidate = line
+    
+    return best_candidate
+
+def get_line_equation(line):
+    """Get slope and y-intercept for a line segment"""
+    x1, y1, x2, y2 = line[0]
+    if x2 - x1 == 0:  # vertical line
+        return None, x1  # slope=None, x_intercept
+    slope = (y2 - y1) / (x2 - x1)
+    y_intercept = y1 - slope * x1
+    return slope, y_intercept
+
+def get_y_at_x(line, x):
+    """Get y-coordinate of line at given x-coordinate"""
+    slope, y_intercept = get_line_equation(line)
+    if slope is None:  # vertical line
+        return None
+    return slope * x + y_intercept
+
+def is_x_in_line_domain(line, x):
+    """Check if x-coordinate is within the domain of the line segment"""
+    x1, y1, x2, y2 = line[0]
+    return min(x1, x2) <= x <= max(x1, x2)
+
 
 
 if __name__ == "__main__":
