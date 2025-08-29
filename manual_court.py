@@ -446,97 +446,94 @@ class CourtDetector:
                                    baseline: Optional[List], 
                                    image_shape: Tuple[int, int]) -> np.ndarray:
         """
-        Create a quadrilateral polygon that defines the playable area.
+        Create an "out" mask, where white pixels represent areas outside the playable court.
         
         Args:
-            left_doubles_sideline: The left doubles sideline
-            right_doubles_sideline: The right doubles sideline
-            baseline: The baseline
-            image_shape: Shape of the image (height, width)
-            
+            left_doubles_sideline: The coordinates of the detected left sideline [(x1, y1, x2, y2)]
+            right_doubles_sideline: The coordinates of the detected right sideline [(x1, y1, x2, y2)]
+            baseline: The coordinates of the detected baseline [(x1, y1, x2, y2)]
+            image_shape: Tuple of (height, width) of the video frame
+        
         Returns:
-            Binary mask where white area represents the estimated playable court area
+            numpy.ndarray: Binary mask where white (255) represents the "out" area.
         """
         if left_doubles_sideline is None or right_doubles_sideline is None or baseline is None:
-            print("Warning: Missing court lines, cannot estimate playable area")
+            print("Warning: Missing court lines, cannot estimate 'out' area mask")
             return np.zeros(image_shape[:2], dtype=np.uint8)
         
-        # Define Parameters and Calculate Dynamic Shift
-        BASE_HORIZONTAL_SHIFT = 100  # pixels
+        # --- Calculate the EXTENDED sidelines (same logic as in draw_court_lines) ---
+        BASE_HORIZONTAL_SHIFT = 100
         screen_width = image_shape[1]
-        
-        # Calculate baseline width
         bx1, by1, bx2, by2 = baseline[0]
         baseline_width = abs(bx2 - bx1)
-        
-        # Calculate scaling factor and dynamic shift
-        scale_factor = baseline_width / screen_width
+        scale_factor = (baseline_width / screen_width)
         dynamic_shift = BASE_HORIZONTAL_SHIFT * scale_factor
         
-        print(f"Baseline width: {baseline_width}px, Screen width: {screen_width}px")
-        print(f"Scale factor: {scale_factor:.3f}, Dynamic shift: {dynamic_shift:.1f}px")
+        # Get line equations for original sidelines
+        lx1, ly1, lx2, ly2 = left_doubles_sideline[0]
+        left_slope = (ly2 - ly1) / (lx2 - lx1) if (lx2 - lx1) != 0 else float('inf')
+        left_intercept = ly1 - left_slope * lx1
         
-        # Shift both sidelines outward
-        shifted_left_sideline = self._shift_line_perpendicular(left_doubles_sideline, dynamic_shift, 1)
-        shifted_right_sideline = self._shift_line_perpendicular(right_doubles_sideline, dynamic_shift, 1)
+        rx1, ry1, rx2, ry2 = right_doubles_sideline[0]
+        right_slope = (ry2 - ry1) / (rx2 - rx1) if (rx2 - rx1) != 0 else float('inf')
+        right_intercept = ry1 - right_slope * rx1
         
-        # Define the four corners of the playable area
-        left_x1, left_y1, left_x2, left_y2 = shifted_left_sideline
-        right_x1, right_y1, right_x2, right_y2 = shifted_right_sideline
-        
-        # Determine which endpoint is bottom and which is top for each sideline
-        if left_y1 > left_y2:
-            left_bottom = (left_x1, left_y1)
-            left_top = (left_x2, left_y2)
+        # Calculate shifted intercepts for the extended sidelines (pink and yellow lines)
+        if left_slope != float('inf'):
+            left_shifted_intercept = left_intercept - dynamic_shift / np.sqrt(1 + left_slope**2)
         else:
-            left_bottom = (left_x2, left_y2)
-            left_top = (left_x1, left_y1)
+            left_shifted_intercept = left_intercept  # Not used for vertical line, but for completeness
         
-        if right_y1 > right_y2:
-            right_bottom = (right_x1, right_y1)
-            right_top = (right_x2, right_y2)
+        if right_slope != float('inf'):
+            right_shifted_intercept = right_intercept - dynamic_shift / np.sqrt(1 + right_slope**2)
         else:
-            right_bottom = (right_x2, right_y2)
-            right_top = (right_x1, right_y1)
+            right_shifted_intercept = right_intercept # Not used for vertical line
+
+        # --- Create the 'Out' Mask ---
+        height, width = image_shape[:2]
+        # Initialize a black mask. We will add the white 'out' areas to it.
+        out_mask = np.zeros((height, width), dtype=np.uint8)
         
-        # Define the four corners of the playable area
-        corner_bottom_left = left_bottom
-        corner_bottom_right = right_bottom
-        corner_top_right = right_top
-        corner_top_left = left_top
+        # Create a coordinate grid for the entire frame
+        y_coords, x_coords = np.meshgrid(np.arange(height), np.arange(width), indexing='ij')
         
-        print(f"Playable area corners:")
-        print(f"  Bottom-left: {corner_bottom_left}")
-        print(f"  Bottom-right: {corner_bottom_right}")
-        print(f"  Top-right: {corner_top_right}")
-        print(f"  Top-left: {corner_top_left}")
+        # 1. Process EXTENDED left sideline (pink line)
+        if left_slope != float('inf'):
+            # Calculate the y-value of the line for every x-coordinate in the frame
+            extended_left_y_values = left_slope * x_coords + left_shifted_intercept
+            # The "out" area is to the left, which is ABOVE the line in the image (smaller y-values)
+            left_out_area = y_coords < extended_left_y_values
+            out_mask[left_out_area] = 255
+        else:
+            # Vertical line case
+            left_shifted_x = lx1 - dynamic_shift
+            out_mask[x_coords < left_shifted_x] = 255
         
-        # Create and output the playable area mask
-        mask = np.zeros(image_shape[:2], dtype=np.uint8)
+        # 2. Process EXTENDED right sideline (yellow line)
+        if right_slope != float('inf'):
+            # Calculate the y-value of the line for every x-coordinate in the frame
+            extended_right_y_values = right_slope * x_coords + right_shifted_intercept
+            # The "out" area is to the right, which is ALSO ABOVE the line in the image (smaller y-values)
+            right_out_area = y_coords < extended_right_y_values
+            out_mask[right_out_area] = 255
+        else:
+            # Vertical line case
+            right_shifted_x = rx1 + dynamic_shift
+            out_mask[x_coords > right_shifted_x] = 255
         
-        # Define the polygon vertices
-        vertices = np.array([
-            corner_bottom_left,
-            corner_bottom_right,
-            corner_top_right,
-            corner_top_left
-        ], dtype=np.int32)
-        
-        # Fill the polygon with white (255)
-        cv2.fillPoly(mask, [vertices], 255)
-        
-        return mask
+        return out_mask
     
     def process_video(self, video_path: str, target_time: int = 60) -> Tuple[np.ndarray, np.ndarray, dict]:
         """
-        Main wrapper method to process a video and return the court lines.
+        Main wrapper method to process a video and return the "out" mask.
         
         Args:
             video_path: Path to the video file
             target_time: Time in seconds to extract frame from (default: 60)
             
         Returns:
-            Tuple of (processed_frame_with_lines, clean_frame, metadata)
+            Tuple of (out_mask, clean_frame, metadata) where out_mask is a binary mask
+            where white (255) represents areas outside the playable court
         """
         print(f"Processing video: {video_path}")
         
@@ -563,8 +560,8 @@ class CourtDetector:
         left_doubles_sideline = self.process_side_decision_tree(
             merged_left_diagonals, baseline, clean_frame.shape[1], "left")
         
-        # Step 6: Draw the lines on the image
-        final_result_image = self.draw_court_lines(clean_frame, baseline, left_doubles_sideline, right_doubles_sideline)
+        # Step 6: Generate the "out" mask
+        out_mask = self.estimate_playable_court_area(left_doubles_sideline, right_doubles_sideline, baseline, clean_frame.shape)
         
         # Create metadata
         metadata = {
@@ -575,7 +572,7 @@ class CourtDetector:
             "image_width": clean_frame.shape[1]
         }
         
-        return final_result_image, clean_frame, metadata
+        return out_mask, clean_frame, metadata
     
     def draw_court_lines(self, frame: np.ndarray, baseline: Optional[List], 
                         left_doubles_sideline: Optional[List], 

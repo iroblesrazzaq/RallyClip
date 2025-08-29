@@ -535,7 +535,7 @@ def main():
             screen_width = src.shape[1]
             bx1, by1, bx2, by2 = baseline[0]
             baseline_width = abs(bx2 - bx1)
-            scale_factor = baseline_width / screen_width
+            scale_factor = (baseline_width / screen_width)
             dynamic_shift = BASE_HORIZONTAL_SHIFT * scale_factor
             
             # Shift lines for visualization
@@ -638,22 +638,42 @@ def main():
         print(f"Image shape: {final_result_image.shape}")
         print("DEBUG: About to show image...")
         
-        # Create named window and show image
+        # Create named window and show image with court lines
         window_name = f'Court Detection - {video_path.split("/")[-1]}'
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
         cv2.imshow(window_name, final_result_image)
-        
-        print("DEBUG: Image should be displayed now")
-        print("Press any key to continue to next video...")
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+        print("DEBUG: Court lines image should be displayed now")
+        print("Press any key to continue to playable area mask...")
         
         # Wait for key press and ensure window is visible
-        while True:
-            key = cv2.waitKey(100) & 0xFF  # Wait 100ms at a time
-            if key != 255:  # Any key pressed
-                break
-            # Check if window was closed
-            if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
-                break
+
+        
+        # Create and show playable area mask overlay
+        print("DEBUG: Creating playable area mask overlay...")
+        
+        # Since we now have an "out" mask (white = outside areas), we need to invert it for display
+        # to show the playable area (black = outside, white = playable)
+        playable_area_display = 255 - playable_area_mask
+        
+        # Create a colored overlay for the playable area
+        playable_overlay = np.zeros_like(final_result_image)
+        playable_overlay[playable_area_display > 0] = [0, 255, 0]  # Green for playable area
+        
+        # Blend the overlay with the original image
+        alpha = 0.3  # Transparency factor
+        mask_overlay_image = cv2.addWeighted(final_result_image, 1-alpha, playable_overlay, alpha, 0)
+        
+        # Create named window and show playable area mask
+        mask_window_name = f'Playable Area Mask - {video_path.split("/")[-1]}'
+        cv2.namedWindow(mask_window_name, cv2.WINDOW_NORMAL)
+        cv2.imshow(mask_window_name, mask_overlay_image)
+        
+        print("DEBUG: Playable area mask should be displayed now")
+        print("Press any key to continue to next video...")
+        cv2.waitKey(0)
+
         
         cv2.destroyAllWindows()
         print("DEBUG: Window closed, moving to next video")
@@ -999,7 +1019,7 @@ def is_x_in_line_domain(line, x):
 
 def estimate_playable_court_area(left_doubles_sideline, right_doubles_sideline, baseline, image_shape):
     """
-    Create a quadrilateral polygon that defines the playable area by shifting the detected doubles sidelines outwards.
+    Create an "out" mask, where white pixels represent areas outside the playable court.
     
     Args:
         left_doubles_sideline: The coordinates of the detected left sideline [(x1, y1, x2, y2)]
@@ -1008,130 +1028,75 @@ def estimate_playable_court_area(left_doubles_sideline, right_doubles_sideline, 
         image_shape: Tuple of (height, width) of the video frame
     
     Returns:
-        numpy.ndarray: Binary mask where white area represents the estimated playable court area
+        numpy.ndarray: Binary mask where white (255) represents the "out" area.
     """
     if left_doubles_sideline is None or right_doubles_sideline is None or baseline is None:
-        print("Warning: Missing court lines, cannot estimate playable area")
+        print("Warning: Missing court lines, cannot estimate 'out' area mask")
         return np.zeros(image_shape[:2], dtype=np.uint8)
     
-    # Step 1: Define Parameters and Calculate Dynamic Shift
-    BASE_HORIZONTAL_SHIFT = 100  # pixels - desired buffer when baseline fills entire screen
+    # --- Calculate the EXTENDED sidelines (same logic as in draw_court_lines) ---
+    BASE_HORIZONTAL_SHIFT = 100
     screen_width = image_shape[1]
-    
-    # Calculate baseline width
     bx1, by1, bx2, by2 = baseline[0]
     baseline_width = abs(bx2 - bx1)
-    
-    # Calculate scaling factor and dynamic shift
     scale_factor = baseline_width / screen_width
     dynamic_shift = BASE_HORIZONTAL_SHIFT * scale_factor
     
-    print(f"Baseline width: {baseline_width}px, Screen width: {screen_width}px")
-    print(f"Scale factor: {scale_factor:.3f}, Dynamic shift: {dynamic_shift:.1f}px")
+    # Get line equations for original sidelines
+    lx1, ly1, lx2, ly2 = left_doubles_sideline[0]
+    left_slope = (ly2 - ly1) / (lx2 - lx1) if (lx2 - lx1) != 0 else float('inf')
+    left_intercept = ly1 - left_slope * lx1
     
-    # Step 2: Perpendicularly Shift Each Sideline
-    def shift_line_perpendicular(line, shift_amount, outward_direction):
-        """
-        Shift a line perpendicular to its direction by the specified amount.
-        
-        Args:
-            line: Line coordinates [(x1, y1, x2, y2)]
-            shift_amount: Distance to shift in pixels
-            outward_direction: 1 for outward shift, -1 for inward shift
-        
-        Returns:
-            tuple: New line coordinates (x1, y1, x2, y2)
-        """
-        x1, y1, x2, y2 = line[0]
-        
-        # Calculate the line vector
-        vx = x2 - x1
-        vy = y2 - y1
-        
-        # Calculate perpendicular normal vector (outward from court)
-        # For a vector (vx, vy), the perpendicular is (-vy, vx)
-        # We need to ensure it points outward from the court
-        perp_x = -vy
-        perp_y = vx
-        
-        # Normalize to get unit vector
-        length = np.sqrt(perp_x**2 + perp_y**2)
-        if length == 0:
-            return (x1, y1, x2, y2)  # Return original if line has no length
-        
-        unit_perp_x = perp_x / length
-        unit_perp_y = perp_y / length
-        
-        # Apply shift in outward direction
-        shift_x = unit_perp_x * shift_amount * outward_direction
-        shift_y = unit_perp_y * shift_amount * outward_direction
-        
-        # Calculate new endpoints
-        new_x1 = int(x1 + shift_x)
-        new_y1 = int(y1 + shift_y)
-        new_x2 = int(x2 + shift_x)
-        new_y2 = int(y2 + shift_y)
-        
-        return (new_x1, new_y1, new_x2, new_y2)
+    rx1, ry1, rx2, ry2 = right_doubles_sideline[0]
+    right_slope = (ry2 - ry1) / (rx2 - rx1) if (rx2 - rx1) != 0 else float('inf')
+    right_intercept = ry1 - right_slope * rx1
     
-    # Shift both sidelines outward
-    shifted_left_sideline = shift_line_perpendicular(left_doubles_sideline, dynamic_shift, 1)
-    shifted_right_sideline = shift_line_perpendicular(right_doubles_sideline, dynamic_shift, 1)
-    
-    print(f"Original left sideline: {left_doubles_sideline[0]}")
-    print(f"Shifted left sideline: {shifted_left_sideline}")
-    print(f"Original right sideline: {right_doubles_sideline[0]}")
-    print(f"Shifted right sideline: {shifted_right_sideline}")
-    
-    # Step 3: Define the Four Corners of the Playable Area
-    # Extract endpoints from shifted sidelines
-    left_x1, left_y1, left_x2, left_y2 = shifted_left_sideline
-    right_x1, right_y1, right_x2, right_y2 = shifted_right_sideline
-    
-    # Determine which endpoint is bottom and which is top for each sideline
-    # Bottom endpoint has higher y-coordinate (lower in image)
-    if left_y1 > left_y2:
-        left_bottom = (left_x1, left_y1)
-        left_top = (left_x2, left_y2)
+    # Calculate shifted intercepts for the extended sidelines (pink and yellow lines)
+    if left_slope != float('inf'):
+        left_shifted_intercept = left_intercept - dynamic_shift / np.sqrt(1 + left_slope**2)
     else:
-        left_bottom = (left_x2, left_y2)
-        left_top = (left_x1, left_y1)
+        left_shifted_intercept = left_intercept  # Not used for vertical line, but for completeness
     
-    if right_y1 > right_y2:
-        right_bottom = (right_x1, right_y1)
-        right_top = (right_x2, right_y2)
+    if right_slope != float('inf'):
+        right_shifted_intercept = right_intercept - dynamic_shift / np.sqrt(1 + right_slope**2)
     else:
-        right_bottom = (right_x2, right_y2)
-        right_top = (right_x1, right_y1)
+        right_shifted_intercept = right_intercept # Not used for vertical line
+
+    # --- Create the 'Out' Mask ---
+    height, width = image_shape[:2]
+    # Initialize a black mask. We will add the white 'out' areas to it.
+    out_mask = np.zeros((height, width), dtype=np.uint8)
     
-    # Define the four corners of the playable area
-    corner_bottom_left = left_bottom
-    corner_bottom_right = right_bottom
-    corner_top_right = right_top
-    corner_top_left = left_top
+    # Create a coordinate grid for the entire frame
+    y_coords, x_coords = np.meshgrid(np.arange(height), np.arange(width), indexing='ij')
     
-    print(f"Playable area corners:")
-    print(f"  Bottom-left: {corner_bottom_left}")
-    print(f"  Bottom-right: {corner_bottom_right}")
-    print(f"  Top-right: {corner_top_right}")
-    print(f"  Top-left: {corner_top_left}")
+    # 1. Process EXTENDED left sideline (pink line)
+    if left_slope != float('inf'):
+        # Calculate the y-value of the line for every x-coordinate in the frame
+        extended_left_y_values = left_slope * x_coords + left_shifted_intercept
+        # The "out" area is to the left, which is ABOVE the line in the image (smaller y-values)
+        left_out_area = y_coords < extended_left_y_values
+        out_mask[left_out_area] = 255
+    else:
+        # Vertical line case
+        left_shifted_x = lx1 - dynamic_shift
+        out_mask[x_coords < left_shifted_x] = 255
     
-    # Step 4: Create and Output the Playable Area Mask
-    # Create a blank single-channel image
-    mask = np.zeros(image_shape[:2], dtype=np.uint8)
+    # 2. Process EXTENDED right sideline (yellow line)
+    if right_slope != float('inf'):
+        # Calculate the y-value of the line for every x-coordinate in the frame
+        extended_right_y_values = right_slope * x_coords + right_shifted_intercept
+        # The "out" area is to the right, which is ALSO ABOVE the line in the image (smaller y-values)
+        right_out_area = y_coords < extended_right_y_values
+        out_mask[right_out_area] = 255
+    else:
+        # Vertical line case
+        right_shifted_x = rx1 + dynamic_shift
+        out_mask[x_coords > right_shifted_x] = 255
     
-    # Define the polygon vertices
-    vertices = np.array([
-        corner_bottom_left,
-        corner_bottom_right,
-        corner_top_right,
-        corner_top_left
-    ], dtype=np.int32)
+
     
-    # Fill the polygon with white (255)
-    cv2.fillPoly(mask, [vertices], 255)
-    
-    return mask
+    return out_mask
 
 def filter_players_by_playable_area(player_bboxes, playable_area_mask):
     """

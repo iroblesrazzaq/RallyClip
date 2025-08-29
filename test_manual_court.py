@@ -32,20 +32,31 @@ def test_court_detection():
     
     try:
         # Process the video using the class-based approach
-        processed_frame_with_lines, clean_frame, metadata = detector.process_video(video_path, target_time=60)
+        out_mask, clean_frame, metadata = detector.process_video(video_path, target_time=60)
         
         print("Processing complete!")
         print(f"Metadata: {metadata}")
         
+        # Save the results
+        cv2.imwrite("test_out_mask.png", out_mask)
+        cv2.imwrite("test_clean_frame.png", clean_frame)
         
         print("Results saved:")
-        print("- test_court_lines_result.png (frame with court lines drawn)")
+        print("- test_out_mask.png (binary mask where white = out of bounds)")
         print("- test_clean_frame.png (clean frame without lines)")
         
-        # Display the result
-        print("Displaying result... Press any key to close")
-        cv2.namedWindow("Court Detection Result", cv2.WINDOW_NORMAL)
-        cv2.imshow("Court Detection Result", processed_frame_with_lines)
+        # Display the results
+        print("Displaying results... Press any key to close")
+        
+        # Show the out mask
+        cv2.namedWindow("Out Mask (White = Out of Bounds)", cv2.WINDOW_NORMAL)
+        cv2.imshow("Out Mask (White = Out of Bounds)", out_mask)
+        
+        # Show the mask on the clean frame
+        masked_frame = cv2.bitwise_and(clean_frame, clean_frame, mask=~out_mask) # invert the mask
+        cv2.namedWindow("Masked Frame", cv2.WINDOW_NORMAL)
+        cv2.imshow("Masked Frame", masked_frame)
+        
         cv2.waitKey(0)
         cv2.destroyAllWindows()
         
