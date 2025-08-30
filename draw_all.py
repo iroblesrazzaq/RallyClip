@@ -6,15 +6,23 @@ This script finds all .npz pose data files in the pose_data directory and create
 annotated videos for each one using the video_annotator.py script.
 
 Usage:
-    python draw_all.py [model_size]
+    python draw_all.py [start_time] [duration] [model_size]
     
-    model_size: Optional YOLO model size (n, s, m, l) to filter files. 
-                If not provided, processes all .npz files.
+    start_time: Optional start time in seconds to filter files
+    duration: Optional duration in seconds to filter files  
+    model_size: Optional YOLO model size (n, s, m, l) to filter files
+    
+    If only one argument is provided, it's treated as model_size.
+    If three arguments are provided, they're treated as [start_time] [duration] [model_size].
+    If no arguments are provided, processes all .npz files.
 
 Examples:
-    python draw_all.py          # Process all .npz files
-    python draw_all.py s        # Process only small model files
-    python draw_all.py m        # Process only medium model files
+    python draw_all.py                    # Process all .npz files
+    python draw_all.py s                  # Process only small model files
+    python draw_all.py m                  # Process only medium model files
+    python draw_all.py 0 60 s             # Process small model files from 0s to 60s
+    python draw_all.py 30 60 m            # Process medium model files from 30s to 90s
+    python draw_all.py 0 120 l            # Process large model files from 0s to 120s
 """
 
 import os
@@ -25,12 +33,14 @@ import sys
 import re
 
 
-def get_npz_files(model_size=None):
+def get_npz_files(model_size=None, start_time=None, duration=None):
     """
-    Get all .npz files from pose_data subdirectories, optionally filtered by model size.
+    Get all .npz files from pose_data subdirectories, optionally filtered by model size and time range.
     
     Args:
         model_size (str, optional): Model size to filter by (n, s, m, l)
+        start_time (int, optional): Start time in seconds to filter by
+        duration (int, optional): Duration in seconds to filter by
         
     Returns:
         list: List of .npz file paths
@@ -49,21 +59,39 @@ def get_npz_files(model_size=None):
             npz_pattern = os.path.join(subdir_path, "*.npz")
             all_files.extend(glob.glob(npz_pattern))
     
+    filtered_files = all_files
+    
+    # Filter by model size
     if model_size:
-        # Filter by model size
-        filtered_files = []
-        for file_path in all_files:
+        model_filtered = []
+        for file_path in filtered_files:
             filename = os.path.basename(file_path)
             if f"_yolo{model_size}.npz" in filename:
-                filtered_files.append(file_path)
-        return filtered_files
-    else:
-        return all_files
+                model_filtered.append(file_path)
+        filtered_files = model_filtered
+    
+    # Filter by time range
+    if start_time is not None and duration is not None:
+        end_time = start_time + duration
+        time_filtered = []
+        for file_path in filtered_files:
+            # Extract time range from subdirectory name
+            subdir_name = os.path.basename(os.path.dirname(file_path))
+            # Parse time range from subdirectory like "yolom_0.05conf_30s_to_90s"
+            time_match = re.search(r'_(\d+)s_to_(\d+)s$', subdir_name)
+            if time_match:
+                file_start = int(time_match.group(1))
+                file_end = int(time_match.group(2))
+                if file_start == start_time and file_end == end_time:
+                    time_filtered.append(file_path)
+        filtered_files = time_filtered
+    
+    return filtered_files
 
 
 def extract_video_info_from_filename(npz_path):
     """
-    Extract video path, start time, duration, and model size from .npz filename.
+    Extract video path, start time, duration, and model size from .npz filename and subdirectory.
     
     Args:
         npz_path (str): Path to .npz file
@@ -72,16 +100,20 @@ def extract_video_info_from_filename(npz_path):
         dict: Dictionary with video_path, start_time, duration, model_size
     """
     filename = os.path.basename(npz_path)
+    subdir_name = os.path.basename(os.path.dirname(npz_path))
     
-    # Extract model size
+    # Extract model size from filename
     model_size_match = re.search(r'_yolo([nslm])\.npz$', filename)
     model_size = model_size_match.group(1) if model_size_match else 's'
     
-    # Extract time range
-    time_match = re.search(r'_posedata_(\d+)s_to_(\d+)s_', filename)
+    # Extract time range from subdirectory name (new format)
+    time_match = re.search(r'_(\d+)s_to_(\d+)s$', subdir_name)
     if not time_match:
-        print(f"⚠️  Could not parse time range from filename: {filename}")
-        return None
+        # Fallback to filename parsing (old format)
+        time_match = re.search(r'_posedata_(\d+)s_to_(\d+)s_', filename)
+        if not time_match:
+            print(f"⚠️  Could not parse time range from filename or subdirectory: {filename}")
+            return None
     
     start_time = int(time_match.group(1))
     end_time = int(time_match.group(2))
@@ -131,23 +163,46 @@ def run_annotation_command(video_path, start_time, duration, model_size):
 
 def main():
     # Parse command line arguments
-    model_size = sys.argv[1] if len(sys.argv) > 1 else None
+    if len(sys.argv) >= 4:
+        # Format: python draw_all.py [start_time] [duration] [model_size]
+        start_time = int(sys.argv[1])
+        duration = int(sys.argv[2])
+        model_size = sys.argv[3]
+    elif len(sys.argv) >= 2:
+        # Format: python draw_all.py [model_size]
+        start_time = None
+        duration = None
+        model_size = sys.argv[1]
+    else:
+        # No arguments - process all files
+        start_time = None
+        duration = None
+        model_size = None
     
     print("🎨 Batch Annotating All Pose Data Files")
     print("=" * 50)
     
-    if model_size:
+    if model_size and start_time is not None and duration is not None:
         print(f"Model size filter: {model_size}")
+        print(f"Time range filter: {start_time}s to {start_time + duration}s")
+    elif model_size:
+        print(f"Model size filter: {model_size}")
+    elif start_time is not None and duration is not None:
+        print(f"Time range filter: {start_time}s to {start_time + duration}s")
     else:
-        print("Processing all model sizes")
+        print("Processing all files")
     
     # Get .npz files
-    npz_files = get_npz_files(model_size)
+    npz_files = get_npz_files(model_size, start_time, duration)
     
     if not npz_files:
         print("❌ No .npz files found!")
-        if model_size:
+        if model_size and start_time is not None and duration is not None:
+            print(f"   No files found for model size '{model_size}' and time range {start_time}s to {start_time + duration}s")
+        elif model_size:
             print(f"   No files found for model size '{model_size}'")
+        elif start_time is not None and duration is not None:
+            print(f"   No files found for time range {start_time}s to {start_time + duration}s")
         return False
     
     print(f"\n📁 Found {len(npz_files)} .npz files:")
@@ -180,7 +235,10 @@ def main():
         
         # Check if annotated video already exists
         base_name = os.path.splitext(os.path.basename(info['video_path']))[0]
-        annotated_path = f"sanity_check_clips/{base_name}_annotated_{info['start_time']}s_to_{info['start_time'] + info['duration']}s_yolo{info['model_size']}.mp4"
+        # Construct the expected annotated video path using the new directory structure
+        confidence_threshold = "0.05"  # Default confidence threshold
+        subdir_name = f"yolo{info['model_size']}_{confidence_threshold}conf_{info['start_time']}s_to_{info['start_time'] + info['duration']}s"
+        annotated_path = f"sanity_check_clips/{subdir_name}/{base_name}_annotated_{info['start_time']}s_to_{info['start_time'] + info['duration']}s_yolo{info['model_size']}.mp4"
         
         if os.path.exists(annotated_path):
             print(f"⏭️  Skipping - annotated video already exists: {os.path.basename(annotated_path)}")

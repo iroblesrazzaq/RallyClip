@@ -77,7 +77,20 @@ class PoseExtractor:
         
         print("Extracting pose data...")
         processed_frames = 0
-        target_frame_count = 0
+        
+        # Calculate which frames to process for target FPS
+        target_frames = []
+        frame_interval = fps / target_fps
+        for i in range(total_frames_to_process):
+            current_time = start_time_seconds + (i / fps)
+            target_frame_index = int(current_time * target_fps)
+            target_time = target_frame_index / target_fps
+            
+            # Check if this frame should be processed (closest to target time)
+            if abs(current_time - target_time) <= (1 / target_fps) / 2:
+                target_frames.append(i)3
+        
+        print(f"Will process {len(target_frames)} frames out of {total_frames_to_process} total frames")
         
         for i in range(total_frames_to_process):
             ret, frame = cap.read()
@@ -86,12 +99,8 @@ class PoseExtractor:
                 print(f"Error reading frame {i + start_frame}")
                 break
             
-            # Calculate target time for this frame
-            current_time = start_time_seconds + (i / fps)
-            target_time = target_frame_count / target_fps
-            
-            # Check if we should process this frame (within tolerance)
-            if abs(current_time - target_time) <= (1 / fps) / 2:  # Within half a frame tolerance
+            # Check if we should process this frame
+            if i in target_frames:
                 # Run YOLOv8-pose model on the frame (no plotting)
                 results = self.model(frame, verbose=False, device=self.device, conf=0.05, imgsz=1920)
                 
@@ -118,7 +127,6 @@ class PoseExtractor:
                 
                 all_frames_data.append(frame_data)
                 processed_frames += 1
-                target_frame_count += 1
             else:
                 # Skip this frame - add empty data to maintain frame alignment
                 frame_data = {
