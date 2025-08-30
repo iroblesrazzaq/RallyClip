@@ -148,18 +148,17 @@ class VideoAnnotator:
 
 if __name__ == "__main__":
     # Parse command line arguments
-    if len(sys.argv) == 3:
+    if len(sys.argv) >= 3:
         start_time = int(sys.argv[1])
         duration = int(sys.argv[2])
+        video_path = sys.argv[3] if len(sys.argv) > 3 else "raw_videos/Monica Greene unedited tennis match play.mp4"
     else:
         start_time = 0
         duration = 10  # Default to 10 seconds for testing
+        video_path = "raw_videos/Monica Greene unedited tennis match play.mp4"
     
     # Start timing
     script_start_time = time.time()
-    
-    # Configuration
-    video_path = "raw_videos/Monica Greene unedited tennis match play.mp4"
     
     # Dynamically construct data path
     base_name = os.path.splitext(os.path.basename(video_path))[0]

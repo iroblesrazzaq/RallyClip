@@ -13,7 +13,7 @@ class PoseExtractor:
     from video segments and saves it to compressed .npz files.
     """
     
-    def __init__(self, model_path='yolov8s-pose.pt'):
+    def __init__(self, model_path='yolov8n-pose.pt'):
         """
         Initialize the PoseExtractor with a YOLOv8-pose model.
         
@@ -32,7 +32,7 @@ class PoseExtractor:
         self.model = YOLO(model_path)
         print(f"YOLOv8-pose model loaded successfully from: {model_path}")
     
-    def extract_pose_data(self, video_path, start_time_seconds=0, duration_seconds=60, every_k_frames=1):
+    def extract_pose_data(self, video_path, start_time_seconds=0, duration_seconds=60, target_fps=15):
         """
         Extract raw pose data from a video segment and save to .npz file.
         
@@ -40,7 +40,7 @@ class PoseExtractor:
             video_path (str): Path to the input video file
             start_time_seconds (int): Start time in seconds (default: 0)
             duration_seconds (int): Duration to process in seconds (default: 60)
-            every_k_frames (int): Process every kth frame (default: 1, process all frames)
+            target_fps (int): Target frame rate for consistent temporal sampling (default: 15)
             
         Returns:
             str: Path to the created .npz file
@@ -60,8 +60,12 @@ class PoseExtractor:
         start_frame = int(start_time_seconds * fps)
         end_frame = min(int(start_frame + (duration_seconds * fps)), total_frames)
         
-        print(f"Processing frames {start_frame} to {end_frame} (FPS: {fps})")
-        print(f"Processing every {every_k_frames} frame(s)")
+        print(f"Processing frames {start_frame} to {end_frame} (Source FPS: {fps})")
+        print(f"Target FPS: {target_fps}")
+        
+        # Calculate frame selection for target FPS
+        frame_interval = fps / target_fps
+        print(f"Frame interval: {frame_interval:.2f} frames")
         
         # Set video position to start frame
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
@@ -69,10 +73,11 @@ class PoseExtractor:
         # Initialize list to store all frame data
         all_frames_data = []
         total_frames_to_process = end_frame - start_frame
-        frames_to_skip = every_k_frames - 1
         
         print("Extracting pose data...")
         processed_frames = 0
+        target_frame_count = 0
+        
         for i in range(total_frames_to_process):
             ret, frame = cap.read()
             
@@ -80,10 +85,14 @@ class PoseExtractor:
                 print(f"Error reading frame {i + start_frame}")
                 break
             
-            # Only process every kth frame
-            if i % every_k_frames == 0:
+            # Calculate target time for this frame
+            current_time = start_time_seconds + (i / fps)
+            target_time = target_frame_count / target_fps
+            
+            # Check if we should process this frame (within tolerance)
+            if abs(current_time - target_time) <= (1 / fps) / 2:  # Within half a frame tolerance
                 # Run YOLOv8-pose model on the frame (no plotting)
-                results = self.model(frame, verbose=False, device=self.device, conf=0.03, imgsz=1920)
+                results = self.model(frame, verbose=False, device=self.device, conf=0.05, imgsz=1920)
                 
                 # Extract raw numerical data
                 frame_data = {}
@@ -108,6 +117,7 @@ class PoseExtractor:
                 
                 all_frames_data.append(frame_data)
                 processed_frames += 1
+                target_frame_count += 1
             else:
                 # Skip this frame - add empty data to maintain frame alignment
                 frame_data = {
@@ -149,30 +159,29 @@ if __name__ == "__main__":
     if len(sys.argv) >= 3:
         start_time = int(sys.argv[1])
         duration = int(sys.argv[2])
-        every_k_frames = int(sys.argv[3]) if len(sys.argv) > 3 else 1
+        target_fps = int(sys.argv[3]) if len(sys.argv) > 3 else 15
+        video_path = sys.argv[4] if len(sys.argv) > 4 else "raw_videos/Monica Greene unedited tennis match play.mp4"
     else:
         start_time = 0
         duration = 10  # Default to 10 seconds for testing
-        every_k_frames = 1
+        target_fps = 15
+        video_path = "raw_videos/Monica Greene unedited tennis match play.mp4"
     
     # Start timing
     script_start_time = time.time()
-    
-    # Configuration
-    video_path = "raw_videos/Monica Greene unedited tennis match play.mp4"
     
     print("Initializing PoseExtractor...")
     pose_extractor = PoseExtractor()
     
     print(f"Processing video: {video_path}")
-    print(f"Start time: {start_time}s, Duration: {duration}s, Every {every_k_frames} frame(s)")
+    print(f"Start time: {start_time}s, Duration: {duration}s, Target FPS: {target_fps}")
     
     # Extract pose data
     output_path = pose_extractor.extract_pose_data(
         video_path=video_path,
         start_time_seconds=start_time,
         duration_seconds=duration,
-        every_k_frames=every_k_frames
+        target_fps=target_fps
     )
     
     if output_path is None:

@@ -4,3 +4,4 @@
 *.llc
 repomix-output.xml
 *.npz
+*.pt
