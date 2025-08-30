@@ -1015,7 +1015,7 @@ if __name__ == "__main__":
     detector = CourtDetector()
     
     # Example video path
-    video_path = "raw_videos/example_video.mp4"
+    video_path = "raw_videos/Monica Greene unedited tennis match play.mp4"
     
     # Process the video
     processed_frame_with_lines, clean_frame, metadata = detector.process_video(video_path)

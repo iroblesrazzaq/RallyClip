@@ -3,3 +3,4 @@
 *.csv
 *.llc
 repomix-output.xml
+*.npz
