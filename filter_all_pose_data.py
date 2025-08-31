@@ -89,7 +89,14 @@ def run_filter_for_video(input_dir, video_path, overwrite=False):
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 minute timeout
         
         if result.returncode == 0:
-            print(f"✅ Success: {os.path.basename(video_path)}")
+            # Check if court filtering was successful or if it failed but continued without filtering
+            output = result.stdout.strip()
+            if "Court filtering: Enabled" in output:
+                print(f"✅ Success (with court filtering): {os.path.basename(video_path)}")
+            elif "Court filtering: Disabled" in output:
+                print(f"⚠️  Success (without court filtering): {os.path.basename(video_path)}")
+            else:
+                print(f"✅ Success: {os.path.basename(video_path)}")
             return True
         else:
             print(f"❌ Failed: {os.path.basename(video_path)}")
@@ -134,6 +141,8 @@ def main():
     
     # Process each video
     successful = 0
+    successful_with_filtering = 0
+    successful_without_filtering = 0
     failed = 0
     
     for i, video_path in enumerate(video_files, 1):
@@ -142,6 +151,8 @@ def main():
         
         if run_filter_for_video(args.input_dir, video_path, args.overwrite):
             successful += 1
+            # Note: We can't easily track filtering status here since it's in the subprocess output
+            # The individual video processing will show the status
         else:
             failed += 1
         
@@ -160,6 +171,7 @@ def main():
     print(f"Failed: {failed}")
     print(f"Success rate: {(successful * 100 / len(video_files)):.1f}%")
     print(f"Total runtime: {total_runtime:.2f} seconds ({total_runtime/60:.2f} minutes)")
+    print(f"\nNote: Check individual video outputs above for court filtering status")
     
     if failed == 0:
         print("\n🎉 All videos processed successfully!")

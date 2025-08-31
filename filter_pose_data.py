@@ -73,14 +73,14 @@ Examples:
     return parser.parse_args()
 
 
-def filter_single_npz_file(input_npz_path, output_npz_path, mask):
+def filter_single_npz_file(input_npz_path, output_npz_path, mask=None):
     """
     Filter a single .npz file based on the playable area mask.
     
     Args:
         input_npz_path (str): Path to input .npz file
         output_npz_path (str): Path to output .npz file
-        mask (np.ndarray): The playable area mask
+        mask (np.ndarray, optional): The playable area mask. If None, no filtering is applied.
         
     Returns:
         bool: True if successful, False otherwise
@@ -88,6 +88,17 @@ def filter_single_npz_file(input_npz_path, output_npz_path, mask):
     try:
         # Load pose data
         pose_data = np.load(input_npz_path, allow_pickle=True)['frames']
+        
+        # If no mask is provided (court detection failed), copy data without filtering
+        if mask is None:
+            print(f"  ⚠️  No court mask available - copying data without filtering")
+            # Create output directory if it doesn't exist
+            output_dir = os.path.dirname(output_npz_path)
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Save the original data without filtering
+            np.savez_compressed(output_npz_path, frames=pose_data)
+            return True
         
         # Initialize data structures for filtered results
         filtered_frames_data = []
@@ -162,24 +173,33 @@ def main():
     
     # Check if video file exists
     if not os.path.exists(args.video_path):
-        print(f"❌ Error: Video file not found: {args.video_path}")
-        sys.exit(1)
-    
-    # Generate mask on-the-fly
-    print("🔄 Generating court mask...")
-    try:
-        detector = CourtDetector()
-        mask, clean_frame, metadata = detector.process_video(args.video_path, target_time=60)
-        
-        if mask is None or not np.any(mask):
-            print(f"❌ Error: Could not generate mask from video")
-            sys.exit(1)
-        
-        print(f"✓ Generated mask: {mask.shape}")
-        print(f"  Metadata: {metadata}")
-    except Exception as e:
-        print(f"❌ Error generating mask: {e}")
-        sys.exit(1)
+        print(f"⚠️  Video file not found: {args.video_path}")
+        print(f"  Continuing without court filtering...")
+        mask = None
+        court_filtering_enabled = False
+    else:
+        # Generate mask on-the-fly
+        print("🔄 Generating court mask...")
+        try:
+            detector = CourtDetector()
+            mask, clean_frame, metadata = detector.process_video(args.video_path, target_time=60)
+            
+            # Check if court detection was successful
+            if mask is None:
+                print(f"⚠️  Court detection failed: {metadata.get('error', 'Unknown error')}")
+                print(f"  Metadata: {metadata}")
+                print(f"  Continuing without court filtering...")
+                court_filtering_enabled = False
+            else:
+                print(f"✓ Generated mask: {mask.shape}")
+                print(f"  Metadata: {metadata}")
+                court_filtering_enabled = True
+                
+        except Exception as e:
+            print(f"❌ Error during court detection: {e}")
+            print(f"  Continuing without court filtering...")
+            mask = None
+            court_filtering_enabled = False
     
     # Find all .npz files in the input directory
     npz_files = glob.glob(os.path.join(args.input_dir, "*.npz"))
@@ -191,12 +211,16 @@ def main():
     print(f"✓ Found {len(npz_files)} .npz files to process")
     print()
     
-    # Create output directory name with court_filtered prefix
+    # Create output directory name with appropriate prefix
     input_dir_name = os.path.basename(args.input_dir)
-    output_dir_name = f"court_filtered_{input_dir_name}"
+    if court_filtering_enabled:
+        output_dir_name = f"court_filtered_{input_dir_name}"
+    else:
+        output_dir_name = f"unfiltered_{input_dir_name}"
     output_dir = os.path.join("pose_data", output_dir_name)
     
     print(f"Output directory: {output_dir}")
+    print(f"Court filtering: {'Enabled' if court_filtering_enabled else 'Disabled'}")
     print()
     
     # Process each .npz file
@@ -236,6 +260,10 @@ def main():
     print(f"Skipped (already exist): {skipped}")
     print(f"Failed: {failed}")
     print(f"Output directory: {output_dir}")
+    print(f"Court filtering: {'Enabled' if court_filtering_enabled else 'Disabled'}")
+    
+    if not court_filtering_enabled:
+        print(f"⚠️  Note: Data was copied without court filtering due to detection failure")
     
     if failed == 0:
         print("\n🎉 All files processed successfully!")

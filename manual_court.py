@@ -523,7 +523,7 @@ class CourtDetector:
         
         return out_mask
     
-    def process_video(self, video_path: str, target_time: int = 60) -> Tuple[np.ndarray, np.ndarray, dict]:
+    def process_video(self, video_path: str, target_time: int = 60) -> Tuple[Optional[np.ndarray], np.ndarray, dict]:
         """
         Main wrapper method to process a video and return the "out" mask.
         
@@ -532,47 +532,90 @@ class CourtDetector:
             target_time: Time in seconds to extract frame from (default: 60)
             
         Returns:
-            Tuple of (out_mask, clean_frame, metadata) where out_mask is a binary mask
-            where white (255) represents areas outside the playable court
+            Tuple of (out_mask, clean_frame, metadata) where:
+            - out_mask is a binary mask where white (255) represents areas outside the playable court
+            - out_mask is None if court detection failed
+            - clean_frame is the extracted frame
+            - metadata contains detection status and error information
         """
         print(f"Processing video: {video_path}")
         
-        # Step 1: Extract clean frame
-        clean_frame = self.extract_clean_frame(video_path, target_time)
-        
-        # Step 2: Detect court lines
-        horizontal_lines, vertical_lines, right_diagonals, left_diagonals = self.detect_court_lines(clean_frame)
-        
-        # Step 3: Merge lines
-        merged_horizontal = self.merge_lines(horizontal_lines, clean_frame.shape, kernel_size=(5, 30))
-        merged_right_diagonals = self.merge_lines(right_diagonals, clean_frame.shape, kernel_size=(2, 2))
-        merged_left_diagonals = self.merge_lines(left_diagonals, clean_frame.shape, kernel_size=(2, 2))
-        
-        # Step 4: Find baseline
-        baseline = self.find_baseline(merged_horizontal)
-        if baseline is None:
-            print("No valid baseline found")
-            return clean_frame, clean_frame, {"error": "No baseline found"}
-        
-        # Step 5: Process sides
-        right_doubles_sideline = self.process_side_decision_tree(
-            merged_right_diagonals, baseline, clean_frame.shape[1], "right")
-        left_doubles_sideline = self.process_side_decision_tree(
-            merged_left_diagonals, baseline, clean_frame.shape[1], "left")
-        
-        # Step 6: Generate the "out" mask
-        out_mask = self.estimate_playable_court_area(left_doubles_sideline, right_doubles_sideline, baseline, clean_frame.shape)
-        
-        # Create metadata
+        # Initialize metadata
         metadata = {
-            "baseline_found": baseline is not None,
-            "left_sideline_found": left_doubles_sideline is not None,
-            "right_sideline_found": right_doubles_sideline is not None,
-            "baseline_width": abs(baseline[0][2] - baseline[0][0]) if baseline else 0,
-            "image_width": clean_frame.shape[1]
+            "court_detection_success": False,
+            "error": None,
+            "baseline_found": False,
+            "left_sideline_found": False,
+            "right_sideline_found": False,
+            "baseline_width": 0,
+            "image_width": 0
         }
         
-        return out_mask, clean_frame, metadata
+        try:
+            # Step 1: Extract clean frame
+            clean_frame = self.extract_clean_frame(video_path, target_time)
+            metadata["image_width"] = clean_frame.shape[1]
+            
+            # Step 2: Detect court lines
+            horizontal_lines, vertical_lines, right_diagonals, left_diagonals = self.detect_court_lines(clean_frame)
+            
+            # Step 3: Merge lines
+            merged_horizontal = self.merge_lines(horizontal_lines, clean_frame.shape, kernel_size=(5, 30))
+            merged_right_diagonals = self.merge_lines(right_diagonals, clean_frame.shape, kernel_size=(2, 2))
+            merged_left_diagonals = self.merge_lines(left_diagonals, clean_frame.shape, kernel_size=(2, 2))
+            
+            # Step 4: Find baseline
+            baseline = self.find_baseline(merged_horizontal)
+            if baseline is None:
+                print("❌ No valid baseline found - court detection failed")
+                metadata["error"] = "No baseline found"
+                return None, clean_frame, metadata
+            
+            metadata["baseline_found"] = True
+            metadata["baseline_width"] = abs(baseline[0][2] - baseline[0][0])
+            
+            # Step 5: Process sides
+            right_doubles_sideline = self.process_side_decision_tree(
+                merged_right_diagonals, baseline, clean_frame.shape[1], "right")
+            left_doubles_sideline = self.process_side_decision_tree(
+                merged_left_diagonals, baseline, clean_frame.shape[1], "left")
+            
+            metadata["left_sideline_found"] = left_doubles_sideline is not None
+            metadata["right_sideline_found"] = right_doubles_sideline is not None
+            
+            # Check if we have enough court lines for a valid mask
+            if not left_doubles_sideline or not right_doubles_sideline:
+                print("❌ Missing sidelines - court detection failed")
+                if not left_doubles_sideline and not right_doubles_sideline:
+                    metadata["error"] = "Both sidelines missing"
+                elif not left_doubles_sideline:
+                    metadata["error"] = "Left sideline missing"
+                else:
+                    metadata["error"] = "Right sideline missing"
+                return None, clean_frame, metadata
+            
+            # Step 6: Generate the "out" mask
+            out_mask = self.estimate_playable_court_area(left_doubles_sideline, right_doubles_sideline, baseline, clean_frame.shape)
+            
+            if out_mask is None or not np.any(out_mask):
+                print("❌ Failed to generate valid court mask")
+                metadata["error"] = "Failed to generate court mask"
+                return None, clean_frame, metadata
+            
+            # Success!
+            metadata["court_detection_success"] = True
+            metadata["error"] = None
+            print("✅ Court detection successful")
+            
+            return out_mask, clean_frame, metadata
+            
+        except Exception as e:
+            print(f"❌ Court detection failed with exception: {e}")
+            metadata["error"] = f"Exception during court detection: {str(e)}"
+            # If clean_frame wasn't created yet, create a dummy one
+            if 'clean_frame' not in locals():
+                clean_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+            return None, clean_frame, metadata
     
     def draw_court_lines(self, frame: np.ndarray, baseline: Optional[List], 
                         left_doubles_sideline: Optional[List], 
