@@ -6,17 +6,18 @@ This script finds all video files in the raw_videos directory and runs pose extr
 on each one using the pose_extractor.py script.
 
 Usage:
-    python extract_all.py [start_time] [duration] [target_fps] [model_size]
+    python extract_all.py [start_time] [duration] [target_fps] [confidence_threshold] [model_size]
     
     start_time: Start time in seconds (default: 0)
     duration: Duration in seconds (default: 60)
     target_fps: Target frame rate for consistent temporal sampling (default: 15)
+    confidence_threshold: Confidence threshold for pose detection (default: 0.05)
     model_size: YOLO model size (n, s, m, l) (default: s)
 
 Examples:
-    python extract_all.py                    # Default: 0s to 60s, 15 FPS, small model
-    python extract_all.py 0 30 10 m         # 0s to 30s, 10 FPS, medium model
-    python extract_all.py 30 60 15 l        # 30s to 90s, 15 FPS, large model
+    python extract_all.py                                    # Default: 0s to 60s, 15 FPS, 0.05 conf, small model
+    python extract_all.py 0 30 10 0.03 m                    # 0s to 30s, 10 FPS, 0.03 conf, medium model
+    python extract_all.py 30 60 15 0.05 l                   # 30s to 90s, 15 FPS, 0.05 conf, large model
 """
 
 import os
@@ -50,7 +51,7 @@ def get_video_files():
     return sorted(video_files)
 
 
-def run_extraction_command(video_path, start_time, duration, target_fps, model_size):
+def run_extraction_command(video_path, start_time, duration, target_fps, confidence_threshold, model_size):
     """
     Run the pose extraction command.
     
@@ -59,12 +60,13 @@ def run_extraction_command(video_path, start_time, duration, target_fps, model_s
         start_time (int): Start time in seconds
         duration (int): Duration in seconds
         target_fps (int): Target frame rate
+        confidence_threshold (float): Confidence threshold
         model_size (str): Model size
         
     Returns:
         bool: True if successful, False otherwise
     """
-    cmd = ["python", "pose_extractor.py", str(start_time), str(duration), str(target_fps), video_path, model_size]
+    cmd = ["python", "pose_extractor.py", str(start_time), str(duration), str(target_fps), str(confidence_threshold), video_path, model_size]
     
     print(f"🔄 Running: {' '.join(cmd)}")
     
@@ -98,7 +100,12 @@ def main():
         target_fps = 15
     
     if len(sys.argv) >= 5:
-        model_size = sys.argv[4]
+        confidence_threshold = float(sys.argv[4])
+    else:
+        confidence_threshold = 0.05
+    
+    if len(sys.argv) >= 6:
+        model_size = sys.argv[5]
     else:
         model_size = "s"
     
@@ -107,6 +114,7 @@ def main():
     print(f"Start time: {start_time}s")
     print(f"Duration: {duration}s")
     print(f"Target FPS: {target_fps}")
+    print(f"Confidence threshold: {confidence_threshold}")
     print(f"YOLO model: {model_size} ({get_model_name(model_size)})")
     
     # Get video files
@@ -136,8 +144,7 @@ def main():
         
         # Check if pose data already exists
         base_name = os.path.splitext(os.path.basename(video_path))[0]
-        confidence_threshold = "0.05"  # Default confidence threshold
-        subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{start_time}s_to_{start_time + duration}s"
+        subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{target_fps}fps_{start_time}s_to_{start_time + duration}s"
         pose_data_path = f"pose_data/{subdir_name}/{base_name}_posedata_{start_time}s_to_{start_time + duration}s_yolo{model_size}.npz"
         
         if os.path.exists(pose_data_path):
@@ -146,7 +153,7 @@ def main():
             continue
         
         # Run extraction
-        if run_extraction_command(video_path, start_time, duration, target_fps, model_size):
+        if run_extraction_command(video_path, start_time, duration, target_fps, confidence_threshold, model_size):
             successful += 1
         else:
             failed += 1

@@ -33,12 +33,13 @@ class PoseExtractor:
         self.model = YOLO(model_path)
         print(f"YOLOv8-pose model loaded successfully from: {model_path}")
     
-    def extract_pose_data(self, video_path, start_time_seconds=0, duration_seconds=60, target_fps=15):
+    def extract_pose_data(self, video_path, confidence_threshold, start_time_seconds=0, duration_seconds=60, target_fps=15):
         """
         Extract raw pose data from a video segment and save to .npz file.
         
         Args:
             video_path (str): Path to the input video file
+            confidence_threshold (float): Confidence threshold for the model - no default
             start_time_seconds (int): Start time in seconds (default: 0)
             duration_seconds (int): Duration to process in seconds (default: 60)
             target_fps (int): Target frame rate for consistent temporal sampling (default: 15)
@@ -88,7 +89,7 @@ class PoseExtractor:
             
             # Check if this frame should be processed (closest to target time)
             if abs(current_time - target_time) <= (1 / target_fps) / 2:
-                target_frames.append(i)3
+                target_frames.append(i)
         
         print(f"Will process {len(target_frames)} frames out of {total_frames_to_process} total frames")
         
@@ -102,7 +103,7 @@ class PoseExtractor:
             # Check if we should process this frame
             if i in target_frames:
                 # Run YOLOv8-pose model on the frame (no plotting)
-                results = self.model(frame, verbose=False, device=self.device, conf=0.05, imgsz=1920)
+                results = self.model(frame, verbose=False, device=self.device, conf=confidence_threshold, imgsz=1920)
                 
                 # Extract raw numerical data
                 frame_data = {}
@@ -154,9 +155,9 @@ class PoseExtractor:
         else:
             model_size = 's'  # Default fallback
         
-        # Create subdirectory with model size, confidence threshold, and time range
-        confidence_threshold = 0.05  # Current confidence threshold used in the model call
-        subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{start_time_seconds}s_to_{start_time_seconds + duration_seconds}s"
+        # Create subdirectory with model size, confidence threshold, fps, and time range
+
+        subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{target_fps}fps_{start_time_seconds}s_to_{start_time_seconds + duration_seconds}s"
         output_dir = os.path.join("pose_data", subdir_name)
         os.makedirs(output_dir, exist_ok=True)
         
@@ -178,12 +179,14 @@ if __name__ == "__main__":
         start_time = int(sys.argv[1])
         duration = int(sys.argv[2])
         target_fps = int(sys.argv[3]) if len(sys.argv) > 3 else 15
-        video_path = sys.argv[4] if len(sys.argv) > 4 else "raw_videos/Monica Greene unedited tennis match play.mp4"
-        model_size = sys.argv[5] if len(sys.argv) > 5 else "s"
+        confidence_threshold = float(sys.argv[4]) if len(sys.argv) > 4 else 0.05
+        video_path = sys.argv[5] if len(sys.argv) > 5 else "raw_videos/Monica Greene unedited tennis match play.mp4"
+        model_size = sys.argv[6] if len(sys.argv) > 6 else "s"
     else:
         start_time = 0
         duration = 10  # Default to 10 seconds for testing
         target_fps = 15
+        confidence_threshold = 0.05
         video_path = "raw_videos/Monica Greene unedited tennis match play.mp4"
         model_size = "s"
     
@@ -204,7 +207,9 @@ if __name__ == "__main__":
         video_path=video_path,
         start_time_seconds=start_time,
         duration_seconds=duration,
-        target_fps=target_fps
+        target_fps=target_fps,
+        confidence_threshold=confidence_threshold
+
     )
     
     if output_path is None:

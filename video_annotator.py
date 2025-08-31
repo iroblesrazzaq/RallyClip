@@ -75,26 +75,37 @@ class VideoAnnotator:
         else:
             model_size = 's'  # Default if not found
         
-        # Extract confidence threshold and time range from data path (assuming it's in the subdirectory name)
+        # Extract confidence threshold, fps, and time range from data path (assuming it's in the subdirectory name)
         data_dir = os.path.dirname(data_path)
         if os.path.basename(data_dir).endswith('s'):
-            # Extract confidence and time range from subdirectory name like "yolom_0.05conf_0s_to_60s"
-            conf_match = re.search(r'_(\d+\.\d+)conf_(\d+)s_to_(\d+)s$', os.path.basename(data_dir))
+            # Extract confidence, fps, and time range from subdirectory name like "yolom_0.05conf_15fps_0s_to_60s"
+            conf_match = re.search(r'_(\d+\.\d+)conf_(\d+)fps_(\d+)s_to_(\d+)s$', os.path.basename(data_dir))
             if conf_match:
                 confidence_threshold = conf_match.group(1)
-                start_time = conf_match.group(2)
-                end_time = conf_match.group(3)
+                fps = float(conf_match.group(2))
+                start_time = conf_match.group(3)
+                end_time = conf_match.group(4)
             else:
-                confidence_threshold = "0.05"
-                start_time = str(start_time_seconds)
-                end_time = str(start_time_seconds + duration_seconds)
+                # Fallback to old format without fps
+                conf_match = re.search(r'_(\d+\.\d+)conf_(\d+)s_to_(\d+)s$', os.path.basename(data_dir))
+                if conf_match:
+                    confidence_threshold = conf_match.group(1)
+                    fps = 15.0  # Default fps
+                    start_time = conf_match.group(2)
+                    end_time = conf_match.group(3)
+                else:
+                    confidence_threshold = "0.05"
+                    fps = 15.0  # Default fps
+                    start_time = str(start_time_seconds)
+                    end_time = str(start_time_seconds + duration_seconds)
         else:
             confidence_threshold = "0.05"  # Default
+            fps = 15.0  # Default fps
             start_time = str(start_time_seconds)
             end_time = str(start_time_seconds + duration_seconds)
         
-        # Create subdirectory with model size, confidence threshold, and time range
-        subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{start_time}s_to_{end_time}s"
+        # Create subdirectory with model size, confidence threshold, fps, and time range
+        subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{fps}fps_{start_time}s_to_{end_time}s"
         output_dir = os.path.join("sanity_check_clips", subdir_name)
         os.makedirs(output_dir, exist_ok=True)
         
@@ -103,35 +114,49 @@ class VideoAnnotator:
         output_filename = f"{base_name}_annotated_{start_time_seconds}s_to_{start_time_seconds + duration_seconds}s_yolo{model_size}.mp4"
         output_path = os.path.join(output_dir, output_filename)
         
-        # Initialize video writer
+        # Initialize video writer with original video FPS
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        out = cv2.VideoWriter(output_path, fourcc, cap.get(cv2.CAP_PROP_FPS), (width, height))
         
         # Set video position to start frame
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         
-        # Drawing loop
-        num_frames_to_process = min(len(pose_data), end_frame - start_frame)
+        # Calculate which frames to process for target FPS (same logic as pose extractor)
+        total_frames_to_process = end_frame - start_frame
+        target_frames = []
+        for i in range(total_frames_to_process):
+            current_time = start_time_seconds + (i / cap.get(cv2.CAP_PROP_FPS))
+            target_frame_index = int(current_time * fps)
+            target_time = target_frame_index / fps
+            
+            # Check if this frame should be processed (closest to target time)
+            if abs(current_time - target_time) <= (1 / fps) / 2:
+                target_frames.append(i)
         
-        print("Creating annotated video...")
-        for i in range(num_frames_to_process):
+        print(f"Will process {len(target_frames)} frames out of {total_frames_to_process} total frames")
+        print(f"Creating annotated video at original {cap.get(cv2.CAP_PROP_FPS)} FPS...")
+        
+        # Drawing loop - write all frames, but only modify those with pose data
+        for i in range(total_frames_to_process):
             ret, frame = cap.read()
             
             if not ret:
                 print(f"Error reading frame {i + start_frame}")
                 break
             
-            # Get pose data for this frame
+            # Get pose data for this frame - pose data is already aligned with original video frames
             frame_pose_data = pose_data[i]
             
-            # Draw annotations
-            self._draw_annotations(frame, frame_pose_data)
+            # Only draw annotations if this frame has pose data (non-empty)
+            if len(frame_pose_data['boxes']) > 0 or len(frame_pose_data['keypoints']) > 0:
+                # Draw annotations
+                self._draw_annotations(frame, frame_pose_data)
             
-            # Write frame to video
+            # Write frame to video (all frames, modified or not)
             out.write(frame)
             
             # Update progress bar
-            progress = (i + 1) / num_frames_to_process * 100
+            progress = (i + 1) / total_frames_to_process * 100
             print(f"\rProgress: [{('=' * int(progress/2)).ljust(50)}] {progress:.1f}%", end='', flush=True)
         
         print()  # New line after progress bar
@@ -178,21 +203,24 @@ if __name__ == "__main__":
     if len(sys.argv) >= 3:
         start_time = int(sys.argv[1])
         duration = int(sys.argv[2])
-        video_path = sys.argv[3] if len(sys.argv) > 3 else "raw_videos/Monica Greene unedited tennis match play.mp4"
-        model_size = sys.argv[4] if len(sys.argv) > 4 else "s"
+        target_fps = int(sys.argv[3]) if len(sys.argv) > 3 else 15
+        confidence_threshold = float(sys.argv[4]) if len(sys.argv) > 4 else 0.05
+        video_path = sys.argv[5] if len(sys.argv) > 5 else "raw_videos/Monica Greene unedited tennis match play.mp4"
+        model_size = sys.argv[6] if len(sys.argv) > 6 else "s"
     else:
         start_time = 0
         duration = 10  # Default to 10 seconds for testing
+        target_fps = 15
+        confidence_threshold = 0.05
         video_path = "raw_videos/Monica Greene unedited tennis match play.mp4"
         model_size = "s"
     
     # Start timing
     script_start_time = time.time()
     
-    # Dynamically construct data path with model size, confidence threshold, and time range
+    # Dynamically construct data path with model size, confidence threshold, fps, and time range
     base_name = os.path.splitext(os.path.basename(video_path))[0]
-    confidence_threshold = "0.05"  # Default confidence threshold
-    subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{start_time}s_to_{start_time + duration}s"
+    subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{target_fps}fps_{start_time}s_to_{start_time + duration}s"
     data_filename = f"{base_name}_posedata_{start_time}s_to_{start_time + duration}s_yolo{model_size}.npz"
     data_path = os.path.join("pose_data", subdir_name, data_filename)
     
@@ -201,7 +229,7 @@ if __name__ == "__main__":
     
     print(f"Video path: {video_path}")
     print(f"Data path: {data_path}")
-    print(f"Start time: {start_time}s, Duration: {duration}s")
+    print(f"Start time: {start_time}s, Duration: {duration}s, Target FPS: {target_fps}, Confidence: {confidence_threshold}")
     
     # Create annotated video
     output_path = video_annotator.annotate_video(
