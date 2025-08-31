@@ -191,9 +191,9 @@ def main():
     print(f"✓ Found {len(npz_files)} .npz files to process")
     print()
     
-    # Create output directory name with court_filter_ prefix
+    # Create output directory name with court_filtered prefix
     input_dir_name = os.path.basename(args.input_dir)
-    output_dir_name = f"court_filter_{input_dir_name}"
+    output_dir_name = f"court_filtered_{input_dir_name}"
     output_dir = os.path.join("pose_data", output_dir_name)
     
     print(f"Output directory: {output_dir}")

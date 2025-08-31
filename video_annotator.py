@@ -105,9 +105,9 @@ class VideoAnnotator:
             start_time = str(start_time_seconds)
             end_time = str(start_time_seconds + duration_seconds)
         
-        # Check if this is filtered data (court_filter_ prefix in directory name)
+        # Check if this is filtered data (court_filtered_ prefix in directory name)
         data_dir_name = os.path.basename(data_dir)
-        is_filtered = data_dir_name.startswith('court_filter_')
+        is_filtered = data_dir_name.startswith('court_filtered_')
         
         # Create subdirectory with model size, confidence threshold, fps, and time range
         subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{fps}fps_{start_time}s_to_{end_time}s"
