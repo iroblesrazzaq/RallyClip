@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-draw_filtered_all.py - Batch annotate all court-filtered pose data files
+draw_filtered_all.py - Batch annotate all successfully court-filtered pose data files
 
-This script finds all .npz pose data files in court_filtered_* directories and creates
-annotated videos for each one using the video_annotator.py script.
+This script finds all .npz pose data files in court_filtered_* directories (successfully filtered data only)
+and creates annotated videos for each one using the video_annotator.py script.
+It specifically excludes unfiltered_* directories where court detection failed.
 
 Usage:
     python draw_filtered_all.py [start_time] [duration] [target_fps] [confidence_threshold] [model_size] [overwrite]
@@ -46,7 +47,10 @@ import re
 
 def get_filtered_npz_files(model_size=None, start_time=None, duration=None, target_fps=None, confidence_threshold=None):
     """
-    Get all .npz files from court_filtered_* subdirectories, optionally filtered by model size, time range, fps, and confidence threshold.
+    Get all .npz files from court_filtered_* subdirectories (successfully filtered data only),
+    optionally filtered by model size, time range, fps, and confidence threshold.
+    
+    This function specifically excludes unfiltered_* directories where court detection failed.
     
     Args:
         model_size (str, optional): Model size to filter by (n, s, m, l)
@@ -56,7 +60,7 @@ def get_filtered_npz_files(model_size=None, start_time=None, duration=None, targ
         confidence_threshold (float, optional): Confidence threshold to filter by
         
     Returns:
-        list: List of .npz file paths
+        list: List of .npz file paths from successfully filtered data only
     """
     pose_data_dir = "pose_data"
     
@@ -64,11 +68,14 @@ def get_filtered_npz_files(model_size=None, start_time=None, duration=None, targ
         print(f"❌ Pose data directory '{pose_data_dir}' not found!")
         return []
     
-    # Get all .npz files from court_filtered_* subdirectories
+    # Get all .npz files from court_filtered_* subdirectories (successfully filtered data only)
     all_files = []
     for subdir in os.listdir(pose_data_dir):
         subdir_path = os.path.join(pose_data_dir, subdir)
-        if os.path.isdir(subdir_path) and subdir.startswith('court_filtered_') and subdir.endswith('s'):  # New format ends with time range
+        # Only look at successfully filtered data (court_filtered_*), exclude unfiltered data
+        if (os.path.isdir(subdir_path) and 
+            subdir.startswith('court_filtered_') and 
+            subdir.endswith('s')):  # New format ends with time range
             npz_pattern = os.path.join(subdir_path, "*.npz")
             all_files.extend(glob.glob(npz_pattern))
     
@@ -288,7 +295,8 @@ def main():
     npz_files = get_filtered_npz_files(model_size, start_time, duration, target_fps, confidence_threshold)
     
     if not npz_files:
-        print("❌ No court_filtered_* .npz files found!")
+        print("❌ No successfully court-filtered .npz files found!")
+        print("   (Only looking at court_filtered_* directories, not unfiltered_* directories)")
         if model_size and start_time is not None and duration is not None:
             print(f"   No files found for model size '{model_size}' and time range {start_time}s to {start_time + duration}s")
         elif model_size:
@@ -297,7 +305,7 @@ def main():
             print(f"   No files found for time range {start_time}s to {start_time + duration}s")
         return False
     
-    print(f"\n📁 Found {len(npz_files)} court_filtered_* .npz files:")
+    print(f"\n📁 Found {len(npz_files)} successfully court-filtered .npz files:")
     for i, npz_file in enumerate(npz_files, 1):
         print(f"   {i}. {os.path.basename(npz_file)}")
     
@@ -357,7 +365,7 @@ def main():
     
     print(f"\n🎉 BATCH COURT-FILTERED ANNOTATION COMPLETED")
     print("=" * 60)
-    print(f"Total court_filtered_* files found: {len(npz_files)}")
+    print(f"Total successfully court-filtered files found: {len(npz_files)}")
     print(f"Successfully processed: {successful}")
     print(f"Skipped (already exist): {skipped}")
     print(f"Failed: {failed}")
