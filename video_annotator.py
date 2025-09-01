@@ -187,29 +187,13 @@ class VideoAnnotator:
             if court_mask is not None:
                 self._draw_court_mask_overlay(frame, court_mask)
             
-            # Check if this frame has pose data by calculating the target frame time
-            current_time = start_time_seconds + (i / cap.get(cv2.CAP_PROP_FPS))
-            target_frame_time = 0  # Will be updated for each pose data entry
-            
-            frame_has_pose_data = False
-            frame_pose_data = None
-            
-            # Look for pose data that matches this frame time
-            for pose_idx, pose_data_entry in enumerate(pose_data):
-                # Calculate when this pose data should appear based on target FPS
-                target_frame_time = pose_idx / fps
-                
-                # Check if current frame time matches target frame time (within tolerance)
-                if abs(current_time - target_frame_time) <= (1 / fps) / 2:
-                    frame_pose_data = pose_data_entry
-                    frame_has_pose_data = True
-                    break
+            # Get pose data for this frame - pose data is already aligned with original video frames
+            frame_pose_data = pose_data[i]
             
             # Only draw annotations if this frame has pose data (non-empty)
-            if frame_has_pose_data and frame_pose_data is not None:
-                if len(frame_pose_data['boxes']) > 0 or len(frame_pose_data['keypoints']) > 0:
-                    # Draw annotations
-                    self._draw_annotations(frame, frame_pose_data)
+            if len(frame_pose_data['boxes']) > 0 or len(frame_pose_data['keypoints']) > 0:
+                # Draw annotations
+                self._draw_annotations(frame, frame_pose_data)
             
             # Write frame to video (all frames, modified or not)
             out.write(frame)

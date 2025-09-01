@@ -166,7 +166,7 @@ def main():
     if len(sys.argv) >= 3:
         segment_duration_minutes = int(sys.argv[2])
     else:
-        segment_duration_minutes = 10
+        segment_duration_minutes = 2
     
     if len(sys.argv) >= 4:
         overwrite = sys.argv[3].lower() in ['true', '1', 'yes', 'y']
@@ -175,7 +175,7 @@ def main():
     
     sample_duration_seconds = segment_duration_minutes * 60
     
-    print("🎯 Drawing 10-Minute Samples from All Videos")
+    print("🎯 Drawing 2-Minute Samples from All Videos")
     print("=" * 60)
     print(f"Pose data directory: {pose_data_dir}")
     print(f"Sample duration: {segment_duration_minutes} minutes ({sample_duration_seconds} seconds)")
@@ -259,7 +259,7 @@ def main():
     end_time_total = time.time()
     total_time = end_time_total - start_time_total
     
-    print(f"\n🎉 SAMPLE DRAWING COMPLETED")
+    print(f"\n🎉 2-MINUTE SAMPLE DRAWING COMPLETED")
     print("=" * 60)
     print(f"Total videos processed: {len(video_files)}")
     print(f"Successful samples: {successful}")
