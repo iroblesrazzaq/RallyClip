@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-draw_10min_segments.py - Draw 10-minute samples from every video with annotations
+draw_10min_segments.py - Draw 10-minute samples from every video with annotations (FIXED)
 
 This script finds all video files in raw_videos and creates annotated videos for 10-minute samples
 with off-court masking (transparent gray), bounding boxes, pose keypoints, and centroids.
+Fixed: Annotations now sync properly with video timing (no more slow-motion bounding boxes).
 
 Usage:
     python draw_10min_segments.py [pose_data_dir] [sample_duration] [overwrite]
