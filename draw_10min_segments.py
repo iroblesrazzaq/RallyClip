@@ -166,7 +166,7 @@ def main():
     if len(sys.argv) >= 3:
         segment_duration_minutes = int(sys.argv[2])
     else:
-        segment_duration_minutes = 2
+        segment_duration_minutes = 10
     
     if len(sys.argv) >= 4:
         overwrite = sys.argv[3].lower() in ['true', '1', 'yes', 'y']
@@ -222,10 +222,12 @@ def main():
             print(f"📊 Using entire video (shorter than {segment_duration_minutes} minutes)")
         else:
             # Start from the beginning (t=0) for consistent frame alignment
-            segment_start = 0
+            # Uncomment the next line to test drift theory by starting from 25% into video
+            segment_start = int(duration * 0.25)
+            #segment_start = 0
             actual_segment_duration = min(sample_duration_seconds, duration)
             print(f"📊 Video duration: {duration:.1f}s ({duration/60:.1f} minutes)")
-            print(f"📊 Taking {actual_segment_duration/60:.1f} minute sample from 0s to {actual_segment_duration/60:.1f}s")
+            print(f"📊 Taking {actual_segment_duration/60:.1f} minute sample from {segment_start/60:.1f}s to {(segment_start + actual_segment_duration)/60:.1f}s")
         
         print(f"\n🎬 Processing single sample: {segment_start}s to {segment_start + actual_segment_duration}s ({actual_segment_duration}s)")
         
@@ -241,17 +243,20 @@ def main():
         # DEBUG: Print time dimension lengths
         print(f"🔍 DEBUG: Analyzing time dimensions...")
         
-        # Get video FPS and calculate expected frame count
+        # Get video FPS and calculate total video frames vs segment frames
         try:
             import cv2
             cap = cv2.VideoCapture(video_path)
             video_fps = cap.get(cv2.CAP_PROP_FPS)
-            expected_frames = int(actual_segment_duration * video_fps)
+            total_video_frames = int(duration * video_fps)
+            segment_frames = int(actual_segment_duration * video_fps)
             cap.release()
-            print(f"   📹 Video: {expected_frames} frames at {video_fps:.1f} FPS for {actual_segment_duration}s segment")
+            print(f"   📹 Video: {segment_frames} frames at {video_fps:.1f} FPS for {actual_segment_duration}s segment")
+            print(f"   📹 Video: {total_video_frames} total frames for entire {duration:.1f}s video")
         except Exception as e:
             print(f"   ⚠️  Could not get video FPS: {e}")
-            expected_frames = "unknown"
+            total_video_frames = "unknown"
+            segment_frames = "unknown"
         
         # Get pose data array length
         try:
@@ -260,12 +265,18 @@ def main():
             pose_frames = len(pose_data['frames'])
             print(f"   📊 Pose data: {pose_frames} frames in .npz file")
             
-            if expected_frames != "unknown":
-                if pose_frames == expected_frames:
-                    print(f"   ✅ Frame counts match! Video and pose data are aligned.")
+            if total_video_frames != "unknown":
+                if pose_frames == total_video_frames:
+                    print(f"   ✅ Total frame counts match! Video and pose data are aligned.")
                 else:
-                    print(f"   ❌ MISMATCH! Video has {expected_frames} frames, pose data has {pose_frames} frames")
+                    print(f"   ❌ TOTAL FRAME MISMATCH! Video has {total_video_frames} frames, pose data has {pose_frames} frames")
                     print(f"   💡 This explains the timing sync issue!")
+                    
+                # Check segment alignment
+                if segment_start == 0:
+                    print(f"   📍 Segment starts at 0s, so first {segment_frames} frames should align perfectly")
+                else:
+                    print(f"   📍 Segment starts at {segment_start}s, so frames {int(segment_start * video_fps)}-{int((segment_start + actual_segment_duration) * video_fps)} should align")
             else:
                 print(f"   ⚠️  Cannot verify alignment (video FPS unknown)")
                 
