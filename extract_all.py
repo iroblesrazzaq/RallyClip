@@ -145,7 +145,7 @@ def main():
         # Check if pose data already exists
         base_name = os.path.splitext(os.path.basename(video_path))[0]
         subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{target_fps}fps_{start_time}s_to_{start_time + duration}s"
-        pose_data_path = f"pose_data/{subdir_name}/{base_name}_posedata_{start_time}s_to_{start_time + duration}s_yolo{model_size}.npz"
+        pose_data_path = f"pose_data/unfiltered/{subdir_name}/{base_name}_posedata_{start_time}s_to_{start_time + duration}s_yolo{model_size}.npz"
         
         if os.path.exists(pose_data_path):
             print(f"⏭️  Skipping - pose data already exists: {os.path.basename(pose_data_path)}")

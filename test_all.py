@@ -88,7 +88,7 @@ def process_single_video(video_path, start_time, duration, target_fps, model_siz
     
     # Check output files with model size
     base_name = os.path.splitext(os.path.basename(video_path))[0]
-    pose_data_file = f"pose_data/{base_name}_posedata_{start_time}s_to_{start_time + duration}s_yolo{model_size}.npz"
+    pose_data_file = f"pose_data/unfiltered/{base_name}_posedata_{start_time}s_to_{start_time + duration}s_yolo{model_size}.npz"
     video_file = f"sanity_check_clips/{base_name}_annotated_{start_time}s_to_{start_time + duration}s_yolo{model_size}.mp4"
     
     success = True

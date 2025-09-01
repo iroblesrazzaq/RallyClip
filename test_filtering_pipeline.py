@@ -133,11 +133,11 @@ def main():
     # mask_path = f"court_masks/{base_name}_mask.png"
     
     # Step 2: Pose extraction paths
-    npz_dir = f"pose_data/yolo{model_size}_{0.03}conf_{target_fps}fps_{start_time}s_to_{start_time + duration}s"
+    npz_dir = f"pose_data/unfiltered/yolo{model_size}_{0.03}conf_{target_fps}fps_{start_time}s_to_{start_time + duration}s"
     input_npz_path = f"{npz_dir}/{base_name}_posedata_{start_time}s_to_{start_time + duration}s_yolo{model_size}.npz"
     
     # Step 3: Pose filtering paths (new court_filter_ structure)
-    filtered_npz_dir = f"pose_data/court_filter_yolo{model_size}_{0.03}conf_{target_fps}fps_{start_time}s_to_{start_time + duration}s"
+    filtered_npz_dir = f"pose_data/filtered/court_filter_yolo{model_size}_{0.03}conf_{target_fps}fps_{start_time}s_to_{start_time + duration}s"
     
     # List of expected files/directories for verification
     expected_items = [

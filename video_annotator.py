@@ -83,7 +83,7 @@ class VideoAnnotator:
             conf_match = re.search(r'_(\d+\.\d+)conf_(\d+)fps_(\d+)s_to_(\d+)s$', os.path.basename(data_dir))
             if conf_match:
                 confidence_threshold = conf_match.group(1)
-                fps = float(conf_match.group(2))
+                fps = int(conf_match.group(2))  # Keep FPS as integer to match directory naming
                 start_time = conf_match.group(3)
                 end_time = conf_match.group(4)
             else:
@@ -110,7 +110,9 @@ class VideoAnnotator:
         is_filtered = data_dir_name.startswith('court_filtered_')
         
         # Create subdirectory with model size, confidence threshold, fps, and time range
-        subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{fps}fps_{start_time}s_to_{end_time}s"
+        # Use integer FPS to match the directory naming convention from filtering
+        fps_int = int(fps)
+        subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{fps_int}fps_{start_time}s_to_{end_time}s"
         
         # Choose output directory based on whether data is filtered
         if is_filtered:
@@ -227,6 +229,12 @@ if __name__ == "__main__":
         video_path = sys.argv[5] if len(sys.argv) > 5 else "raw_videos/Monica Greene unedited tennis match play.mp4"
         model_size = sys.argv[6] if len(sys.argv) > 6 else "s"
         overwrite = sys.argv[7].lower() in ['true', '1', 'yes', 'y'] if len(sys.argv) > 7 else False
+        # Check for optional --data-path parameter
+        data_path_override = None
+        for i, arg in enumerate(sys.argv):
+            if arg == "--data-path" and i + 1 < len(sys.argv):
+                data_path_override = sys.argv[i + 1]
+                break
     else:
         start_time = 0
         duration = 10  # Default to 10 seconds for testing
@@ -235,15 +243,22 @@ if __name__ == "__main__":
         video_path = "raw_videos/Monica Greene unedited tennis match play.mp4"
         model_size = "s"
         overwrite = False
+        data_path_override = None
     
     # Start timing
     script_start_time = time.time()
     
-    # Dynamically construct data path with model size, confidence threshold, fps, and time range
-    base_name = os.path.splitext(os.path.basename(video_path))[0]
-    subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{target_fps}fps_{start_time}s_to_{start_time + duration}s"
-    data_filename = f"{base_name}_posedata_{start_time}s_to_{start_time + duration}s_yolo{model_size}.npz"
-    data_path = os.path.join("pose_data", subdir_name, data_filename)
+    # Use provided data path or construct default path
+    if data_path_override:
+        data_path = data_path_override
+    else:
+        # Dynamically construct data path with model size, confidence threshold, fps, and time range
+        base_name = os.path.splitext(os.path.basename(video_path))[0]
+        # Use integer FPS to match directory naming convention
+        target_fps_int = int(target_fps)
+        subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{target_fps_int}fps_{start_time}s_to_{start_time + duration}s"
+        data_filename = f"{base_name}_posedata_{start_time}s_to_{start_time + duration}s_yolo{model_size}.npz"
+        data_path = os.path.join("pose_data", "unfiltered", subdir_name, data_filename)
     
     print("Initializing VideoAnnotator...")
     video_annotator = VideoAnnotator()

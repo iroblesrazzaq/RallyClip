@@ -156,9 +156,8 @@ class PoseExtractor:
             model_size = 's'  # Default fallback
         
         # Create subdirectory with model size, confidence threshold, fps, and time range
-
         subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{target_fps}fps_{start_time_seconds}s_to_{start_time_seconds + duration_seconds}s"
-        output_dir = os.path.join("pose_data", subdir_name)
+        output_dir = os.path.join("pose_data", "unfiltered", subdir_name)
         os.makedirs(output_dir, exist_ok=True)
         
         # Construct descriptive filename

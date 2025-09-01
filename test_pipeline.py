@@ -81,7 +81,7 @@ def main():
     base_name = os.path.splitext(os.path.basename(video_path))[0]
     confidence_threshold = "0.05"  # Default confidence threshold
     subdir_name = f"yolos_{confidence_threshold}conf_{start_time}s_to_{start_time + duration}s"
-    pose_data_file = f"pose_data/{subdir_name}/{base_name}_posedata_{start_time}s_to_{start_time + duration}s_yolos.npz"
+    pose_data_file = f"pose_data/unfiltered/{subdir_name}/{base_name}_posedata_{start_time}s_to_{start_time + duration}s_yolos.npz"
     if os.path.exists(pose_data_file):
         size = os.path.getsize(pose_data_file) / 1024  # KB
         print(f"✅ Pose data file: {pose_data_file} ({size:.1f} KB)")

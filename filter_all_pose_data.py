@@ -13,7 +13,7 @@ Arguments:
     --overwrite: Optional. Flag to overwrite existing filtered files
 
 Example:
-    python filter_all_pose_data.py --input-dir "pose_data/yolos_0.03conf_10fps_30s_to_90s"
+    python filter_all_pose_data.py --input-dir "pose_data/unfiltered/yolos_0.03conf_10fps_30s_to_90s"
 """
 
 import os
@@ -31,9 +31,9 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python filter_all_pose_data.py --input-dir "pose_data/yolos_0.03conf_10fps_30s_to_90s"
+    python filter_all_pose_data.py --input-dir "pose_data/unfiltered/yolos_0.03conf_10fps_30s_to_90s"
     
-    python filter_all_pose_data.py --input-dir "pose_data/yolos_0.03conf_10fps_30s_to_90s" --overwrite
+    python filter_all_pose_data.py --input-dir "pose_data/unfiltered/yolos_0.03conf_10fps_30s_to_90s" --overwrite
         """
     )
     

@@ -68,10 +68,15 @@ def get_filtered_npz_files(model_size=None, start_time=None, duration=None, targ
         print(f"❌ Pose data directory '{pose_data_dir}' not found!")
         return []
     
-    # Get all .npz files from court_filtered_* subdirectories (successfully filtered data only)
+    # Get all .npz files from the filtered subdirectory (successfully filtered data only)
+    filtered_dir = os.path.join(pose_data_dir, "filtered")
+    if not os.path.exists(filtered_dir):
+        print(f"❌ Filtered directory '{filtered_dir}' not found!")
+        return []
+    
     all_files = []
-    for subdir in os.listdir(pose_data_dir):
-        subdir_path = os.path.join(pose_data_dir, subdir)
+    for subdir in os.listdir(filtered_dir):
+        subdir_path = os.path.join(filtered_dir, subdir)
         # Only look at successfully filtered data (court_filtered_*), exclude unfiltered data
         if (os.path.isdir(subdir_path) and 
             subdir.startswith('court_filtered_') and 
@@ -195,7 +200,7 @@ def extract_video_info_from_filename(npz_path):
     }
 
 
-def run_annotation_command(video_path, start_time, duration, target_fps, confidence_threshold, model_size, overwrite=False):
+def run_annotation_command(video_path, start_time, duration, target_fps, confidence_threshold, model_size, overwrite=False, filtered_data_path=None):
     """
     Run the video annotation command.
     
@@ -207,6 +212,7 @@ def run_annotation_command(video_path, start_time, duration, target_fps, confide
         confidence_threshold (float): Confidence threshold
         model_size (str): Model size
         overwrite (bool): Overwrite existing files
+        filtered_data_path (str, optional): Path to the filtered pose data file
         
     Returns:
         bool: True if successful, False otherwise
@@ -214,6 +220,10 @@ def run_annotation_command(video_path, start_time, duration, target_fps, confide
     cmd = ["python", "video_annotator.py", str(start_time), str(duration), str(target_fps), str(confidence_threshold), video_path, model_size]
     if overwrite:
         cmd.append("true")
+    
+    # Add the filtered data path parameter if provided
+    if filtered_data_path:
+        cmd.extend(["--data-path", filtered_data_path])
     
     print(f"🔄 Running: {' '.join(cmd)}")
     
@@ -345,7 +355,7 @@ def main():
             skipped += 1
             continue
         
-        # Run annotation
+        # Run annotation with the filtered data path
         if run_annotation_command(
             info['video_path'], 
             info['start_time'], 
@@ -353,7 +363,8 @@ def main():
             info['target_fps'],
             info['confidence_threshold'],
             info['model_size'],
-            overwrite
+            overwrite,
+            npz_file  # Pass the filtered data file path
         ):
             successful += 1
         else:

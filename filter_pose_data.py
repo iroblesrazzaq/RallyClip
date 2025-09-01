@@ -40,9 +40,9 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python filter_pose_data.py --input-dir "pose_data/yolos_0.03conf_10fps_30s_to_90s" --video-path "raw_videos/video.mp4"
+    python filter_pose_data.py --input-dir "pose_data/unfiltered/yolos_0.03conf_10fps_30s_to_90s" --video-path "raw_videos/video.mp4"
     
-    python filter_pose_data.py --input-dir "pose_data/yolos_0.03conf_10fps_30s_to_90s" --video-path "raw_videos/video.mp4" --visualize
+    python filter_pose_data.py --input-dir "pose_data/unfiltered/yolos_0.03conf_10fps_30s_to_90s" --video-path "raw_videos/video.mp4" --visualize
         """
     )
     
@@ -215,9 +215,10 @@ def main():
     input_dir_name = os.path.basename(args.input_dir)
     if court_filtering_enabled:
         output_dir_name = f"court_filtered_{input_dir_name}"
+        output_dir = os.path.join("pose_data", "filtered", output_dir_name)
     else:
         output_dir_name = f"unfiltered_{input_dir_name}"
-    output_dir = os.path.join("pose_data", output_dir_name)
+        output_dir = os.path.join("pose_data", "unfiltered", output_dir_name)
     
     print(f"Output directory: {output_dir}")
     print(f"Court filtering: {'Enabled' if court_filtering_enabled else 'Disabled'}")
