@@ -175,7 +175,7 @@ def main():
     
     sample_duration_seconds = segment_duration_minutes * 60
     
-    print("🎯 Drawing 2-Minute Samples from All Videos")
+    print("🎯 Drawing 10-Minute Samples from All Videos")
     print("=" * 60)
     print(f"Pose data directory: {pose_data_dir}")
     print(f"Sample duration: {segment_duration_minutes} minutes ({sample_duration_seconds} seconds)")
@@ -213,7 +213,7 @@ def main():
             print(f"⚠️  Skipping {os.path.basename(video_path)} - could not determine duration")
             continue
         
-        # Take a single 2-minute sample from the beginning of the video
+        # Take a single 10-minute sample from the beginning of the video
         if duration <= sample_duration_seconds:
             # Video is shorter than requested sample, use the whole video
             segment_start = 0
@@ -221,13 +221,11 @@ def main():
             print(f"📊 Video duration: {duration:.1f}s ({duration/60:.1f} minutes)")
             print(f"📊 Using entire video (shorter than {segment_duration_minutes} minutes)")
         else:
-            # Start from the beginning (t=0) for consistent frame alignment
-            # Uncomment the next line to test drift theory by starting from 25% into video
-            segment_start = int(duration * 0.25)
-            #segment_start = 0
+            # Always start from the beginning (t=0) for consistent frame alignment
+            segment_start = 0
             actual_segment_duration = min(sample_duration_seconds, duration)
             print(f"📊 Video duration: {duration:.1f}s ({duration/60:.1f} minutes)")
-            print(f"📊 Taking {actual_segment_duration/60:.1f} minute sample from {segment_start/60:.1f}s to {(segment_start + actual_segment_duration)/60:.1f}s")
+            print(f"📊 Taking {actual_segment_duration/60:.1f} minute sample from 0s to {actual_segment_duration/60:.1f}s")
         
         print(f"\n🎬 Processing single sample: {segment_start}s to {segment_start + actual_segment_duration}s ({actual_segment_duration}s)")
         
@@ -304,7 +302,7 @@ def main():
     end_time_total = time.time()
     total_time = end_time_total - start_time_total
     
-    print(f"\n🎉 2-MINUTE SAMPLE DRAWING COMPLETED")
+    print(f"\n🎉 10-MINUTE SAMPLE DRAWING COMPLETED")
     print("=" * 60)
     print(f"Total videos processed: {len(video_files)}")
     print(f"Successful samples: {successful}")
