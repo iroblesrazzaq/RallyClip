@@ -125,7 +125,7 @@ def filter_single_npz_file(input_npz_path, output_npz_path, mask=None):
                 # First, perform boundary check to prevent IndexError
                 if (0 <= center_y < mask.shape[0] and 
                     0 <= center_x < mask.shape[1] and 
-                    ~mask[int(center_y), int(center_x)]):  # Inverted mask: True means "inside"
+                    mask[int(center_y), int(center_x)] == 0):  
                     
                     # Keep this person's data
                     kept_boxes.append(box)
@@ -156,7 +156,7 @@ def filter_single_npz_file(input_npz_path, output_npz_path, mask=None):
 
 def main():
     """
-    Main function to filter pose data from existing .npz files.
+    Main function to filter pose data from a single .npz file corresponding to a video.
     """
     # Parse command-line arguments
     args = parse_args()
@@ -197,14 +197,9 @@ def main():
                 
                 # Save the court mask for later use in visualization
                 try:
-                    # Create court_masks directory if it doesn't exist
                     os.makedirs("court_masks", exist_ok=True)
-                    
-                    # Extract base video name from video path
                     base_name = os.path.splitext(os.path.basename(args.video_path))[0]
                     mask_path = f"court_masks/{base_name}_court_mask.npz"
-                    
-                    # Save the mask as compressed numpy array
                     np.savez_compressed(mask_path, mask=mask, metadata=metadata)
                     print(f"✓ Court mask saved to: {mask_path}")
                 except Exception as e:
@@ -216,15 +211,26 @@ def main():
             mask = None
             court_filtering_enabled = False
     
-    # Find all .npz files in the input directory
-    npz_files = glob.glob(os.path.join(args.input_dir, "*.npz"))
+    # --- START OF FIX ---
+    # The original code searched for all .npz files. The corrected code finds
+    # the ONE specific .npz file that corresponds to the given --video-path.
+
+    # Derive the base name of the video to find its matching data file.
+    base_video_name = os.path.splitext(os.path.basename(args.video_path))[0]
     
-    if not npz_files:
-        print(f"❌ Error: No .npz files found in {args.input_dir}")
-        sys.exit(1)
+    # Use a glob pattern because the full npz filename contains extra details (model, time, etc.)
+    npz_file_pattern = os.path.join(args.input_dir, f"{base_video_name}*.npz")
+    matching_files = glob.glob(npz_file_pattern)
+
+    if not matching_files:
+        print(f"❌ Error: No matching .npz file found for video '{base_video_name}' in {args.input_dir}")
+        return # Exit this specific run, but don't kill the whole batch process.
     
-    print(f"✓ Found {len(npz_files)} .npz files to process")
+    # Assume the first match is the correct one.
+    npz_file_to_process = matching_files[0]
+    print(f"✓ Found corresponding .npz file to process: {os.path.basename(npz_file_to_process)}")
     print()
+    # --- END OF FIX ---
     
     # Create output directory name with appropriate prefix
     input_dir_name = os.path.basename(args.input_dir)
@@ -232,61 +238,33 @@ def main():
         output_dir_name = f"court_filtered_{input_dir_name}"
         output_dir = os.path.join("pose_data", "filtered", output_dir_name)
     else:
+        # If filtering is disabled, data is considered "unfiltered" by court status
         output_dir_name = f"unfiltered_{input_dir_name}"
-        output_dir = os.path.join("pose_data", "unfiltered", output_dir_name)
+        output_dir = os.path.join("pose_data", "filtered", output_dir_name) # Still place in 'filtered' parent dir for consistency
     
     print(f"Output directory: {output_dir}")
     print(f"Court filtering: {'Enabled' if court_filtering_enabled else 'Disabled'}")
     print()
     
-    # Process each .npz file
-    successful = 0
-    skipped = 0
-    failed = 0
+    # Process the single identified .npz file
+    filename = os.path.basename(npz_file_to_process)
+    output_npz_path = os.path.join(output_dir, filename)
     
-    for npz_file in npz_files:
-        filename = os.path.basename(npz_file)
-        output_npz_path = os.path.join(output_dir, filename)
-        
-        print(f"Processing: {filename}")
-        
-        # Check if output file already exists
-        if os.path.exists(output_npz_path) and os.path.getsize(output_npz_path) > 0:
-            if args.overwrite:
-                print(f"  🔄 Already exists, overwriting")
-            else:
-                print(f"  ✓ Already exists, skipping")
-                skipped += 1
-                continue
-        
-        # Filter the file
-        if filter_single_npz_file(npz_file, output_npz_path, mask):
-            print(f"  ✓ Filtered successfully")
-            successful += 1
+    print(f"Processing: {filename}")
+    
+    # Check if output file already exists
+    if os.path.exists(output_npz_path) and os.path.getsize(output_npz_path) > 0:
+        if args.overwrite:
+            print(f"  🔄 Already exists, overwriting")
         else:
-            print(f"  ❌ Failed to filter")
-            failed += 1
+            print(f"  ✓ Already exists, skipping")
+            return
     
-    # Summary
-    print("\n" + "=" * 50)
-    print("🎯 FILTERING SUMMARY")
-    print("=" * 50)
-    print(f"Total files: {len(npz_files)}")
-    print(f"Successful: {successful}")
-    print(f"Skipped (already exist): {skipped}")
-    print(f"Failed: {failed}")
-    print(f"Output directory: {output_dir}")
-    print(f"Court filtering: {'Enabled' if court_filtering_enabled else 'Disabled'}")
-    
-    if not court_filtering_enabled:
-        print(f"⚠️  Note: Data was copied without court filtering due to detection failure")
-    
-    if failed == 0:
-        print("\n🎉 All files processed successfully!")
+    # Filter the file
+    if filter_single_npz_file(npz_file_to_process, output_npz_path, mask):
+        print(f"  ✓ Filtered successfully")
     else:
-        print(f"\n❌ {failed} files failed to process")
-    
-    print("=" * 50)
+        print(f"  ❌ Failed to filter")
 
 
 if __name__ == "__main__":
