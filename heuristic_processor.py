@@ -137,6 +137,9 @@ class HeuristicProcessor:
         Creates a fixed-size 1D NumPy vector from the assigned player data.
         This is the designated place for future feature engineering.
         
+        For missing players, -1 values are used to represent absent data,
+        which is outside the valid coordinate range and clearly identifiable.
+        
         Args:
             assigned_players (dict): The output from the `assign_players` method.
             num_keypoints (int): The number of keypoints per player.
@@ -146,7 +149,7 @@ class HeuristicProcessor:
         """
         # Define the structure: 1 (exists) + 4 (bbox) + 17*2 (kp_xy) + 17 (kp_conf) = 56 features per player
         features_per_player = 1 + 4 + (num_keypoints * 3)
-        vector = np.zeros(features_per_player * 2)
+        vector = np.full(features_per_player * 2, -1.0)  # Use -1 for missing values
 
         # --- Near Player ---
         if assigned_players['near_player']:
