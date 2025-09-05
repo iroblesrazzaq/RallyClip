@@ -30,7 +30,7 @@ def main():
     feature_vector = processor.create_feature_vector(assigned_players)
     print(f"Feature vector shape: {feature_vector.shape}")
     print(f"Number of -1 values: {np.sum(feature_vector == -1.0)}")
-    print(f"First 25 elements: {feature_vector[:25]}")
+    print(f"First 35 elements: {feature_vector[:35]}")
     
     # Example 2: Frame with no players
     print("\n=== Example 2: Frame with no players ===")
@@ -78,7 +78,7 @@ def main():
     
     current_keypoints_far = np.array([[850, 100], [855, 105], [860, 110], [865, 115], [870, 120],
                                      [875, 125], [880, 130], [885, 135], [890, 140], [895, 145],
-                                     [900, 150], [905, 155], [910, 160], [915, 165],
+                                     [900, 150], [905, 105], [910, 160], [915, 165],
                                      [920, 170], [925, 175], [930, 180]])
     
     current_frame_data = {
@@ -91,11 +91,11 @@ def main():
     velocity_vector = processor.create_feature_vector(current_assigned, prev_assigned)
     
     print(f"Velocity vector shape: {velocity_vector.shape}")
-    # Show player velocity components (indices 7,8 for near player; 7+130,8+130 for far player)
+    # Show player velocity components (indices 7,8 for near player; 7+144,8+144 for far player)
     near_vel_x = velocity_vector[7]
     near_vel_y = velocity_vector[8]
-    far_vel_x = velocity_vector[7 + 130]  # 130 = features per player
-    far_vel_y = velocity_vector[8 + 130]
+    far_vel_x = velocity_vector[7 + 144]  # 144 = features per player
+    far_vel_y = velocity_vector[8 + 144]
     print(f"Near player velocity: ({near_vel_x}, {near_vel_y})")
     print(f"Far player velocity: ({far_vel_x}, {far_vel_y})")
     
@@ -105,6 +105,12 @@ def main():
     first_kp_vel_x = velocity_vector[kp_vel_start]
     first_kp_vel_y = velocity_vector[kp_vel_start + 1]
     print(f"Near player first keypoint velocity: ({first_kp_vel_x}, {first_kp_vel_y})")
+    
+    # Show limb length components
+    # Limb lengths start after all previous features
+    limb_start = 1 + 11 + 34 + 17 + 34 + 34  # presence + player_features + keypoints + conf + kp_vel + kp_accel
+    first_limb_length = velocity_vector[limb_start]
+    print(f"Near player first limb length: {first_limb_length}")
     
     # Example 4: Show centroid calculation
     print("\n=== Example 4: Centroid calculation ===")

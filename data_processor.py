@@ -218,6 +218,50 @@ class DataProcessor:
         accelerations = (current_velocities - previous_velocities) / dt
         return accelerations
 
+    def _calculate_limb_lengths(self, keypoints):
+        """
+        Calculate lengths of anatomically connected limbs/joints.
+        Uses standard COCO keypoint connectivity.
+        
+        Args:
+            keypoints (np.array): Keypoints array of shape (num_keypoints, 2)
+            
+        Returns:
+            np.array: Array of limb lengths
+        """
+        if keypoints is None:
+            return np.full(14, -1.0)  # Return -1 for missing data
+            
+        # Standard COCO keypoint connections (14 main limbs)
+        # Format: (keypoint_index_1, keypoint_index_2, name)
+        connections = [
+            (5, 7, "shoulder_left->elbow_left"),      # 0
+            (7, 9, "elbow_left->wrist_left"),         # 1
+            (6, 8, "shoulder_right->elbow_right"),    # 2
+            (8, 10, "elbow_right->wrist_right"),      # 3
+            (11, 13, "hip_left->knee_left"),          # 4
+            (13, 15, "knee_left->ankle_left"),        # 5
+            (12, 14, "hip_right->knee_right"),        # 6
+            (14, 16, "knee_right->ankle_right"),      # 7
+            (5, 6, "shoulder_left->shoulder_right"),  # 8
+            (11, 12, "hip_left->hip_right"),          # 9
+            (5, 11, "shoulder_left->hip_left"),       # 10
+            (6, 12, "shoulder_right->hip_right"),     # 11
+            (6, 5, "shoulder_right->shoulder_left"),  # 12 (redundant but useful for symmetry)
+            (12, 11, "hip_right->hip_left")           # 13 (redundant but useful for symmetry)
+        ]
+        
+        limb_lengths = []
+        for i, j, name in connections:
+            # Calculate Euclidean distance between connected keypoints
+            if i < len(keypoints) and j < len(keypoints):
+                dist = np.sqrt(np.sum((keypoints[i] - keypoints[j]) ** 2))
+                limb_lengths.append(dist)
+            else:
+                limb_lengths.append(-1.0)  # Missing keypoint
+                
+        return np.array(limb_lengths)
+
     def _calculate_keypoint_velocity(self, current_keypoints, previous_keypoints, dt=1.0):
         """
         Calculate velocity for each keypoint.
@@ -267,7 +311,7 @@ class DataProcessor:
         Velocity and acceleration are calculated only when we have consecutive detections.
         For missing frames, velocity/acceleration are set to 0 (no measurable movement).
         
-        Includes velocity and acceleration for each keypoint in addition to overall player features.
+        Includes velocity and acceleration for each keypoint, and limb lengths in addition to overall player features.
         
         Args:
             assigned_players (dict): The output from the `assign_players` method for current frame.
@@ -279,8 +323,8 @@ class DataProcessor:
         """
         # Define the structure: 
         # 1 (exists) + 4 (bbox) + 2 (centroid) + 2 (player velocity) + 2 (player acceleration) + 
-        # 17*2 (kp_xy) + 17 (kp_conf) + 17*2 (kp_velocity) + 17*2 (kp_acceleration) = 130 features per player
-        features_per_player = 1 + 4 + 2 + 2 + 2 + (num_keypoints * 3) + (num_keypoints * 2) + (num_keypoints * 2)
+        # 17*2 (kp_xy) + 17 (kp_conf) + 17*2 (kp_velocity) + 17*2 (kp_acceleration) + 14 (limb_lengths) = 144 features per player
+        features_per_player = 1 + 4 + 2 + 2 + 2 + (num_keypoints * 3) + (num_keypoints * 2) + (num_keypoints * 2) + 14
         vector = np.full(features_per_player * 2, -1.0)  # Use -1 for missing values
 
         # --- Near Player ---
@@ -296,6 +340,7 @@ class DataProcessor:
             acceleration = (0.0, 0.0)
             kp_velocities = np.zeros((num_keypoints, 2))
             kp_accelerations = np.zeros((num_keypoints, 2))
+            limb_lengths = np.full(14, -1.0)  # Default to -1 for missing data
             
             # Calculate velocity, acceleration, and keypoint features if we have previous frame data
             if (previous_assigned_players and 
@@ -309,10 +354,13 @@ class DataProcessor:
                 prev_kps = previous_assigned_players['near_player']['keypoints']
                 kp_velocities = self._calculate_keypoint_velocity(current_kps, prev_kps)
                 
+                # Calculate limb lengths
+                limb_lengths = self._calculate_limb_lengths(player_data['keypoints'])
+                
                 # For acceleration, we would need previous velocities (which would require 3 consecutive frames)
                 # For now, we'll set acceleration to 0 unless we have a more sophisticated approach
                 
-            # Basic Features + Centroid + Velocity + Acceleration + Keypoint data + Keypoint velocity + Keypoint acceleration
+            # Basic Features + Centroid + Velocity + Acceleration + Keypoint data + Keypoint velocity + Keypoint acceleration + Limb lengths
             flat_features = np.concatenate([
                 player_data['box'],
                 centroid,
@@ -321,7 +369,8 @@ class DataProcessor:
                 player_data['keypoints'].flatten(),
                 player_data['conf'],
                 kp_velocities.flatten(),
-                kp_accelerations.flatten()
+                kp_accelerations.flatten(),
+                limb_lengths
             ])
             vector[1:features_per_player] = flat_features
             
@@ -334,6 +383,7 @@ class DataProcessor:
             # Set keypoint velocity and acceleration to 0 (after skipping keypoint positions and confidences)
             kp_offset = offset + 4 + (num_keypoints * 3)  # Skip player features + keypoint positions/confidences
             vector[kp_offset:kp_offset+(num_keypoints * 4)] = 0.0  # Keypoint velocity + acceleration = 0
+            # Limb lengths remain -1 (already set by initial fill)
             
         # --- Far Player ---
         offset = features_per_player
@@ -349,6 +399,7 @@ class DataProcessor:
             acceleration = (0.0, 0.0)
             kp_velocities = np.zeros((num_keypoints, 2))
             kp_accelerations = np.zeros((num_keypoints, 2))
+            limb_lengths = np.full(14, -1.0)  # Default to -1 for missing data
             
             # Calculate velocity, acceleration, and keypoint features if we have previous frame data
             if (previous_assigned_players and 
@@ -362,7 +413,10 @@ class DataProcessor:
                 prev_kps = previous_assigned_players['far_player']['keypoints']
                 kp_velocities = self._calculate_keypoint_velocity(current_kps, prev_kps)
                 
-            # Basic Features + Centroid + Velocity + Acceleration + Keypoint data + Keypoint velocity + Keypoint acceleration
+                # Calculate limb lengths
+                limb_lengths = self._calculate_limb_lengths(player_data['keypoints'])
+                
+            # Basic Features + Centroid + Velocity + Acceleration + Keypoint data + Keypoint velocity + Keypoint acceleration + Limb lengths
             flat_features = np.concatenate([
                 player_data['box'],
                 centroid,
@@ -371,7 +425,8 @@ class DataProcessor:
                 player_data['keypoints'].flatten(),
                 player_data['conf'],
                 kp_velocities.flatten(),
-                kp_accelerations.flatten()
+                kp_accelerations.flatten(),
+                limb_lengths
             ])
             vector[offset+1 : offset+features_per_player] = flat_features
             
@@ -384,6 +439,7 @@ class DataProcessor:
             # Set keypoint velocity and acceleration to 0 (after skipping keypoint positions and confidences)
             kp_offset = pos_offset + 4 + (num_keypoints * 3)  # Skip player features + keypoint positions/confidences
             vector[kp_offset:kp_offset+(num_keypoints * 4)] = 0.0  # Keypoint velocity + acceleration = 0
+            # Limb lengths remain -1 (already set by initial fill)
             
         return vector
 

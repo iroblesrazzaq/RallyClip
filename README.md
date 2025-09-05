@@ -9,10 +9,11 @@ to feed into an LSTM that returns the confidence that a given frame (given the p
 The pipeline now includes a `DataProcessor` class that handles:
 1. Player assignment using heuristic logic (near/far player detection)
 2. Feature engineering including centroid, velocity, and acceleration calculation for both player and keypoints
-3. Creation of LSTM-ready feature vectors with proper handling of missing data
+3. Biomechanical features including limb lengths for anatomically connected joints
+4. Creation of LSTM-ready feature vectors with proper handling of missing data
 
 ### Feature Vector Structure
-- Total size: 260 elements (130 per player × 2 players)
+- Total size: 288 elements (144 per player × 2 players)
 - Per player structure:
   - 1 element: Presence indicator (1.0 = present, -1.0 = absent)
   - 4 elements: Bounding box coordinates [x1, y1, x2, y2]
@@ -23,13 +24,20 @@ The pipeline now includes a `DataProcessor` class that handles:
   - 17 elements: Keypoint confidence scores
   - 34 elements: Keypoint velocity components [vx1, vy1, ..., vx17, vy17]
   - 34 elements: Keypoint acceleration components [ax1, ay1, ..., ax17, ay17]
+  - 14 elements: Limb lengths (anatomically connected joints)
 
 Missing players are represented with -1 values for position data and 0 for velocity/acceleration, which are outside the valid coordinate range [0, width/height].
+
+## Optimized Pose Extractor
+
+An optimized version of the pose extractor is available that leverages Apple MPS parallel inference capabilities. 
+See [POSE_EXTRACTOR_OPTIMIZED.md](POSE_EXTRACTOR_OPTIMIZED.md) for details.
 
 Current:
 create MVP model
 integrate DataProcessor class into pipeline
 add centroid, velocity, and acceleration feature engineering for both player and keypoints
+add biomechanical features (limb lengths)
 
 Later:
 look into LSD instead of Hough for line detection, further court detection optimizations

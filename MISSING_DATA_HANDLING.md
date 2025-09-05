@@ -13,7 +13,7 @@ For velocity and acceleration calculations, we use `0` to represent no measurabl
 ## Implementation Details
 
 ### Feature Vector Structure
-- Total size: 260 elements (130 per player × 2 players)
+- Total size: 288 elements (144 per player × 2 players)
 - Per player structure:
   - 1 element: Presence indicator (1.0 = present, -1.0 = absent)
   - 4 elements: Bounding box coordinates [x1, y1, x2, y2]
@@ -24,6 +24,7 @@ For velocity and acceleration calculations, we use `0` to represent no measurabl
   - 17 elements: Keypoint confidence scores
   - 34 elements: Keypoint velocity components [vx1, vy1, vx2, vy2, ..., vx17, vy17]
   - 34 elements: Keypoint acceleration components [ax1, ay1, ax2, ay2, ..., ax17, ay17]
+  - 14 elements: Limb lengths (anatomically connected joints)
 
 ### Examples
 
@@ -32,15 +33,17 @@ For velocity and acceleration calculations, we use `0` to represent no measurabl
 [1.0, x1, y1, x2, y2, center_x, center_y, player_vx, player_vy, player_ax, player_ay,
  kp_x1, kp_y1, ..., kp_x17, kp_y17, kp_conf1, ..., kp_conf17,
  kp_vx1, kp_vy1, ..., kp_vx17, kp_vy17, kp_ax1, kp_ay1, ..., kp_ax17, kp_ay17,
+ limb_len1, limb_len2, ..., limb_len14,
  1.0, x1, y1, x2, y2, center_x, center_y, player_vx, player_vy, player_ax, player_ay,
  kp_x1, kp_y1, ..., kp_x17, kp_y17, kp_conf1, ..., kp_conf17,
- kp_vx1, kp_vy1, ..., kp_vx17, kp_vy17, kp_ax1, kp_ay1, ..., kp_ax17, kp_ay17]
+ kp_vx1, kp_vy1, ..., kp_vx17, kp_vy17, kp_ax1, kp_ay1, ..., kp_ax17, kp_ay17,
+ limb_len1, limb_len2, ..., limb_len14]
 ```
 
 #### No players present:
 ```
-[-1, -1, -1, ..., 0, 0, 0, 0, -1, -1, ..., -1, 0, 0, ..., 0, 0, ..., 0] (260 elements)
-Note: Position data set to -1, velocity/acceleration set to 0
+[-1, -1, -1, ..., 0, 0, 0, 0, -1, -1, ..., -1, 0, 0, ..., 0, 0, ..., 0, -1, -1, ..., -1] (288 elements)
+Note: Position data set to -1, velocity/acceleration set to 0, limb lengths set to -1
 ```
 
 #### Only near player present:
@@ -48,7 +51,8 @@ Note: Position data set to -1, velocity/acceleration set to 0
 [1.0, x1, y1, x2, y2, center_x, center_y, player_vx, player_vy, player_ax, player_ay,
  kp_x1, kp_y1, ..., kp_x17, kp_y17, kp_conf1, ..., kp_conf17,
  kp_vx1, kp_vy1, ..., kp_vx17, kp_vy17, kp_ax1, kp_ay1, ..., kp_ax17, kp_ay17,
- -1, -1, -1, ..., 0, 0, 0, 0, -1, -1, ..., -1, 0, 0, ..., 0, 0, ..., 0]
+ limb_len1, limb_len2, ..., limb_len14,
+ -1, -1, -1, ..., 0, 0, 0, 0, -1, -1, ..., -1, 0, 0, ..., 0, 0, ..., 0, -1, -1, ..., -1]
 ```
 
 ## Key Design Decisions
@@ -58,6 +62,7 @@ Note: Position data set to -1, velocity/acceleration set to 0
 - **Player Velocity/Acceleration**: Set to 0 (no measurable movement)
 - **Keypoint data**: Set to -1 (missing data)
 - **Keypoint Velocity/Acceleration**: Set to 0 (no measurable movement)
+- **Limb lengths**: Set to -1 (missing data)
 
 ### Handling Intermittent Detections
 Players frequently leave and re-enter the detection area. Our approach:
@@ -68,8 +73,8 @@ Players frequently leave and re-enter the detection area. Our approach:
 ### Example Scenario
 ```
 Frame 1: Player detected at (100, 200) -> Store position
-Frame 2: Player not detected -> Player velocity = 0, Keypoint velocity = 0
-Frame 3: Player detected at (150, 220) -> Player velocity = (50, 20), Keypoint velocity = calculated
+Frame 2: Player not detected -> Player velocity = 0, Keypoint velocity = 0, Limb lengths = -1
+Frame 3: Player detected at (150, 220) -> Player velocity = (50, 20), Keypoint velocity = calculated, Limb lengths = calculated
 ```
 
 ## Benefits of This Approach
@@ -79,7 +84,8 @@ Frame 3: Player detected at (150, 220) -> Player velocity = (50, 20), Keypoint v
 3. **No false interpolation**: Doesn't create artificial movement data
 4. **Robust to player exits**: Handles players leaving/re-entering court naturally
 5. **Detailed body movement**: Keypoint velocity/acceleration captures detailed body dynamics
-6. **PyTorch compatibility**: Can be fed directly into LSTM tensors
+6. **Biomechanical features**: Limb lengths capture anatomical relationships
+7. **PyTorch compatibility**: Can be fed directly into LSTM tensors
 
 ## Keypoint Velocity/Acceleration Benefits
 
@@ -87,6 +93,14 @@ Frame 3: Player detected at (150, 220) -> Player velocity = (50, 20), Keypoint v
 2. **Action recognition**: Helps identify specific tennis actions (serve, forehand, backhand)
 3. **Injury prevention**: Can detect abnormal movement patterns
 4. **Technique analysis**: Provides detailed feedback on player technique
+
+## Limb Length Benefits
+
+1. **Pose stability**: Captures consistent body proportions
+2. **Action recognition**: Different tennis strokes have characteristic limb configurations
+3. **Biomechanical analysis**: Provides insight into player technique and form
+4. **Noise reduction**: More stable than raw keypoint coordinates
+5. **Anatomical meaning**: Each feature represents a real physical connection in the body
 
 ## Preprocessing for ML Models
 
@@ -105,6 +119,6 @@ feature_tensor = torch.FloatTensor(feature_vector)
 
 # If using in a sequence
 sequence = torch.FloatTensor([feature_vector1, feature_vector2, ...])
-lstm = nn.LSTM(input_size=260, hidden_size=64, num_layers=2)
+lstm = nn.LSTM(input_size=288, hidden_size=64, num_layers=2)
 output, (hidden, cell) = lstm(sequence)
 ```

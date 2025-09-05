@@ -86,13 +86,19 @@ def test_comprehensive_scenario():
                 first_kp_vel_x = feature_vector[kp_vel_start]
                 first_kp_vel_y = feature_vector[kp_vel_start + 1]
                 print(f"  Near player - First keypoint velocity: ({first_kp_vel_x}, {first_kp_vel_y})")
+            
+            # Check limb lengths (after all previous features)
+            limb_start = 1 + 11 + 34 + 17 + 34 + 34  # presence + player_features + keypoints + conf + kp_vel + kp_accel
+            if len(feature_vector) > limb_start:
+                first_limb_length = feature_vector[limb_start]
+                print(f"  Near player - First limb length: {first_limb_length}")
         
         if far_present:
-            # Far player features start at index 130 (features per player)
-            far_centroid_x = feature_vector[130 + 5]  # offset + presence(1) + bbox(4) + centroid_x(1)
-            far_centroid_y = feature_vector[130 + 6]  # offset + presence(1) + bbox(4) + centroid_x(1) + centroid_y(1)
-            far_vel_x = feature_vector[130 + 7]       # + velocity_x(1)
-            far_vel_y = feature_vector[130 + 8]       # + velocity_y(1)
+            # Far player features start at index 144 (features per player)
+            far_centroid_x = feature_vector[144 + 5]  # offset + presence(1) + bbox(4) + centroid_x(1)
+            far_centroid_y = feature_vector[144 + 6]  # offset + presence(1) + bbox(4) + centroid_x(1) + centroid_y(1)
+            far_vel_x = feature_vector[144 + 7]       # + velocity_x(1)
+            far_vel_y = feature_vector[144 + 8]       # + velocity_y(1)
             print(f"  Far player - Centroid: ({far_centroid_x}, {far_centroid_y}), Velocity: ({far_vel_x}, {far_vel_y})")
         
         print()
@@ -144,6 +150,10 @@ def test_velocity_acceleration_accuracy():
         first_kp_vel_x = feature_vector[kp_vel_start]
         first_kp_vel_y = feature_vector[kp_vel_start + 1]
         
+        # Extract limb length
+        limb_start = 1 + 11 + 34 + 17 + 34 + 34  # All previous features
+        first_limb_length = feature_vector[limb_start]
+        
         print(f"Frame {i+1}: Position ({x}, {y})")
         if i > 0:
             expected_vel_x = x - positions[i-1][0]
@@ -154,9 +164,12 @@ def test_velocity_acceleration_accuracy():
             # Keypoint velocity should match player velocity for consistent movement
             print(f"  Keypoint Velocity - First keypoint: ({first_kp_vel_x}, {first_kp_vel_y})")
             print(f"  Keypoint Accuracy: vel_x={'✓' if first_kp_vel_x == expected_vel_x else '✗'}, vel_y={'✓' if first_kp_vel_y == expected_vel_y else '✗'}")
+            
+            print(f"  First Limb Length: {first_limb_length}")
         else:
             print(f"  Player Velocity - Calculated: ({vel_x}, {vel_y}) (no previous frame for comparison)")
             print(f"  Keypoint Velocity - First keypoint: ({first_kp_vel_x}, {first_kp_vel_y})")
+            print(f"  First Limb Length: {first_limb_length}")
         print()
         
         previous_assigned = assigned_players

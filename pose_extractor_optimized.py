@@ -134,16 +134,13 @@ class OptimizedPoseExtractor:
         # Set video position to start frame
         cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         
-        # Initialize list to store all frame data
-        all_frames_data = []
+        # Initialize variables
         total_frames_to_process = end_frame - start_frame
-        
-        print("Extracting pose data...")
+        all_frames_data = [None] * total_frames_to_process
         processed_frames = 0
         
         # Calculate which frames to process for target FPS
         target_frames = []
-        frame_interval = fps / target_fps
         for i in range(total_frames_to_process):
             current_time = start_time_seconds + (i / fps)
             target_frame_index = int(current_time * target_fps)
@@ -155,18 +152,14 @@ class OptimizedPoseExtractor:
         
         print(f"Will process {len(target_frames)} frames out of {total_frames_to_process} total frames")
         
-        # Prepare for batch processing
-        # Pre-fill all_frames_data with placeholders
-        for _ in range(len(target_frames)):
-            all_frames_data.append({
-                'boxes': np.array([]),
-                'keypoints': np.array([]),
-                'conf': np.array([])
-            })
+        # Initialize all_frames_data with the correct size
+        all_frames_data = [None] * total_frames_to_process
         
-        # Keep track of the index in target_frames for processed frames
-        target_frame_idx = 0
-        frames_to_process = []
+        # Process frames in chunks to balance memory usage and batch efficiency
+        chunk_size = max(self.batch_size * 4, 32)  # Process up to 4 batches at a time
+        frames_buffer = []
+        frame_indices_buffer = []
+        processed_frames = 0
         
         for i in range(total_frames_to_process):
             ret, frame = cap.read()
@@ -175,32 +168,71 @@ class OptimizedPoseExtractor:
                 print(f"Error reading frame {i + start_frame}")
                 break
             
-            # Check if we should process this frame
+            # Check if this frame should be processed
             if i in target_frames:
-                # Add frame to batch
-                frames_to_process.append(frame)
-                
-                # Process in batches when we have enough frames or at the end
-                if len(frames_to_process) >= self.batch_size or target_frame_idx == len(target_frames) - 1:
-                    # Process the batch
-                    batch_results = self._process_batch(frames_to_process, confidence_threshold)
+                frames_buffer.append(frame)
+                frame_indices_buffer.append(i)
+            else:
+                # Add empty data for skipped frames immediately
+                all_frames_data[i] = {
+                    'boxes': np.array([]),
+                    'keypoints': np.array([]),
+                    'conf': np.array([])
+                }
+                # Update progress for skipped frames
+                progress = (i + 1) / total_frames_to_process * 100
+                print(f"\rProgress: [{('=' * int(progress/2)).ljust(50)}] {progress:.1f}% (processed {processed_frames} frames)", end='', flush=True)
+            
+            # Process in batches when buffer is full or at the end
+            if len(frames_buffer) >= chunk_size or i == total_frames_to_process - 1:
+                # Process frames in sub-batches
+                for batch_start in range(0, len(frames_buffer), self.batch_size):
+                    batch_end = min(batch_start + self.batch_size, len(frames_buffer))
+                    frames_batch = frames_buffer[batch_start:batch_end]
+                    indices_batch = frame_indices_buffer[batch_start:batch_end]
                     
-                    # Extract data from results and place in correct positions
+                    # Process the batch
+                    batch_results = self._process_batch(frames_batch, confidence_threshold)
+                    
+                    # Extract data from results
                     for j, result in enumerate(batch_results):
                         frame_data = self._extract_frame_data(result)
-                        # Place at the correct position in all_frames_data
-                        all_frames_data[target_frame_idx - len(frames_to_process) + 1 + j] = frame_data
+                        frame_index = indices_batch[j]
+                        all_frames_data[frame_index] = frame_data
                     
-                    processed_frames += len(frames_to_process)
-                    
-                    # Update progress bar
-                    progress = (i + 1) / total_frames_to_process * 100
-                    print(f"\rProgress: [{('=' * int(progress/2)).ljust(50)}] {progress:.1f}% (processed {processed_frames} frames)", end='', flush=True)
-                    
-                    # Reset for next batch
-                    frames_to_process = []
+                    processed_frames += len(frames_batch)
                 
-                target_frame_idx += 1
+                # Update progress bar after processing all batches in this chunk
+                # Use the actual frame index for more accurate progress
+                progress = (i + 1) / total_frames_to_process * 100
+                print(f"\rProgress: [{('=' * int(progress/2)).ljust(50)}] {progress:.1f}% (processed {processed_frames} frames)", end='', flush=True)
+                
+                # Clear buffers
+                frames_buffer = []
+                frame_indices_buffer = []
+        
+        # Handle any remaining frames in buffer
+        if frames_buffer:
+            # Process frames in sub-batches
+            for batch_start in range(0, len(frames_buffer), self.batch_size):
+                batch_end = min(batch_start + self.batch_size, len(frames_buffer))
+                frames_batch = frames_buffer[batch_start:batch_end]
+                indices_batch = frame_indices_buffer[batch_start:batch_end]
+                
+                # Process the batch
+                batch_results = self._process_batch(frames_batch, confidence_threshold)
+                
+                # Extract data from results
+                for j, result in enumerate(batch_results):
+                    frame_data = self._extract_frame_data(result)
+                    frame_index = indices_batch[j]
+                    all_frames_data[frame_index] = frame_data
+                
+                processed_frames += len(frames_batch)
+        
+        # Final progress update
+        print(f"\rProgress: [{'=' * 50}] 100.0% (processed {processed_frames} frames)")
+        print()  # New line after progress bar
         
         print()  # New line after progress bar
         

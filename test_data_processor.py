@@ -40,7 +40,7 @@ def test_data_processor():
     print(f"Near player assigned: {assigned_players['near_player'] is not None}")
     print(f"Far player assigned: {assigned_players['far_player'] is not None}")
     print(f"Feature vector shape: {feature_vector.shape}")
-    print(f"Feature vector (first 20 elements): {feature_vector[:20]}")
+    print(f"Feature vector (first 30 elements): {feature_vector[:30]}")
     print(f"Number of -1 values in feature vector: {np.sum(feature_vector == -1.0)}")
     
     # Test with missing players
@@ -105,7 +105,7 @@ def test_data_processor():
     velocity_feature_vector = processor.create_feature_vector(current_assigned, prev_assigned)
     
     print(f"Velocity test - Feature vector shape: {velocity_feature_vector.shape}")
-    print(f"Velocity test - First 25 elements: {velocity_feature_vector[:25]}")
+    print(f"Velocity test - First 35 elements: {velocity_feature_vector[:35]}")
     
     # Check that velocity values are not all zero (they should have actual values)
     # Player velocity starts at index 7 (presence=1 + bbox=4 + centroid=2)
@@ -123,6 +123,13 @@ def test_data_processor():
     first_kp_vel_y = velocity_feature_vector[kp_vel_start + 1]
     print(f"First keypoint velocity: ({first_kp_vel_x}, {first_kp_vel_y})")
     print(f"Keypoint velocity non-zero: {first_kp_vel_x != 0.0 or first_kp_vel_y != 0.0}")
+    
+    # Check limb lengths (starts after all previous features)
+    # Total features before limb lengths: 1 + 11 + 34 + 17 + 34 + 34 = 131
+    limb_start = 1 + 11 + 34 + 17 + 34 + 34
+    first_limb_length = velocity_feature_vector[limb_start]
+    print(f"First limb length: {first_limb_length}")
+    print(f"Limb length not -1: {first_limb_length != -1.0}")
 
 if __name__ == "__main__":
     test_data_processor()
