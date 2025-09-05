@@ -1,6 +1,6 @@
 *.mp4
 .DS_Store
-*.csv
+.csv
 *.llc
 repomix-output.xml
 *.npz
