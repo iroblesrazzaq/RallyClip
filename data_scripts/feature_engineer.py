@@ -1,133 +1,36 @@
-# data_processor.py
-import numpy as np
+#!/usr/bin/env python3
+"""
+Tennis Feature Engineer
 
-class DataProcessor:
+This module contains the FeatureEngineer class that handles
+feature vector creation from preprocessed tennis pose data.
+"""
+
+import numpy as np
+import os
+
+class FeatureEngineer:
     """
-    Processes pose data and extracts features for tennis player tracking.
-    Separates data processing from feature engineering for flexibility.
+    Creates feature vectors from preprocessed tennis pose data.
+    
+    This class takes preprocessed data with player assignments and creates
+    feature vectors for training the tennis point detection model.
     """
-    def __init__(self, screen_width=1280, screen_height=720, merge_iou_thresh=0.6):
+    
+    def __init__(self, screen_width=1280, screen_height=720, feature_vector_size=288):
+        """
+        Initialize the feature engineer.
+        
+        Args:
+            screen_width (int): Width of the video frames
+            screen_height (int): Height of the video frames
+            feature_vector_size (int): Size of feature vectors (default: 288)
+        """
         self.screen_width = screen_width
         self.screen_height = screen_height
+        self.feature_vector_size = feature_vector_size
         self.screen_center_x = screen_width / 2
-        self.merge_iou_thresh = merge_iou_thresh
-        
-        # Define the edge zones for conditional merging
-        self.left_zone_x = screen_width * 0.10
-        self.right_zone_x = screen_width * 0.90
-        self.bottom_zone_y = screen_height * 0.80
-
-    def _calculate_iou(self, box1, box2):
-        """Calculate the Intersection over Union of two bounding boxes."""
-        x1_inter = max(box1[0], box2[0])
-        y1_inter = max(box1[1], box2[1])
-        x2_inter = min(box1[2], box2[2])
-        y2_inter = min(box1[3], box2[3])
-        inter_area = max(0, x2_inter - x1_inter) * max(0, y2_inter - y1_inter)
-        box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
-        box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
-        union_area = box1_area + box2_area - inter_area
-        return inter_area / union_area if union_area > 0 else 0
-
-    def _conditional_merge_boxes(self, boxes, keypoints, confs):
-        """Implement the conditional merge logic for edge-zone merging."""
-        if len(boxes) <= 1:
-            return boxes, keypoints, confs
-
-        # 1. Group boxes into clumps based on IoU
-        detections = [{'box': boxes[i], 'keypoints': keypoints[i], 'conf': confs[i], 'clump_id': -1} for i in range(len(boxes))]
-        clump_count = 0
-        for i in range(len(detections)):
-            if detections[i]['clump_id'] == -1:
-                detections[i]['clump_id'] = clump_count
-                for j in range(i + 1, len(detections)):
-                    if self._calculate_iou(detections[i]['box'], detections[j]['box']) > self.merge_iou_thresh:
-                        detections[j]['clump_id'] = clump_count
-                clump_count += 1
-        
-        if clump_count == len(detections): 
-            return boxes, keypoints, confs
-
-        # 2. Process each clump
-        final_boxes, final_keypoints, final_confs = [], [], []
-        for clump_id in range(clump_count):
-            clump = [d for d in detections if d['clump_id'] == clump_id]
-            if len(clump) == 1:
-                final_boxes.append(clump[0]['box'])
-                final_keypoints.append(clump[0]['keypoints'])
-                final_confs.append(clump[0]['conf'])
-                continue
-
-            # 3. Check if the clump is in an edge zone
-            min_x1 = min(d['box'][0] for d in clump)
-            min_y1 = min(d['box'][1] for d in clump)
-            max_x2 = max(d['box'][2] for d in clump)
-            max_y2 = max(d['box'][3] for d in clump)
-            clump_center_x = (min_x1 + max_x2) / 2
-            
-            is_in_edge_zone = (
-                clump_center_x < self.left_zone_x or
-                clump_center_x > self.right_zone_x or
-                max_y2 > self.bottom_zone_y # Check the bottom of the merged box
-            )
-
-            # 4. Merge if in zone, otherwise keep separate
-            if is_in_edge_zone:
-                merged_box = [min_x1, min_y1, max_x2, max_y2]
-                # Use data from the largest original box in the clump
-                best_detection = max(clump, key=lambda d: (d['box'][2]-d['box'][0])*(d['box'][3]-d['box'][1]))
-                final_boxes.append(merged_box)
-                final_keypoints.append(best_detection['keypoints'])
-                final_confs.append(best_detection['conf'])
-            else: # Not in an edge zone, so do not merge
-                for d in clump:
-                    final_boxes.append(d['box'])
-                    final_keypoints.append(d['keypoints'])
-                    final_confs.append(d['conf'])
-
-        return np.array(final_boxes), np.array(final_keypoints), np.array(final_confs)
-
-    def assign_players(self, frame_data):
-        """
-        Applies the v3 heuristic to identify and assign near and far players.
-        
-        Returns:
-            dict: A dictionary with 'near_player' and 'far_player' keys.
-                  Each value is a detection dictionary or None if not found.
-        """
-        boxes = frame_data.get('boxes', np.array([]))
-        keypoints = frame_data.get('keypoints', np.array([]))
-        confs = frame_data.get('conf', np.array([]))
-
-        # 1. Conditional Merge
-        clean_boxes, clean_keypoints, clean_confs = self._conditional_merge_boxes(boxes, keypoints, confs)
-
-        assigned_players = {'near_player': None, 'far_player': None}
-        
-        if len(clean_boxes) == 0:
-            return assigned_players
-
-        # Create a list of candidate detections
-        candidates = [{
-            'box': clean_boxes[i], 
-            'keypoints': clean_keypoints[i], 
-            'conf': clean_confs[i]
-        } for i in range(len(clean_boxes))]
-
-        # 2. Find Near Player (lowest bottom edge)
-        near_player_idx = max(range(len(candidates)), key=lambda i: candidates[i]['box'][3])
-        near_player = candidates[near_player_idx]
-        assigned_players['near_player'] = near_player
-        del candidates[near_player_idx]
-
-        # 3. Find Far Player (closest to center line)
-        if len(candidates) > 0:
-            far_player_idx = min(range(len(candidates)), key=lambda i: abs(((candidates[i]['box'][0] + candidates[i]['box'][2]) / 2) - self.screen_center_x))
-            far_player = candidates[far_player_idx]
-            assigned_players['far_player'] = far_player
-            
-        return assigned_players
-
+    
     def _calculate_centroid(self, box):
         """
         Calculate the centroid (center point) of a bounding box.
@@ -183,16 +86,15 @@ class DataProcessor:
         Calculate velocity for each keypoint.
         
         Args:
-            current_keypoints (np.array): Current keypoints array of shape (num_keypoints, 2)
-            previous_keypoints (np.array): Previous keypoints array of shape (num_keypoints, 2)
+            current_keypoints (np.array): Current keypoints array of shape (17, 2)
+            previous_keypoints (np.array): Previous keypoints array of shape (17, 2)
             dt (float): Time difference between frames
             
         Returns:
-            np.array: Velocity array of shape (num_keypoints, 2) with (vx, vy) for each keypoint
+            np.array: Velocity array of shape (17, 2) with (vx, vy) for each keypoint
         """
         if current_keypoints is None or previous_keypoints is None:
-            # Return zeros for all keypoints if data is missing
-            return np.zeros((current_keypoints.shape[0] if current_keypoints is not None else 17, 2))
+            return np.zeros((17, 2))  # Return zero velocities if keypoints are missing
         
         # Calculate velocity for each keypoint
         velocities = (current_keypoints - previous_keypoints) / dt
@@ -203,16 +105,15 @@ class DataProcessor:
         Calculate acceleration for each keypoint.
         
         Args:
-            current_velocities (np.array): Current velocities array of shape (num_keypoints, 2)
-            previous_velocities (np.array): Previous velocities array of shape (num_keypoints, 2)
+            current_velocities (np.array): Current velocities array of shape (17, 2)
+            previous_velocities (np.array): Previous velocities array of shape (17, 2)
             dt (float): Time difference between frames
             
         Returns:
-            np.array: Acceleration array of shape (num_keypoints, 2) with (ax, ay) for each keypoint
+            np.array: Acceleration array of shape (17, 2) with (ax, ay) for each keypoint
         """
         if current_velocities is None or previous_velocities is None:
-            # Return zeros for all keypoints if data is missing
-            return np.zeros((current_velocities.shape[0] if current_velocities is not None else 17, 2))
+            return np.zeros((17, 2))  # Return zero accelerations if velocities are missing
         
         # Calculate acceleration for each keypoint
         accelerations = (current_velocities - previous_velocities) / dt
@@ -261,44 +162,6 @@ class DataProcessor:
                 limb_lengths.append(-1.0)  # Missing keypoint
                 
         return np.array(limb_lengths)
-
-    def _calculate_keypoint_velocity(self, current_keypoints, previous_keypoints, dt=1.0):
-        """
-        Calculate velocity for each keypoint.
-        
-        Args:
-            current_keypoints (np.array): Current keypoints array of shape (17, 2)
-            previous_keypoints (np.array): Previous keypoints array of shape (17, 2)
-            dt (float): Time difference between frames
-            
-        Returns:
-            np.array: Velocity array of shape (17, 2) with (vx, vy) for each keypoint
-        """
-        if current_keypoints is None or previous_keypoints is None:
-            return np.zeros((17, 2))  # Return zero velocities if keypoints are missing
-        
-        # Calculate velocity for each keypoint
-        velocities = (current_keypoints - previous_keypoints) / dt
-        return velocities
-
-    def _calculate_keypoint_acceleration(self, current_velocities, previous_velocities, dt=1.0):
-        """
-        Calculate acceleration for each keypoint.
-        
-        Args:
-            current_velocities (np.array): Current velocities array of shape (17, 2)
-            previous_velocities (np.array): Previous velocities array of shape (17, 2)
-            dt (float): Time difference between frames
-            
-        Returns:
-            np.array: Acceleration array of shape (17, 2) with (ax, ay) for each keypoint
-        """
-        if current_velocities is None or previous_velocities is None:
-            return np.zeros((17, 2))  # Return zero accelerations if velocities are missing
-        
-        # Calculate acceleration for each keypoint
-        accelerations = (current_velocities - previous_velocities) / dt
-        return accelerations
 
     def create_feature_vector(self, assigned_players, previous_assigned_players=None, num_keypoints=17):
         """
@@ -442,31 +305,98 @@ class DataProcessor:
             # Limb lengths remain -1 (already set by initial fill)
             
         return vector
-
-# --- Example Usage (can be placed in a separate main script) ---
-#
-# from data_processor import DataProcessor
-#
-# # 1. Initialize the processor
-# processor = DataProcessor(screen_width=1280, screen_height=720)
-#
-# # 2. Load the court-filtered data
-# npz_path = 'path/to/your/court_filtered_data.npz'
-# all_frames_data = np.load(npz_path, allow_pickle=True)['frames']
-#
-# # 3. Process the entire video sequence
-# lstm_input_sequence = []
-# previous_players = None
-# for frame_data in all_frames_data:
-#     # Step A: Assign players using the core heuristic
-#     assigned_players = processor.assign_players(frame_data)
-#     
-#     # Step B: Convert the assignment into a feature vector
-#     feature_vector = processor.create_feature_vector(assigned_players, previous_players)
-#     
-#     lstm_input_sequence.append(feature_vector)
-#     previous_players = assigned_players  # Store for next iteration
-#
-# # 4. Final result is a NumPy array ready for the model
-# lstm_ready_data = np.array(lstm_input_sequence)
-# print(f"Successfully created LSTM input data with shape: {lstm_ready_data.shape}")
+    
+    def create_features_from_preprocessed(self, input_npz_path, output_file, overwrite=False):
+        """
+        Create feature vectors from preprocessed pose data.
+        
+        Args:
+            input_npz_path (str): Path to preprocessed .npz file
+            output_file (str): Path to output .npz file
+            overwrite (bool): Whether to overwrite existing files
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Check if output file already exists
+            if os.path.exists(output_file) and not overwrite:
+                print(f"  ✓ Already exists, skipping: {os.path.basename(output_file)}")
+                return True
+            
+            # Load preprocessed data
+            print(f"  Loading preprocessed data from: {input_npz_path}")
+            data = np.load(input_npz_path, allow_pickle=True)
+            
+            # Extract arrays
+            frames = data['frames']
+            targets = data['targets']
+            near_players = data['near_players']
+            far_players = data['far_players']
+            
+            print(f"  Loaded {len(frames)} frames")
+            print(f"  Annotation status distribution:")
+            print(f"    -100 (skipped): {np.sum(targets == -100)}")
+            print(f"    0 (not in play): {np.sum(targets == 0)}")
+            print(f"    1 (in play): {np.sum(targets == 1)}")
+            
+            # Create feature vectors only for annotated frames (status >= 0)
+            annotated_indices = np.where(targets >= 0)[0]
+            print(f"  Creating features for {len(annotated_indices)} annotated frames")
+            
+            feature_vectors = []
+            feature_targets = []
+            previous_players = None
+            
+            for idx in annotated_indices:
+                # Create assigned players dictionary for this frame
+                assigned_players = {
+                    'near_player': near_players[idx],
+                    'far_player': far_players[idx]
+                }
+                
+                # Create feature vector
+                feature_vector = self.create_feature_vector(assigned_players, previous_players)
+                
+                feature_vectors.append(feature_vector)
+                feature_targets.append(targets[idx])
+                
+                # Update previous players for velocity/acceleration calculations
+                previous_players = assigned_players
+                
+                # Progress indicator
+                if len(feature_vectors) % 100 == 0:
+                    print(f"    Created features for {len(feature_vectors)}/{len(annotated_indices)} annotated frames")
+            
+            # Convert to numpy arrays
+            if feature_vectors:
+                feature_array = np.array(feature_vectors)
+                target_array = np.array(feature_targets)
+                
+                print(f"  Feature array shape: {feature_array.shape}")
+                print(f"  Target array shape: {target_array.shape}")
+            else:
+                # Create empty arrays with correct shapes
+                feature_array = np.empty((0, self.feature_vector_size))
+                target_array = np.empty((0,))
+                print(f"  No annotated frames found, creating empty arrays")
+            
+            # Create output directory if it doesn't exist
+            output_dir = os.path.dirname(output_file)
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Save feature vectors and targets
+            np.savez_compressed(
+                output_file,
+                features=feature_array,
+                targets=target_array
+            )
+            
+            print(f"  ✓ Features saved to: {output_file}")
+            return True
+            
+        except Exception as e:
+            print(f"  ❌ Error processing {input_npz_path}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False

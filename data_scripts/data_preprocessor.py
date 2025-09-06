@@ -2,16 +2,15 @@
 """
 Tennis Data Preprocessor
 
-This module contains the TennisDataPreprocessor class that handles
+This module contains the DataPreprocessor class that handles
 court filtering and player assignment in a single, cohesive class.
 """
 
 import numpy as np
 import os
-from court_detector import CourtDetector
-from data_processor import DataProcessor
+from data_scripts.court_detector import CourtDetector
 
-class TennisDataPreprocessor:
+class DataPreprocessor:
     """
     Preprocesses tennis pose data by applying court filtering and player assignment.
     
@@ -19,17 +18,135 @@ class TennisDataPreprocessor:
     a preprocessed dataset that can be used for visualization and feature engineering.
     """
     
-    def __init__(self, screen_width=1280, screen_height=720):
+    def __init__(self, screen_width=1280, screen_height=720, merge_iou_thresh=0.6):
         """
         Initialize the preprocessor.
         
         Args:
             screen_width (int): Width of the video frames
             screen_height (int): Height of the video frames
+            merge_iou_thresh (float): IoU threshold for merging bounding boxes
         """
         self.screen_width = screen_width
         self.screen_height = screen_height
-        self.data_processor = DataProcessor(screen_width, screen_height)
+        self.screen_center_x = screen_width / 2
+        self.merge_iou_thresh = merge_iou_thresh
+        
+        # Define the edge zones for conditional merging
+        self.left_zone_x = screen_width * 0.10
+        self.right_zone_x = screen_width * 0.90
+        self.bottom_zone_y = screen_height * 0.80
+    
+    def _calculate_iou(self, box1, box2):
+        """Calculate the Intersection over Union of two bounding boxes."""
+        x1_inter = max(box1[0], box2[0])
+        y1_inter = max(box1[1], box2[1])
+        x2_inter = min(box1[2], box2[2])
+        y2_inter = min(box1[3], box2[3])
+        inter_area = max(0, x2_inter - x1_inter) * max(0, y2_inter - y1_inter)
+        box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        union_area = box1_area + box2_area - inter_area
+        return inter_area / union_area if union_area > 0 else 0
+
+    def _conditional_merge_boxes(self, boxes, keypoints, confs):
+        """Implement the conditional merge logic for edge-zone merging."""
+        if len(boxes) <= 1:
+            return boxes, keypoints, confs
+
+        # 1. Group boxes into clumps based on IoU
+        detections = [{'box': boxes[i], 'keypoints': keypoints[i], 'conf': confs[i], 'clump_id': -1} for i in range(len(boxes))]
+        clump_count = 0
+        for i in range(len(detections)):
+            if detections[i]['clump_id'] == -1:
+                detections[i]['clump_id'] = clump_count
+                for j in range(i + 1, len(detections)):
+                    if self._calculate_iou(detections[i]['box'], detections[j]['box']) > self.merge_iou_thresh:
+                        detections[j]['clump_id'] = clump_count
+                clump_count += 1
+        
+        if clump_count == len(detections): 
+            return boxes, keypoints, confs
+
+        # 2. Process each clump
+        final_boxes, final_keypoints, final_confs = [], [], []
+        for clump_id in range(clump_count):
+            clump = [d for d in detections if d['clump_id'] == clump_id]
+            if len(clump) == 1:
+                final_boxes.append(clump[0]['box'])
+                final_keypoints.append(clump[0]['keypoints'])
+                final_confs.append(clump[0]['conf'])
+                continue
+
+            # 3. Check if the clump is in an edge zone
+            min_x1 = min(d['box'][0] for d in clump)
+            min_y1 = min(d['box'][1] for d in clump)
+            max_x2 = max(d['box'][2] for d in clump)
+            max_y2 = max(d['box'][3] for d in clump)
+            clump_center_x = (min_x1 + max_x2) / 2
+            
+            is_in_edge_zone = (
+                clump_center_x < self.left_zone_x or
+                clump_center_x > self.right_zone_x or
+                max_y2 > self.bottom_zone_y # Check the bottom of the merged box
+            )
+
+            # 4. Merge if in zone, otherwise keep separate
+            if is_in_edge_zone:
+                merged_box = [min_x1, min_y1, max_x2, max_y2]
+                # Use data from the largest original box in the clump
+                best_detection = max(clump, key=lambda d: (d['box'][2]-d['box'][0])*(d['box'][3]-d['box'][1]))
+                final_boxes.append(merged_box)
+                final_keypoints.append(best_detection['keypoints'])
+                final_confs.append(best_detection['conf'])
+            else: # Not in an edge zone, so do not merge
+                for d in clump:
+                    final_boxes.append(d['box'])
+                    final_keypoints.append(d['keypoints'])
+                    final_confs.append(d['conf'])
+
+        return np.array(final_boxes), np.array(final_keypoints), np.array(final_confs)
+
+    def assign_players(self, frame_data):
+        """
+        Applies the v3 heuristic to identify and assign near and far players.
+        
+        Returns:
+            dict: A dictionary with 'near_player' and 'far_player' keys.
+                  Each value is a detection dictionary or None if not found.
+        """
+        boxes = frame_data.get('boxes', np.array([]))
+        keypoints = frame_data.get('keypoints', np.array([]))
+        confs = frame_data.get('conf', np.array([]))
+
+        # 1. Conditional Merge
+        clean_boxes, clean_keypoints, clean_confs = self._conditional_merge_boxes(boxes, keypoints, confs)
+
+        assigned_players = {'near_player': None, 'far_player': None}
+        
+        if len(clean_boxes) == 0:
+            return assigned_players
+
+        # Create a list of candidate detections
+        candidates = [{
+            'box': clean_boxes[i], 
+            'keypoints': clean_keypoints[i], 
+            'conf': clean_confs[i]
+        } for i in range(len(clean_boxes))]
+
+        # 2. Find Near Player (lowest bottom edge)
+        near_player_idx = max(range(len(candidates)), key=lambda i: candidates[i]['box'][3])
+        near_player = candidates[near_player_idx]
+        assigned_players['near_player'] = near_player
+        del candidates[near_player_idx]
+
+        # 3. Find Far Player (closest to center line)
+        if len(candidates) > 0:
+            far_player_idx = min(range(len(candidates)), key=lambda i: abs(((candidates[i]['box'][0] + candidates[i]['box'][2]) / 2) - self.screen_center_x))
+            far_player = candidates[far_player_idx]
+            assigned_players['far_player'] = far_player
+            
+        return assigned_players
     
     def generate_court_mask(self, video_path):
         """
@@ -98,18 +215,6 @@ class TennisDataPreprocessor:
             'conf': np.array(kept_conf)
         }
     
-    def assign_players_to_frame(self, frame_data):
-        """
-        Assign near and far players to a frame.
-        
-        Args:
-            frame_data (dict): Frame data with 'boxes', 'keypoints', 'conf'
-            
-        Returns:
-            dict: Assigned players with 'near_player' and 'far_player' keys
-        """
-        return self.data_processor.assign_players(frame_data)
-    
     def preprocess_single_video(self, input_npz_path, video_path, output_npz_path, overwrite=False):
         """
         Preprocess a single video's pose data.
@@ -174,7 +279,7 @@ class TennisDataPreprocessor:
                 all_frame_data.append(filtered_frame_data)
                 
                 # Apply player assignment
-                assigned_players = self.assign_players_to_frame(filtered_frame_data)
+                assigned_players = self.assign_players(filtered_frame_data)
                 
                 # Store player assignments
                 all_near_players.append(assigned_players['near_player'])
@@ -205,11 +310,3 @@ class TennisDataPreprocessor:
             import traceback
             traceback.print_exc()
             return False
-
-# Example usage
-if __name__ == "__main__":
-    # This would typically be in a separate script, but included for demonstration
-    print("TennisDataPreprocessor - Example Usage")
-    print("=" * 50)
-    print("This class should be used from a separate processing script.")
-    print("See preprocess_data_pipeline.py for usage example.")

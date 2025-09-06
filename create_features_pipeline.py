@@ -10,7 +10,7 @@ import sys
 import argparse
 import glob
 import time
-from tennis_feature_engineer import TennisFeatureEngineer
+from data_scripts.feature_engineer import FeatureEngineer
 
 def process_all_preprocessed(input_dir, output_dir, overwrite=False):
     """
@@ -31,7 +31,7 @@ def process_all_preprocessed(input_dir, output_dir, overwrite=False):
     print(f"Found {len(npz_files)} preprocessed files to process")
     
     # Initialize feature engineer
-    feature_engineer = TennisFeatureEngineer()
+    feature_engineer = FeatureEngineer()
     
     # Process each file
     successful = 0

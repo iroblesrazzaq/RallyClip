@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Test script to verify the modular pipeline components.
+Test script to verify the truly modular pipeline components.
 """
 
 import numpy as np
 import os
 import tempfile
-from tennis_preprocessor import TennisDataPreprocessor
-from tennis_feature_engineer import TennisFeatureEngineer
+from data_scripts.data_preprocessor import DataPreprocessor
+from data_scripts.feature_engineer import FeatureEngineer
 
 def test_preprocessor_class():
-    """Test that the TennisDataPreprocessor class works correctly."""
-    print("Testing TennisDataPreprocessor class...")
+    """Test that the DataPreprocessor class works correctly."""
+    print("Testing DataPreprocessor class...")
     
     # Create mock data in the expected format
     mock_frames = [
@@ -64,8 +64,8 @@ def test_preprocessor_class():
     os.unlink(temp_file)
 
 def test_feature_engineer_class():
-    """Test that the TennisFeatureEngineer class works correctly."""
-    print("Testing TennisFeatureEngineer class...")
+    """Test that the FeatureEngineer class works correctly."""
+    print("Testing FeatureEngineer class...")
     
     # Create mock feature data
     mock_features = np.random.randn(10, 288).astype(np.float32)
@@ -103,25 +103,56 @@ def test_modular_workflow():
     print("Testing modular workflow...")
     
     # Test that we can instantiate both classes
-    preprocessor = TennisDataPreprocessor()
-    feature_engineer = TennisFeatureEngineer()
+    preprocessor = DataPreprocessor()
+    feature_engineer = FeatureEngineer()
     
     assert preprocessor is not None
     assert feature_engineer is not None
     
+    # Test that the preprocessor has the required methods
+    assert hasattr(preprocessor, 'assign_players')
+    assert hasattr(preprocessor, 'generate_court_mask')
+    assert hasattr(preprocessor, 'filter_frame_by_court')
+    assert hasattr(preprocessor, 'preprocess_single_video')
+    
+    # Test that the feature engineer has the required methods
+    assert hasattr(feature_engineer, 'create_feature_vector')
+    assert hasattr(feature_engineer, 'create_features_from_preprocessed')
+    
     print("✓ Modular workflow test passed")
+
+def test_no_data_processor_dependency():
+    """Test that neither class depends on data_processor.py."""
+    print("Testing no data_processor dependency...")
+    
+    # Check that the preprocessor doesn't import from data_processor
+    with open('/Users/ismaelrobles-razzaq/Desktop/tennis_tracker/data_scripts/data_preprocessor.py', 'r') as f:
+        preprocessor_content = f.read()
+    
+    assert 'from data_processor import' not in preprocessor_content
+    assert 'from data_scripts.data_processor import' not in preprocessor_content
+    
+    # Check that the feature engineer doesn't import from data_processor
+    with open('/Users/ismaelrobles-razzaq/Desktop/tennis_tracker/data_scripts/feature_engineer.py', 'r') as f:
+        feature_engineer_content = f.read()
+    
+    assert 'from data_processor import' not in feature_engineer_content
+    assert 'from data_scripts.data_processor import' not in feature_engineer_content
+    
+    print("✓ No data_processor dependency test passed")
 
 def main():
     """Run all tests."""
-    print("=== Testing Modular Pipeline Components ===\n")
+    print("=== Testing Truly Modular Pipeline Components ===\n")
     
     try:
         test_preprocessor_class()
         test_feature_engineer_class()
         test_modular_workflow()
+        test_no_data_processor_dependency()
         
         print("\n✓ All tests passed!")
-        print("The modular pipeline components are working correctly.")
+        print("The truly modular pipeline components are working correctly.")
         
     except Exception as e:
         print(f"\n❌ Test failed: {e}")

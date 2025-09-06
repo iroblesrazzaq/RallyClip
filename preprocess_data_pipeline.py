@@ -10,7 +10,7 @@ import sys
 import argparse
 import glob
 import time
-from tennis_preprocessor import TennisDataPreprocessor
+from data_scripts.data_preprocessor import DataPreprocessor
 
 def find_video_file(base_name, video_dir):
     """
@@ -67,7 +67,7 @@ def preprocess_all_videos(input_dir, video_dir, output_dir, overwrite=False):
     print(f"Found {len(npz_files)} .npz files to process")
     
     # Initialize preprocessor
-    preprocessor = TennisDataPreprocessor()
+    preprocessor = DataPreprocessor()
     
     # Process each file
     successful = 0
