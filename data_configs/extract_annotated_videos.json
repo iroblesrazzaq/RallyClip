@@ -1,0 +1,11 @@
+{
+    "start_time": 0,
+    "duration": 99999,
+    "fps": 15,
+    "conf": 0.25,
+    "model_size": "s",
+    "videos_to_process": "annotated",
+    "steps_to_run": ["extractor"],
+    "overwrite": false,
+    "save_court_masks": false
+}

@@ -4,7 +4,7 @@ Test script to verify the data processor is working correctly.
 """
 
 import numpy as np
-from data_processor import DataProcessor
+from data_scripts.data_processor import DataProcessor
 
 def test_data_processor():
     """Test the data processor with a simple example."""
