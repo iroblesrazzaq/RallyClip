@@ -110,10 +110,10 @@ def create_directory_structure(config):
     conf = config["conf"]
     model_size = config["model_size"]
     
-    # Create directory name based on parameters
-    dir_name = f"{model_size}_{conf}_{start_time}_{duration}_{fps}"
+    # Create directory name based on parameters - consistent format
+    dir_name = f"yolo{model_size}_{conf}conf_{fps}fps_{start_time}s_to_{start_time + duration}s"
     
-    # Define directory paths
+    # Define directory paths - use "raw" instead of "unfiltered" for consistency
     unfiltered_dir = os.path.join("pose_data", "raw", dir_name)
     preprocessed_dir = os.path.join("pose_data", "preprocessed", dir_name)
     features_dir = os.path.join("pose_data", "features", dir_name)
@@ -152,8 +152,9 @@ def run_pose_extractor(video_name, output_dir, config, overwrite=False):
         return True
     
     # Build command - reference pose_extractor.py in data_scripts directory
+    # Use the same Python interpreter that's running this script
     cmd = [
-        "python", os.path.join("data_scripts", "pose_extractor.py"),
+        sys.executable, os.path.join("data_scripts", "pose_extractor.py"),
         str(start_time),
         str(duration),
         str(fps),
@@ -205,7 +206,7 @@ def run_preprocessor(input_dir, video_names, output_dir, config, overwrite=False
         for video_name in video_names:
             # Define paths
             base_name = os.path.splitext(video_name)[0]
-            input_pattern = os.path.join(input_dir, f"{base_name}_posedata_*.npz")
+            input_pattern = os.path.join(input_dir, f"{base_name}_posedata_*_yolo*.npz")
             input_files = glob.glob(input_pattern)
             
             if not input_files:
