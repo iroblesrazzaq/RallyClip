@@ -4,7 +4,7 @@ Comprehensive test demonstrating the DataProcessor with velocity/acceleration fe
 """
 
 import numpy as np
-from data_processor import DataProcessor
+from data_scripts.data_processor import DataProcessor
 
 def test_comprehensive_scenario():
     """Test a comprehensive scenario with various player detection patterns."""

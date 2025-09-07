@@ -143,17 +143,17 @@ def run_pose_extractor(video_name, output_dir, config, overwrite=False):
         print(f"Warning: No annotation file found for {video_name}, running without annotations")
         annotations_path = "None"  # Or handle as needed
     
-    # Define output file path
-    output_file = os.path.join(output_dir, f"{os.path.splitext(video_name)[0]}_posedata_{start_time}s_to_{start_time + duration}s_{model_size}{fps}fps_{conf}conf.npz")
+    # Define output file path - match the format used by pose_extractor.py
+    output_file = os.path.join(output_dir, f"{os.path.splitext(video_name)[0]}_posedata_{start_time}s_to_{start_time + duration}s_yolo{model_size}.npz")
     
     # Check if output file already exists and overwrite is False
     if os.path.exists(output_file) and not overwrite:
         print(f"  ✓ Already exists, skipping: {os.path.basename(output_file)}")
         return True
     
-    # Build command
+    # Build command - reference pose_extractor.py in data_scripts directory
     cmd = [
-        "python", "pose_extractor.py",
+        "python", os.path.join("data_scripts", "pose_extractor.py"),
         str(start_time),
         str(duration),
         str(fps),

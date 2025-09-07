@@ -4,7 +4,7 @@ Test to verify centroid values for missing players.
 """
 
 import numpy as np
-from data_processor import DataProcessor
+from data_scripts.data_processor import DataProcessor
 
 def test_centroid_for_missing_players():
     # Initialize the data processor
