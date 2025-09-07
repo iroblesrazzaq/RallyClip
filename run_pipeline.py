@@ -38,7 +38,12 @@ def get_annotated_videos(raw_videos_dir, annotations_dir):
         # Get the video filename from the annotation filename
         basename = os.path.basename(annotation_file)
         if basename.endswith(".csv"):
-            video_filename = basename[:-4]  # Remove .csv extension
+            # For annotations named like "video.mp4.csv", we need to remove only ".csv"
+            # For annotations named like "video.csv", we need to remove ".csv"
+            if basename.endswith(".mp4.csv"):
+                video_filename = basename[:-4]  # Remove ".csv" but keep ".mp4"
+            else:
+                video_filename = basename[:-4]  # Remove ".csv"
         else:
             video_filename = basename
             
@@ -138,7 +143,8 @@ def run_pose_extractor(video_name, output_dir, config, overwrite=False):
     
     # Define paths
     video_path = os.path.join("raw_videos", video_name)
-    annotations_path = os.path.join("annotations", f"{os.path.splitext(video_name)[0]}.csv")
+    # Fix: Use the full video filename for annotation lookup
+    annotations_path = os.path.join("annotations", f"{video_name}.csv")
     
     # Check if annotation file exists
     if not os.path.exists(annotations_path):

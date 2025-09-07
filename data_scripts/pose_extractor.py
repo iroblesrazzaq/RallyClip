@@ -80,13 +80,18 @@ class PoseExtractor:
         
         # Load annotations if provided
         annotations = None
-        if annotations_csv and os.path.exists(annotations_csv):
+        # Fix: Handle the case where "None" is passed as a string
+        if annotations_csv and annotations_csv != "None" and os.path.exists(annotations_csv):
             try:
                 import pandas as pd
                 annotations = pd.read_csv(annotations_csv)
                 print(f"Loaded annotations from {annotations_csv}")
+                # Show the column names for debugging
+                print(f"Annotation columns: {list(annotations.columns)}")
             except Exception as e:
                 print(f"Warning: Could not load annotations from {annotations_csv}: {e}")
+        elif annotations_csv and annotations_csv != "None":
+            print(f"Warning: Annotation file not found at {annotations_csv}")
         
         print("Extracting pose data...")
         
@@ -149,9 +154,24 @@ class PoseExtractor:
                 if annotations is not None:
                     frame_time = start_time_seconds + (i / fps)
                     for _, row in annotations.iterrows():
-                        start_time = row['start_frame'] / target_fps  # Assuming start_frame is in frame numbers
-                        end_time = row['end_frame'] / target_fps      # Assuming end_frame is in frame numbers
+                        # Fix: Use correct column names (start_time, end_time) instead of (start_frame, end_frame)
+                        # Fix: No need to divide by target_fps since values are already in seconds
+                        start_time = row['start_time']
+                        end_time = row['end_time']
+                        
+                        # Improved frame selection logic for inclusive boundaries:
+                        # If the start_time falls between frames, include the earlier frame
+                        # If the end_time falls between frames, include the later frame
                         if start_time <= frame_time <= end_time:
+                            frame_data['annotation_status'] = 1  # In play
+                            break
+                        # Additional inclusive logic for boundary cases
+                        elif i > 0 and start_time <= start_time_seconds + ((i-1) / fps) and start_time > frame_time:
+                            # Previous frame would have included the start boundary
+                            frame_data['annotation_status'] = 1  # In play
+                            break
+                        elif i < total_frames_to_process - 1 and end_time >= start_time_seconds + ((i+1) / fps) and end_time < start_time_seconds + ((i+1) / fps):
+                            # Next frame would be included in the end boundary
                             frame_data['annotation_status'] = 1  # In play
                             break
                 
