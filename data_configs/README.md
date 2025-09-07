@@ -1,6 +1,6 @@
 # Tennis Data Pipeline Runner
 
-This script orchestrates the complete tennis data processing pipeline.
+This script orchestrates the complete tennis data processing pipeline using a single entry point.
 
 ## Configuration Files
 
@@ -15,7 +15,8 @@ Configuration files are stored in the `data_configs/` directory. Each config fil
     "model_size": "s",
     "videos_to_process": "annotated",
     "steps_to_run": ["extractor", "preprocessor", "feature_extractor"],
-    "overwrite": false
+    "overwrite": false,
+    "save_court_masks": true
 }
 ```
 
@@ -35,18 +36,19 @@ Configuration files are stored in the `data_configs/` directory. Each config fil
   - `"preprocessor"`: Run data preprocessing
   - `"feature_extractor"`: Run feature engineering
 - `overwrite`: Whether to overwrite existing files
+- `save_court_masks`: Whether to save court masks in preprocessed NPZ files (optional)
 
 ### Example Configurations
 
-1. `config1.json`: Process annotated videos with all steps
-2. `config_all_videos.json`: Process all videos with all steps
+1. `config1.json`: Process annotated videos with all steps and save court masks
+2. `config_all_videos.json`: Process all videos with all steps, no court masks
 3. `config_selected_videos.json`: Process specific videos with only extraction
-4. `config_stepwise.json`: Process annotated videos with stepwise execution
+4. `config_stepwise.json`: Process annotated videos with stepwise execution and save court masks
 
 ## Usage
 
 ```bash
-python run_data_pipeline.py --config data_configs/config1.json
+python run_pipeline.py --config data_configs/config1.json
 ```
 
 ## Directory Structure
@@ -64,3 +66,11 @@ pose_data/
 ```
 
 This structure enables stepwise execution - you can run the extractor, then later run the preprocessor on the already extracted data.
+
+## Court Mask Handling
+
+When `save_court_masks` is set to `true` in the config:
+- Successfully generated court masks are embedded in the preprocessed NPZ files
+- Failed court detection does not stop processing (falls back to processing without filtering)
+- Court masks are saved as a `court_mask` field in the NPZ file
+- When `save_court_masks` is `false` or omitted, no court masks are saved

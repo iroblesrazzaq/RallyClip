@@ -9,5 +9,6 @@
         "Aditi Narayan ｜ Matchplay.mp4"
     ],
     "steps_to_run": ["extractor"],
-    "overwrite": false
+    "overwrite": false,
+    "save_court_masks": false
 }

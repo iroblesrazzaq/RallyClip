@@ -4,11 +4,11 @@ Tennis Data Pipeline Runner
 
 This script orchestrates the complete tennis data processing pipeline:
 1. Pose extraction (pose_extractor.py)
-2. Data preprocessing (preprocess_data_pipeline.py)
-3. Feature engineering (create_features_pipeline.py)
+2. Data preprocessing (data_preprocessor.py)
+3. Feature engineering (feature_engineer.py)
 
 Usage:
-    python run_data_pipeline.py --config data_configs/config1.json
+    python run_pipeline.py --config data_configs/config1.json
 """
 
 import os
@@ -186,75 +186,103 @@ def run_pose_extractor(video_name, output_dir, config, overwrite=False):
         print(f"  ❌ Pose extraction exception for: {video_name}: {e}")
         return False
 
-def run_preprocessor(input_dir, video_names, output_dir, overwrite=False):
-    """Run data preprocessing."""
-    # Build command
-    cmd = [
-        "python", "preprocess_data_pipeline.py",
-        "--input-dir", input_dir,
-        "--video-dir", "raw_videos",
-        "--output-dir", output_dir
-    ]
-    
-    if overwrite:
-        cmd.append("--overwrite")
-    
-    # Run the command
-    print(f"  Running data preprocessing...")
-    print(f"  Command: {' '.join(cmd)}")
-    
+def run_preprocessor(input_dir, video_names, output_dir, config, overwrite=False):
+    """Run data preprocessing using the DataPreprocessor class directly."""
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        if result.returncode == 0:
-            print(f"  ✅ Data preprocessing completed")
-            if result.stdout:
-                print(f"    Output: {result.stdout.strip()}")
-            return True
-        else:
-            print(f"  ❌ Data preprocessing failed")
-            if result.stderr:
-                print(f"    Error: {result.stderr.strip()}")
-            return False
-    except subprocess.TimeoutExpired:
-        print(f"  ❌ Data preprocessing timeout")
-        return False
+        # Import the DataPreprocessor class
+        from data_scripts.data_preprocessor import DataPreprocessor
+        
+        # Extract parameters from config
+        save_court_masks = config.get("save_court_masks", False)
+        
+        # Initialize preprocessor
+        preprocessor = DataPreprocessor(save_court_masks=save_court_masks)
+        
+        # Process each video
+        successful = 0
+        failed = 0
+        
+        for video_name in video_names:
+            # Define paths
+            base_name = os.path.splitext(video_name)[0]
+            input_pattern = os.path.join(input_dir, f"{base_name}_posedata_*.npz")
+            input_files = glob.glob(input_pattern)
+            
+            if not input_files:
+                print(f"  ⚠️  No input file found for {video_name}")
+                failed += 1
+                continue
+                
+            input_npz_path = input_files[0]  # Take the first match
+            video_path = os.path.join("raw_videos", video_name)
+            output_file = os.path.join(output_dir, f"{base_name}_preprocessed.npz")
+            
+            print(f"  Processing: {video_name}")
+            if preprocessor.preprocess_single_video(input_npz_path, video_path, output_file, overwrite):
+                successful += 1
+            else:
+                failed += 1
+        
+        print(f"  Preprocessing summary:")
+        print(f"    Successful: {successful}")
+        print(f"    Failed: {failed}")
+        
+        return failed == 0
+        
     except Exception as e:
-        print(f"  ❌ Data preprocessing exception: {e}")
+        print(f"  ❌ Preprocessing failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def run_feature_engineer(input_dir, output_dir, overwrite=False):
-    """Run feature engineering."""
-    # Build command
-    cmd = [
-        "python", "create_features_pipeline.py",
-        "--input-dir", input_dir,
-        "--output-dir", output_dir
-    ]
-    
-    if overwrite:
-        cmd.append("--overwrite")
-    
-    # Run the command
-    print(f"  Running feature engineering...")
-    print(f"  Command: {' '.join(cmd)}")
-    
+    """Run feature engineering using the FeatureEngineer class directly."""
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        if result.returncode == 0:
-            print(f"  ✅ Feature engineering completed")
-            if result.stdout:
-                print(f"    Output: {result.stdout.strip()}")
-            return True
-        else:
-            print(f"  ❌ Feature engineering failed")
-            if result.stderr:
-                print(f"    Error: {result.stderr.strip()}")
+        # Import the FeatureEngineer class
+        from data_scripts.feature_engineer import FeatureEngineer
+        
+        # Initialize feature engineer
+        feature_engineer = FeatureEngineer()
+        
+        # Find all preprocessed .npz files in the input directory
+        npz_files = glob.glob(os.path.join(input_dir, "*_preprocessed.npz"))
+        
+        if not npz_files:
+            print(f"  ⚠️  No preprocessed .npz files found in {input_dir}")
             return False
-    except subprocess.TimeoutExpired:
-        print(f"  ❌ Feature engineering timeout")
-        return False
+        
+        print(f"  Found {len(npz_files)} preprocessed files to process")
+        
+        # Process each file
+        successful = 0
+        failed = 0
+        
+        for npz_file in npz_files:
+            try:
+                # Create output file path
+                base_name = os.path.splitext(os.path.basename(npz_file))[0]
+                base_name = base_name.replace("_preprocessed", "")  # Remove _preprocessed suffix
+                output_file = os.path.join(output_dir, f"{base_name}_features.npz")
+                
+                print(f"  Processing: {os.path.basename(npz_file)}")
+                if feature_engineer.create_features_from_preprocessed(npz_file, output_file, overwrite):
+                    successful += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                print(f"  Failed to process {npz_file}: {e}")
+                failed += 1
+        
+        print(f"  Feature engineering summary:")
+        print(f"    Successful: {successful}")
+        print(f"    Failed: {failed}")
+        
+        return failed == 0
+        
     except Exception as e:
-        print(f"  ❌ Feature engineering exception: {e}")
+        print(f"  ❌ Feature engineering failed: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def main():
@@ -264,7 +292,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python run_data_pipeline.py --config data_configs/config1.json
+    python run_pipeline.py --config data_configs/config1.json
         """
     )
     
@@ -293,6 +321,8 @@ Examples:
     print(f"  Videos to process: {config['videos_to_process']}")
     print(f"  Steps to run: {config['steps_to_run']}")
     print(f"  Overwrite: {config['overwrite']}")
+    if "save_court_masks" in config:
+        print(f"  Save court masks: {config['save_court_masks']}")
     
     # Get videos to process
     try:
@@ -347,8 +377,8 @@ Examples:
     # Run preprocessor if requested
     if "preprocessor" in steps_to_run:
         print("\n2. Running Data Preprocessing...")
-        if run_preprocessor(unfiltered_dir, videos, preprocessed_dir, overwrite):
-            print("  Data preprocessing completed successfully")
+        if run_preprocessor(unfiltered_dir, videos, preprocessed_dir, config, overwrite):
+            print("  ✅ Data preprocessing completed successfully")
         else:
             print("  ❌ Data preprocessing failed")
             if "feature_extractor" in steps_to_run:
@@ -358,7 +388,7 @@ Examples:
     if "feature_extractor" in steps_to_run:
         print("\n3. Running Feature Engineering...")
         if run_feature_engineer(preprocessed_dir, features_dir, overwrite):
-            print("  Feature engineering completed successfully")
+            print("  ✅ Feature engineering completed successfully")
         else:
             print("  ❌ Feature engineering failed")
     

@@ -7,11 +7,5 @@
     "videos_to_process": "annotated",
     "steps_to_run": ["extractor", "preprocessor", "feature_extractor"],
     "overwrite": false,
-    "video_params": {
-        "start_time": 0,
-        "duration": 60,
-        "fps": 15,
-        "conf": 0.05,
-        "model_size": "s"
-    }
+    "save_court_masks": true
 }

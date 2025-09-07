@@ -6,5 +6,6 @@
     "model_size": "s",
     "videos_to_process": "all",
     "steps_to_run": ["extractor", "preprocessor", "feature_extractor"],
-    "overwrite": false
+    "overwrite": false,
+    "save_court_masks": false
 }
