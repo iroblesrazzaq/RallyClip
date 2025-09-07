@@ -5,9 +5,10 @@ Tennis Data Preprocessor
 This module contains the DataPreprocessor class that handles
 court filtering and player assignment in a single, cohesive class.
 """
- 
+
 import numpy as np
 import os
+import cv2
 from data_scripts.court_detector import CourtDetector
 
 class DataPreprocessor:
@@ -18,7 +19,7 @@ class DataPreprocessor:
     a preprocessed dataset that can be used for visualization and feature engineering.
     """
     
-    def __init__(self, screen_width=1280, screen_height=720, merge_iou_thresh=0.6):
+    def __init__(self, screen_width=1280, screen_height=720, merge_iou_thresh=0.6, save_court_masks=False):
         """
         Initialize the preprocessor.
         
@@ -26,11 +27,13 @@ class DataPreprocessor:
             screen_width (int): Width of the video frames
             screen_height (int): Height of the video frames
             merge_iou_thresh (float): IoU threshold for merging bounding boxes
+            save_court_masks (bool): Whether to save court masks in output NPZ files
         """
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.screen_center_x = screen_width / 2
         self.merge_iou_thresh = merge_iou_thresh
+        self.save_court_masks = save_court_masks
         
         # Define the edge zones for conditional merging
         self.left_zone_x = screen_width * 0.10
@@ -293,14 +296,21 @@ class DataPreprocessor:
             output_dir = os.path.dirname(output_npz_path)
             os.makedirs(output_dir, exist_ok=True)
             
+            # Prepare data to save
+            save_data = {
+                'frames': all_frame_data,
+                'targets': np.array(all_targets),
+                'near_players': all_near_players,
+                'far_players': all_far_players
+            }
+            
+            # Add court mask if requested and available
+            if self.save_court_masks and mask is not None:
+                save_data['court_mask'] = mask
+                print(f"  📸 Saving court mask to output file")
+            
             # Save the preprocessed data
-            np.savez_compressed(
-                output_npz_path,
-                frames=all_frame_data,
-                targets=np.array(all_targets),
-                near_players=all_near_players,
-                far_players=all_far_players
-            )
+            np.savez_compressed(output_npz_path, **save_data)
             
             print(f"  ✓ Preprocessed data saved to: {output_npz_path}")
             return True

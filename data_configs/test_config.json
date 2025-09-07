@@ -1,0 +1,10 @@
+{
+    "start_time": 0,
+    "duration": 10,
+    "fps": 15,
+    "conf": 0.05,
+    "model_size": "s",
+    "videos_to_process": "annotated",
+    "steps_to_run": ["extractor"],
+    "overwrite": false
+}

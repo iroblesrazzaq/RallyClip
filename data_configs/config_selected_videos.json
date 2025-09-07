@@ -1,0 +1,13 @@
+{
+    "start_time": 0,
+    "duration": 30,
+    "fps": 10,
+    "conf": 0.1,
+    "model_size": "n",
+    "videos_to_process": [
+        "Monica Greene unedited tennis match play.mp4",
+        "Aditi Narayan ｜ Matchplay.mp4"
+    ],
+    "steps_to_run": ["extractor"],
+    "overwrite": false
+}
