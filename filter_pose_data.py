@@ -25,7 +25,7 @@ import numpy as np
 import cv2
 import time
 import glob
-from court_detector import CourtDetector
+from data_scripts.court_detector import CourtDetector
 
 
 def parse_args():
