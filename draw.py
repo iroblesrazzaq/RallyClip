@@ -28,36 +28,15 @@ COCO_CONNECTIONS = [
 
 # Colors for different elements
 COLORS = {
-    'bbox': (0, 255, 0),  # Green
+    'bbox': (0, 255, 0),      # Green
     'keypoints': (0, 0, 255),  # Red
     'connections': (255, 0, 0),  # Blue
-    'player1': (255, 0, 0),  # Red
-    'player2': (0, 255, 0),  # Green
-    'court_mask': (0, 0, 255, 128)  # Transparent red
+    'player1': (255, 165, 0),  # Orange
+    'player2': (128, 0, 128),  # Purple
+    'point_indicator': (0, 255, 255),  # Cyan for point indicator
+    'not_point_indicator': (0, 0, 255),  # Red for not in point
+    'skipped_indicator': (128, 128, 128)  # Gray for skipped frames
 }
-
-def get_video_path_from_npz(npz_path):
-    """Get the corresponding video path from the NPZ file path."""
-    # Extract the video filename from the NPZ filename
-    npz_filename = os.path.basename(npz_path)
-    video_filename = npz_filename
-    
-    # Remove pose data suffix if present
-    if "_posedata_" in video_filename:
-        video_filename = video_filename.split("_posedata_")[0] + ".mp4"
-    else:
-        # Remove extension and add .mp4
-        video_filename = os.path.splitext(video_filename)[0] + ".mp4"
-    
-    # Look in raw_videos directory
-    raw_videos_dir = "raw_videos"
-    video_path = os.path.join(raw_videos_dir, video_filename)
-    
-    # Try with .mov extension if .mp4 doesn't exist
-    if not os.path.exists(video_path):
-        video_path = os.path.join(raw_videos_dir, os.path.splitext(video_filename)[0] + ".mov")
-    
-    return video_path
 
 def is_preprocessed_npz(npz_path):
     """Determine if the NPZ file is preprocessed or raw."""
@@ -88,16 +67,20 @@ def draw_raw_pose_data(frame, frame_data):
         # Draw keypoints
         if i < len(keypoints):
             kps = keypoints[i]
-            for kp in kps:
-                x, y = map(int, kp)
-                cv2.circle(frame, (x, y), 3, COLORS['keypoints'], -1)
+            for x, y in kps:
+                if x > 0 and y > 0:  # Only draw valid keypoints
+                    cv2.circle(frame, (int(x), int(y)), 3, COLORS['keypoints'], -1)
             
             # Draw connections
-            for connection in COCO_CONNECTIONS:
-                if connection[0] < len(kps) and connection[1] < len(kps):
-                    pt1 = tuple(map(int, kps[connection[0]]))
-                    pt2 = tuple(map(int, kps[connection[1]]))
-                    cv2.line(frame, pt1, pt2, COLORS['connections'], 2)
+            for start_idx, end_idx in COCO_CONNECTIONS:
+                if start_idx < len(kps) and end_idx < len(kps):
+                    start_point = kps[start_idx]
+                    end_point = kps[end_idx]
+                    if start_point[0] > 0 and start_point[1] > 0 and end_point[0] > 0 and end_point[1] > 0:
+                        cv2.line(frame, 
+                                (int(start_point[0]), int(start_point[1])),
+                                (int(end_point[0]), int(end_point[1])),
+                                COLORS['connections'], 2)
         
         # Draw confidence if available
         if i < len(confs):
@@ -123,29 +106,30 @@ def draw_player_pose(frame, player_data, color, label):
     # Draw keypoints
     kps = player_data.get('keypoints', None)
     if kps is not None:
-        for kp in kps:
-            x, y = map(int, kp)
-            cv2.circle(frame, (x, y), 3, color, -1)
+        for x, y in kps:
+            if x > 0 and y > 0:  # Only draw valid keypoints
+                cv2.circle(frame, (int(x), int(y)), 3, color, -1)
         
         # Draw connections
-        for connection in COCO_CONNECTIONS:
-            if connection[0] < len(kps) and connection[1] < len(kps):
-                pt1 = tuple(map(int, kps[connection[0]]))
-                pt2 = tuple(map(int, kps[connection[1]]))
-                cv2.line(frame, pt1, pt2, color, 2)
+        for start_idx, end_idx in COCO_CONNECTIONS:
+            if start_idx < len(kps) and end_idx < len(kps):
+                start_point = kps[start_idx]
+                end_point = kps[end_idx]
+                if start_point[0] > 0 and start_point[1] > 0 and end_point[0] > 0 and end_point[1] > 0:
+                    cv2.line(frame, 
+                            (int(start_point[0]), int(start_point[1])),
+                            (int(end_point[0]), int(end_point[1])),
+                            color, 2)
     
     return frame
 
-def draw_preprocessed_pose_data(frame, frame_idx, frames_data, near_players, far_players, court_mask=None):
+def draw_preprocessed_pose_data(frame, frame_idx, frames_data, near_players, far_players, court_mask):
     """Draw preprocessed pose data on a frame."""
     # Draw court mask if available
     if court_mask is not None:
-        # Create a transparent overlay
+        # Overlay court mask with transparency
         overlay = frame.copy()
-        # Make areas outside the court red (where mask == 255)
-        mask_255 = (court_mask == 255)
-        overlay[mask_255] = [0, 0, 255]  # Red
-        # Blend the overlay with the original frame
+        overlay[court_mask > 0] = [0, 255, 0]  # Green for court area
         cv2.addWeighted(overlay, 0.3, frame, 0.7, 0, frame)
     
     # Draw near player (Player 1)
@@ -161,6 +145,31 @@ def draw_preprocessed_pose_data(frame, frame_idx, frames_data, near_players, far
             frame = draw_player_pose(frame, far_player, COLORS['player2'], "Player 2")
     
     return frame
+
+def get_video_path_from_npz(npz_path):
+    """Get the corresponding video path from an NPZ file path."""
+    # Extract base name and remove _posedata suffix
+    base_name = os.path.basename(npz_path)
+    if '_posedata_' in base_name:
+        # Raw pose data filename: video_name_posedata_Xs_to_Ys_yoloZ.npz
+        # Extract everything before "_posedata_" as the video name
+        video_name = base_name.split('_posedata_')[0] + '.mp4'
+    else:
+        # Preprocessed data filename: video_name_preprocessed.npz
+        video_name = base_name.replace('_preprocessed.npz', '.mp4')
+    
+    # Look in raw_videos directory
+    video_path = os.path.join('raw_videos', video_name)
+    if os.path.exists(video_path):
+        return video_path
+    
+    # Try other extensions
+    for ext in ['.mov', '.avi', '.mkv']:
+        video_path = os.path.join('raw_videos', video_name.replace('.mp4', ext))
+        if os.path.exists(video_path):
+            return video_path
+    
+    return video_path  # Return the .mp4 version if not found
 
 def draw_npz_on_video(npz_path, start_time=0, duration=99999):
     """Draw pose data from NPZ file on corresponding video."""
@@ -194,7 +203,7 @@ def draw_npz_on_video(npz_path, start_time=0, duration=99999):
         print(f"  ❌ Error loading NPZ file: {e}")
         return False
     
-    # Open video
+    # Open video file
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"  ❌ Error opening video file: {video_path}")
@@ -228,13 +237,11 @@ def draw_npz_on_video(npz_path, start_time=0, duration=99999):
     os.makedirs(output_dir, exist_ok=True)
     
     # Create output filename
-    npz_filename = os.path.basename(npz_path)
-    output_filename = f"draw_{os.path.splitext(npz_filename)[0]}.mp4"
+    npz_name = os.path.splitext(os.path.basename(npz_path))[0]
+    output_filename = f"{npz_name}_{start_time}s_to_{start_time + duration}s.mp4"
     output_path = os.path.join(output_dir, output_filename)
     
-    print(f"  Output path: {output_path}")
-    
-    # Initialize video writer
+    # Create output video writer
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     
@@ -261,9 +268,33 @@ def draw_npz_on_video(npz_path, start_time=0, duration=99999):
                 frame = draw_preprocessed_pose_data(
                     frame, current_frame, frames_data, near_players, far_players, court_mask
                 )
+                # Add point indicator for preprocessed data
+                if targets is not None and current_frame < len(targets):
+                    is_in_point = targets[current_frame] == 1
+                    point_text = "IN POINT" if is_in_point else "NOT IN POINT"
+                    point_color = COLORS['point_indicator'] if is_in_point else COLORS['not_point_indicator']
+                    # Position: top-left for both indicators (they're not flickering)
+                    position = (20, 40)
+                    cv2.putText(frame, point_text, position, cv2.FONT_HERSHEY_SIMPLEX, 1, point_color, 2)
         else:
             if current_frame < len(frames_data):
-                frame = draw_raw_pose_data(frame, frames_data[current_frame])
+                frame_data = frames_data[current_frame]
+                frame = draw_raw_pose_data(frame, frame_data)
+                # Add point indicator for raw data
+                annotation_status = frame_data.get('annotation_status', 0)
+                if annotation_status == -100:
+                    # This is a skipped frame due to temporal downsampling
+                    point_text = "SKIPPED FRAME"
+                    point_color = COLORS['skipped_indicator']
+                    position = (20, 40)  # Top-left
+                    cv2.putText(frame, point_text, position, cv2.FONT_HERSHEY_SIMPLEX, 1, point_color, 2)
+                else:
+                    # This is either in point (1) or not in point (0)
+                    is_in_point = annotation_status == 1
+                    point_text = "IN POINT" if is_in_point else "NOT IN POINT"
+                    point_color = COLORS['point_indicator'] if is_in_point else COLORS['not_point_indicator']
+                    position = (20, 40)  # Top-left
+                    cv2.putText(frame, point_text, position, cv2.FONT_HERSHEY_SIMPLEX, 1, point_color, 2)
         
         # Write frame to output video
         out.write(frame)
@@ -306,7 +337,7 @@ def draw_all_npz_in_dir(npz_dir, start_time=0, duration=99999):
             else:
                 failed += 1
         except Exception as e:
-            print(f"  ❌ Failed to process {npz_file}: {e}")
+            print(f"  ❌ Error processing {npz_file}: {e}")
             failed += 1
     
     print(f"  Summary: {successful} successful, {failed} failed")
@@ -319,58 +350,42 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python draw.py --npz-path pose_data/raw/s_0.05_0_60_15/video.npz
-    python draw.py --npz-path pose_data/preprocessed/s_0.05_0_60_15/video_preprocessed.npz --start-time 10 --duration 30
-    python draw.py --npz-dir pose_data/raw/s_0.05_0_60_15 --draw-all
+    python draw.py --npz-path pose_data/raw/yolos_0.05conf_15fps_0s_to_60s/video_posedata_0s_to_60s_yolos.npz
+    python draw.py --npz-dir pose_data/preprocessed/s_0.05_0_60_15 --start-time 10 --duration 30
+    python draw.py --npz-dir pose_data/raw/yolos_0.05conf_15fps_0s_to_60s --draw-all
         """
     )
     
     parser.add_argument('--npz-path', type=str, help='Path to NPZ file')
-    parser.add_argument('--npz-dir', type=str, help='Path to directory containing NPZ files')
-    parser.add_argument('--start-time', type=float, default=0, help='Start time in seconds (default: 0)')
-    parser.add_argument('--duration', type=float, default=99999, help='Duration in seconds (default: 99999)')
+    parser.add_argument('--npz-dir', type=str, help='Directory containing NPZ files')
+    parser.add_argument('--start-time', type=int, default=0, help='Start time in seconds (default: 0)')
+    parser.add_argument('--duration', type=int, default=99999, help='Duration in seconds (default: all)')
     parser.add_argument('--draw-all', action='store_true', help='Draw all NPZ files in directory')
     
     args = parser.parse_args()
     
     # Validate arguments
     if not args.npz_path and not args.npz_dir:
-        print("❌ Error: Either --npz-path or --npz-dir must be specified")
+        parser.print_help()
         return 1
     
     if args.npz_path and args.npz_dir:
         print("❌ Error: Cannot specify both --npz-path and --npz-dir")
         return 1
     
+    # Process based on arguments
     if args.npz_path:
-        # Process single NPZ file
-        try:
-            if draw_npz_on_video(args.npz_path, args.start_time, args.duration):
-                print("\n🎉 Successfully processed NPZ file!")
-                return 0
-            else:
-                print("\n💥 Failed to process NPZ file!")
-                return 1
-        except Exception as e:
-            print(f"\n💥 Error processing NPZ file: {e}")
-            import traceback
-            traceback.print_exc()
-            return 1
-    
+        return 0 if draw_npz_on_video(args.npz_path, args.start_time, args.duration) else 1
     elif args.npz_dir:
-        # Process all NPZ files in directory
-        try:
-            if draw_all_npz_in_dir(args.npz_dir, args.start_time, args.duration):
-                print("\n🎉 Successfully processed all NPZ files!")
-                return 0
-            else:
-                print("\n💥 Some NPZ files failed to process!")
+        if args.draw_all:
+            return 0 if draw_all_npz_in_dir(args.npz_dir, args.start_time, args.duration) else 1
+        else:
+            # Draw first NPZ file in directory
+            npz_files = glob.glob(os.path.join(args.npz_dir, "*.npz"))
+            if not npz_files:
+                print(f"❌ No NPZ files found in {args.npz_dir}")
                 return 1
-        except Exception as e:
-            print(f"\n💥 Error processing NPZ files: {e}")
-            import traceback
-            traceback.print_exc()
-            return 1
+            return 0 if draw_npz_on_video(npz_files[0], args.start_time, args.duration) else 1
 
 if __name__ == "__main__":
     sys.exit(main())
