@@ -7,3 +7,4 @@ repomix-output.xml
 *.pt
 *.pyc
 *cpython*
+*.h5

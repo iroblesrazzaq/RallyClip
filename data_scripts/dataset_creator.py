@@ -350,12 +350,28 @@ class TennisDatasetCreator:
         return dataset_info
 
 def main():
-    """Example usage of TennisDatasetCreator."""
+    """CLI entry point for TennisDatasetCreator."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Create tennis point detection dataset")
+    parser.add_argument("feature_dir", help="Directory containing feature NPZ files")
+    parser.add_argument("--output-dir", "-o", default="data", help="Output directory (default: data)")
+    parser.add_argument("--train-ratio", type=float, default=0.765, help="Training split ratio (default: 0.765)")
+    parser.add_argument("--val-ratio", type=float, default=0.085, help="Validation split ratio (default: 0.085)")
+    parser.add_argument("--test-ratio", type=float, default=0.15, help="Test split ratio (default: 0.15)")
+    
+    args = parser.parse_args()
+    
+    # Validate split ratios sum to 1.0
+    total_ratio = args.train_ratio + args.val_ratio + args.test_ratio
+    if abs(total_ratio - 1.0) > 1e-6:
+        print(f"Warning: Split ratios sum to {total_ratio}, not 1.0")
+    
     # Initialize creator
     creator = TennisDatasetCreator(
-        feature_dir="pose_data/features/yolos_0.25conf_15fps_15s_to_99999s",
-        output_dir="processed_data",
-        splits=(0.765, 0.085, 0.15)
+        feature_dir=args.feature_dir,
+        output_dir=args.output_dir,
+        splits=(args.train_ratio, args.val_ratio, args.test_ratio)
     )
     
     # Create dataset

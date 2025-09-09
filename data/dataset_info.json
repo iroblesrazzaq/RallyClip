@@ -1,0 +1,224 @@
+{
+  "splits": {
+    "train_ratio": 0.765,
+    "val_ratio": 0.085,
+    "test_ratio": 0.15
+  },
+  "sequence_params": {
+    "length": 150,
+    "overlap": 75
+  },
+  "video_stats": [
+    {
+      "video": "Brady Knackstedt (Blue Shirt\u29f8Black Shorts)(4.0 UTR) Unedited Match Play vs. opponent (5.54 UTR)_features.npz",
+      "total_frames": 77507,
+      "splits": {
+        "train": {
+          "sequences": 789,
+          "frames": 59292,
+          "frame_range": [
+            0,
+            59292
+          ]
+        },
+        "val": {
+          "sequences": 86,
+          "frames": 6588,
+          "frame_range": [
+            59292,
+            65880
+          ]
+        },
+        "test": {
+          "sequences": 154,
+          "frames": 11627,
+          "frame_range": [
+            65880,
+            77507
+          ]
+        }
+      }
+    },
+    {
+      "video": "Aditi Narayan \uff5c Matchplay_features.npz",
+      "total_frames": 16213,
+      "splits": {
+        "train": {
+          "sequences": 164,
+          "frames": 12402,
+          "frame_range": [
+            0,
+            12402
+          ]
+        },
+        "val": {
+          "sequences": 17,
+          "frames": 1379,
+          "frame_range": [
+            12402,
+            13781
+          ]
+        },
+        "test": {
+          "sequences": 31,
+          "frames": 2432,
+          "frame_range": [
+            13781,
+            16213
+          ]
+        }
+      }
+    },
+    {
+      "video": "Unedited Matchplay vs UTR 9.8_features.npz",
+      "total_frames": 22258,
+      "splits": {
+        "train": {
+          "sequences": 226,
+          "frames": 17027,
+          "frame_range": [
+            0,
+            17027
+          ]
+        },
+        "val": {
+          "sequences": 24,
+          "frames": 1892,
+          "frame_range": [
+            17027,
+            18919
+          ]
+        },
+        "test": {
+          "sequences": 43,
+          "frames": 3339,
+          "frame_range": [
+            18919,
+            22258
+          ]
+        }
+      }
+    },
+    {
+      "video": "Verified UTR Match Play\uff1a Hai Pham 4.63 vs. Tuan Anh (Unrated)_features.npz",
+      "total_frames": 24758,
+      "splits": {
+        "train": {
+          "sequences": 251,
+          "frames": 18939,
+          "frame_range": [
+            0,
+            18939
+          ]
+        },
+        "val": {
+          "sequences": 27,
+          "frames": 2105,
+          "frame_range": [
+            18939,
+            21044
+          ]
+        },
+        "test": {
+          "sequences": 48,
+          "frames": 3714,
+          "frame_range": [
+            21044,
+            24758
+          ]
+        }
+      }
+    },
+    {
+      "video": "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_features.npz",
+      "total_frames": 26527,
+      "splits": {
+        "train": {
+          "sequences": 269,
+          "frames": 20293,
+          "frame_range": [
+            0,
+            20293
+          ]
+        },
+        "val": {
+          "sequences": 29,
+          "frames": 2254,
+          "frame_range": [
+            20293,
+            22547
+          ]
+        },
+        "test": {
+          "sequences": 52,
+          "frames": 3980,
+          "frame_range": [
+            22547,
+            26527
+          ]
+        }
+      }
+    },
+    {
+      "video": "Monica Greene unedited tennis match play_features.npz",
+      "total_frames": 36224,
+      "splits": {
+        "train": {
+          "sequences": 368,
+          "frames": 27711,
+          "frame_range": [
+            0,
+            27711
+          ]
+        },
+        "val": {
+          "sequences": 40,
+          "frames": 3079,
+          "frame_range": [
+            27711,
+            30790
+          ]
+        },
+        "test": {
+          "sequences": 71,
+          "frames": 5434,
+          "frame_range": [
+            30790,
+            36224
+          ]
+        }
+      }
+    },
+    {
+      "video": "Holly Schlatter \uff5c 2021 Australian Tennis Recruit  - Match Play Footage_features.npz",
+      "total_frames": 64415,
+      "splits": {
+        "train": {
+          "sequences": 656,
+          "frames": 49277,
+          "frame_range": [
+            0,
+            49277
+          ]
+        },
+        "val": {
+          "sequences": 72,
+          "frames": 5475,
+          "frame_range": [
+            49277,
+            54752
+          ]
+        },
+        "test": {
+          "sequences": 127,
+          "frames": 9663,
+          "frame_range": [
+            54752,
+            64415
+          ]
+        }
+      }
+    }
+  ],
+  "total_videos": 7
+}
