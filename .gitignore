@@ -8,3 +8,4 @@ repomix-output.xml
 *.pyc
 *cpython*
 *.h5
+*pth

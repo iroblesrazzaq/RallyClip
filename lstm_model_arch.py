@@ -15,7 +15,7 @@ class TennisPointLSTM(nn.Module):
     """
     
     def __init__(self, input_size=360, hidden_size=128, num_layers=2, 
-                 dropout=0.2, bidirectional=True):
+                 dropout=0.2, bidirectional=True, return_logits=False):
         """
         Initialize the TennisPointLSTM.
         
@@ -25,6 +25,7 @@ class TennisPointLSTM(nn.Module):
             num_layers (int): Number of recurrent layers
             dropout (float): Dropout probability
             bidirectional (bool): If True, becomes a bidirectional LSTM
+            return_logits (bool): If True, return raw logits; if False, return probabilities
         """
         super(TennisPointLSTM, self).__init__()
         
@@ -32,6 +33,7 @@ class TennisPointLSTM(nn.Module):
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.bidirectional = bidirectional
+        self.return_logits = return_logits  # New parameter to control output
         
         # LSTM layer
         self.lstm = nn.LSTM(
@@ -72,71 +74,10 @@ class TennisPointLSTM(nn.Module):
         # lstm_out shape: (batch_size, sequence_length, hidden_size)
         output = self.fc(lstm_out)
         
-        # Apply sigmoid to get probabilities
-        output = torch.sigmoid(output)
-        
-        # Output shape: (batch_size, sequence_length, 1)
-        return output
-
-
-# Alternative model that uses attention mechanism
-class TennisPointLSTMWithAttention(nn.Module):
-    """
-    LSTM model with attention mechanism for tennis point detection.
-    """
-    
-    def __init__(self, input_size=288, hidden_size=128, num_layers=2, 
-                 dropout=0.2, bidirectional=False):
-        """
-        Initialize the TennisPointLSTMWithAttention.
-        """
-        super(TennisPointLSTMWithAttention, self).__init__()
-        
-        self.input_size = input_size
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.bidirectional = bidirectional
-        
-        # LSTM layer
-        self.lstm = nn.LSTM(
-            input_size=input_size,
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            dropout=dropout if num_layers > 1 else 0,
-            bidirectional=bidirectional,
-            batch_first=True
-        )
-        
-        # Calculate output size from LSTM
-        lstm_output_size = hidden_size * 2 if bidirectional else hidden_size
-        
-        # Attention mechanism (simplified version)
-        self.attention = nn.Linear(lstm_output_size, 1)
-        
-        # Fully connected layer for classification at each time step
-        self.fc = nn.Linear(lstm_output_size, 1)
-        
-        # Dropout layer
-        self.dropout = nn.Dropout(dropout)
-        
-        # Activation functions
-        self.softmax = nn.Softmax(dim=1)
-        
-    def forward(self, x):
-        """
-        Forward pass with attention.
-        """
-        # LSTM forward pass
-        lstm_out, (hidden, cell) = self.lstm(x)
-        
-        # Apply dropout
-        lstm_out = self.dropout(lstm_out)
-        
-        # Apply fully connected layer to each time step
-        output = self.fc(lstm_out)
-        
-        # Apply sigmoid to get probabilities
-        output = torch.sigmoid(output)
+        # Return logits or probabilities based on return_logits flag
+        if not self.return_logits:
+            # Apply sigmoid to get probabilities
+            output = torch.sigmoid(output)
         
         # Output shape: (batch_size, sequence_length, 1)
         return output
@@ -219,43 +160,3 @@ def train_model(model, train_loader, val_loader, num_epochs=10, learning_rate=0.
         print(f'Epoch [{epoch+1}/{num_epochs}] - '
               f'Train Loss: {avg_train_loss:.4f}, '
               f'Val Loss: {avg_val_loss:.4f}')
-
-
-# Example usage
-if __name__ == "__main__":
-    # Create model
-    model = TennisPointLSTM(
-        input_size=288,
-        hidden_size=128,
-        num_layers=2,
-        dropout=0.2
-    )
-    
-    print("TennisPointLSTM Model Architecture:")
-    print(model)
-    print(f"Total parameters: {sum(p.numel() for p in model.parameters())}")
-    
-    # Test with dummy input
-    dummy_input = torch.randn(4, 150, 288)  # batch_size=4, seq_len=150, features=288
-    output = model(dummy_input)
-    print(f"\nDummy input shape: {dummy_input.shape}")
-    print(f"Output shape: {output.shape}")  # Should be (4, 150, 1)
-    print(f"Output range: [{output.min().item():.4f}, {output.max().item():.4f}]")  # Should be [0, 1]
-    
-    # Create attention model
-    attention_model = TennisPointLSTMWithAttention(
-        input_size=288,
-        hidden_size=128,
-        num_layers=2,
-        dropout=0.2
-    )
-    
-    print("\n\nTennisPointLSTMWithAttention Model Architecture:")
-    print(attention_model)
-    print(f"Total parameters: {sum(p.numel() for p in attention_model.parameters())}")
-    
-    # Test with dummy input
-    attention_output = attention_model(dummy_input)
-    print(f"\nAttention model dummy input shape: {dummy_input.shape}")
-    print(f"Attention model output shape: {attention_output.shape}")  # Should be (4, 150, 1)
-    print(f"Attention model output range: [{attention_output.min().item():.4f}, {attention_output.max().item():.4f}]")  # Should be [0, 1]
