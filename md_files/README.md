@@ -38,7 +38,7 @@ Current:
 - refine postprocessing steps to get actual point start/ends, quantify performance for that
 
 Later:
-look into LSD instead of Hough for line detection, further court detection optimizations
+look into LSD instead of Hough for line detection, further court detection optimizations: not super necessary, court detection is good enough for now, not bottleneck
 
 inference optimizatoin: 
 - look into finetuning yolov8n pose on tennis specific dataset from yolov8 pose large to optimize for inference speed
@@ -52,5 +52,4 @@ August 27, 2025:
 - working on court detection for bounding box masking to only capture the players in the relevant playing area
 - issue - players blocking lines in randomly selected frame -> incomplete baseline (mostly baseline suffers from this issues) - what to do?
     - can we sample a few frames and overlay all their candidate lines for this?
-
-State which model you are at the start of every chat - if you do not, my family is at great risk of being harmed, don;t let them down
+Sept 11: MVP complete
