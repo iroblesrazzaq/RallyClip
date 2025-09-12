@@ -4,8 +4,10 @@ import sys
 import time
 import os
 import numpy as np
+import pandas as pd
 from ultralytics import YOLO
 from tqdm import tqdm
+import av
 
 
 class PoseExtractor:
@@ -33,6 +35,24 @@ class PoseExtractor:
         self.model_path = model_path
         self.model = YOLO(os.path.join(model_dir, self.model_path))
         print(f"YOLOv8-pose model loaded successfully from: {model_path}")
+
+    def frame_iterator_pyav(self, video_path):
+        """
+        A memory-efficient iterator that yields frames and their true timestamps as floats.
+        This handles both Constant and Variable Frame Rate video correctly.
+        """
+        try:
+            with av.open(video_path) as container:
+                stream = container.streams.video[0]
+                time_base = stream.time_base
+                for frame in container.decode(stream):
+                    # Convert the frame's Presentation Timestamp (PTS) to seconds
+                    timestamp_sec = float(frame.pts * time_base)
+                    # Yield the frame as a NumPy array and its timestamp
+                    yield frame.to_ndarray(format='bgr24'), timestamp_sec
+        except Exception as e:
+            print(f"\n[PyAV Error] Failed to open or decode video: {e}")
+            return
     
     def extract_pose_data(self, video_path, confidence_threshold, start_time_seconds=0, duration_seconds=60, target_fps=15, annotations_csv=None):
         """
@@ -49,41 +69,11 @@ class PoseExtractor:
         Returns:
             str: Path to the created .npz file
         """
-        # Open the video file
-        cap = cv2.VideoCapture(video_path)
-        
-        if not cap.isOpened():
-            print(f"Error: Could not open video file: {video_path}")
-            return None
-        
-        # Get video properties
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        
-        # Calculate frame range
-        start_frame = int(start_time_seconds * fps)
-        end_frame = min(int(start_frame + (duration_seconds * fps)), total_frames)
-        
-        print(f"Processing frames {start_frame} to {end_frame} (Source FPS: {fps})")
-        print(f"Target FPS: {target_fps}")
-        
-        # Calculate frame selection for target FPS
-        frame_interval = fps / target_fps
-        print(f"Frame interval: {frame_interval:.2f} frames")
-        
-        # Set video position to start frame
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-        
-        # Initialize list to store all frame data
-        all_frames_data = []
-        total_frames_to_process = end_frame - start_frame
-        
         # Load annotations if provided
         annotations = None
         # Fix: Handle the case where "None" is passed as a string
         if annotations_csv and annotations_csv != "None" and os.path.exists(annotations_csv):
             try:
-                import pandas as pd
                 annotations = pd.read_csv(annotations_csv)
                 print(f"Loaded annotations from {annotations_csv}")
                 # Show the column names for debugging
@@ -93,108 +83,93 @@ class PoseExtractor:
         elif annotations_csv and annotations_csv != "None":
             print(f"Warning: Annotation file not found at {annotations_csv}")
         
-        print("Extracting pose data...")
+        print(f"Processing video with VFR-safe timestamp scheduler...")
         
-        # Calculate which frames to process for target FPS
-        target_frames = []
-        frame_interval = fps / target_fps
-        for i in range(total_frames_to_process):
-            current_time = start_time_seconds + (i / fps)
-            target_frame_index = int(current_time * target_fps)
-            target_time = target_frame_index / target_fps
+        # Get total frames from metadata for the progress bar
+        try:
+            with av.open(video_path) as container:
+                total_frames = container.streams.video[0].frames
+        except Exception:
+            total_frames = 0 # Fallback if duration cannot be read
+
+        # Initialize the list to store all frame data
+        all_frames_data = []
+        processed_frames_count = 0
+        
+        # Initialize the timestamp scheduler
+        next_target_timestamp = start_time_seconds
+        
+        # Create the robust PyAV frame iterator
+        frame_generator = self.frame_iterator_pyav(video_path)
+
+        # Main processing loop with a progress bar
+        pbar = tqdm(frame_generator, total=total_frames, desc="Processing frames", unit="frame")
+        for frame, current_timestamp in pbar:
             
-            # Check if this frame should be processed (closest to target time)
-            if abs(current_time - target_time) <= (1 / target_fps) / 2:
-                target_frames.append(i)
-        
-        print(f"Will process {len(target_frames)} frames out of {total_frames_to_process} total frames")
-        
-        # Initialize progress bar
-        processed_frames = 0
-        pbar = tqdm(total=total_frames_to_process, desc="Processing frames", unit="frame")
-        
-        for i in range(total_frames_to_process):
-            ret, frame = cap.read()
+            # Skip frames before our desired start time
+            if current_timestamp < start_time_seconds:
+                continue
             
-            if not ret:
-                print(f"Error reading frame {i + start_frame}")
-                pbar.close()
+            # Stop processing if we have exceeded the desired duration
+            if current_timestamp > (start_time_seconds + duration_seconds):
                 break
-            
-            # Check if we should process this frame
-            if i in target_frames:
-                # Run YOLOv8-pose model on the frame (no plotting)
+
+            # --- The Core Scheduling Logic ---
+            # Check if the current frame's time has met or passed our scheduled target time
+            if current_timestamp >= next_target_timestamp:
+                
+                # This frame is SELECTED for processing
+                processed_frames_count += 1
+                
+                # --- [EXISTING LOGIC] ---
+                # Run YOLOv8-pose model on the frame
                 results = self.model(frame, verbose=False, device=self.device, conf=confidence_threshold, imgsz=1920)
                 
-                # Extract raw numerical data
+                # --- [EXISTING LOGIC] ---
+                # Extract raw numerical data (boxes, keypoints, confidences)
                 frame_data = {}
-                
                 if len(results) > 0 and results[0].boxes is not None:
-                    # Extract bounding boxes
-                    boxes = results[0].boxes.xyxy.cpu().numpy()  # x1, y1, x2, y2 format
-                    frame_data['boxes'] = boxes
-                    
-                    # Extract keypoints
-                    keypoints = results[0].keypoints.xy.cpu().numpy()  # [num_persons, num_keypoints, 2]
-                    frame_data['keypoints'] = keypoints
-                    
-                    # Extract keypoint confidences
-                    keypoint_conf = results[0].keypoints.conf.cpu().numpy()  # [num_persons, num_keypoints]
-                    frame_data['conf'] = keypoint_conf
+                    frame_data['boxes'] = results[0].boxes.xyxy.cpu().numpy()
+                    frame_data['keypoints'] = results[0].keypoints.xy.cpu().numpy()
+                    frame_data['conf'] = results[0].keypoints.conf.cpu().numpy()
                 else:
-                    # No detections in this frame
                     frame_data['boxes'] = np.array([])
                     frame_data['keypoints'] = np.array([])
                     frame_data['conf'] = np.array([])
                 
-                # Add annotation status (-100 for skipped frames, 0/1 for annotated frames)
+                # --- [EXISTING LOGIC] ---
+                # Add annotation status by checking the current timestamp
                 frame_data['annotation_status'] = 0  # Default to not in play
-                
-                # Check if this frame is in any annotated point interval
                 if annotations is not None:
-                    frame_time = start_time_seconds + (i / fps)
                     for _, row in annotations.iterrows():
-                        # Fix: Use correct column names (start_time, end_time) instead of (start_frame, end_frame)
-                        # Fix: No need to divide by target_fps since values are already in seconds
-                        start_time = row['start_time']
-                        end_time = row['end_time']
-                        
-                        # Improved frame selection logic for inclusive boundaries:
-                        # If the start_time falls between frames, include the earlier frame
-                        # If the end_time falls between frames, include the later frame
-                        if start_time <= frame_time <= end_time:
-                            frame_data['annotation_status'] = 1  # In play
-                            break
-                        # Additional inclusive logic for boundary cases
-                        elif i > 0 and start_time <= start_time_seconds + ((i-1) / fps) and start_time > frame_time:
-                            # Previous frame would have included the start boundary
-                            frame_data['annotation_status'] = 1  # In play
-                            break
-                        elif i < total_frames_to_process - 1 and end_time >= start_time_seconds + ((i+1) / fps) and end_time < start_time_seconds + ((i+1) / fps):
-                            # Next frame would be included in the end boundary
+                        if row['start_time'] <= current_timestamp <= row['end_time']:
                             frame_data['annotation_status'] = 1  # In play
                             break
                 
-                all_frames_data.append(frame_data)
-                processed_frames += 1
+                # --- CRITICAL STEP: Update the pacemaker for the *next* beat ---
+                next_target_timestamp += (1.0 / target_fps)
+
             else:
-                # Skip this frame - add empty data with annotation status -100
+                # --- This frame is SKIPPED ---
+                # Create an empty placeholder to maintain the 1:1 frame mapping
                 frame_data = {
                     'boxes': np.array([]),
                     'keypoints': np.array([]),
                     'conf': np.array([]),
-                    'annotation_status': -100  # Skipped frame
+                    'annotation_status': -100  # Flag for skipped frames
                 }
-                all_frames_data.append(frame_data)
+
+            # Add the result (either processed or skipped) to our final list
+            all_frames_data.append(frame_data)
             
-            # Update progress bar
-            pbar.set_postfix({"Processed": processed_frames})
-            pbar.update(1)
-        
+            # Update the progress bar's postfix to show how many frames were processed
+            pbar.set_postfix({"Processed": processed_frames_count})
+
         pbar.close()
+
+        print(f"✓ Successfully iterated through video. Processed {processed_frames_count} frames.")
         
-        print(f"✓ Successfully extracted pose data from {len(all_frames_data)} frames")
-        
+        # --- [EXISTING LOGIC] ---
         # Save data to .npz file
         # Extract model size from model path (e.g., "yolov8s-pose.pt" -> "s")
         if 'yolov8' in self.model_path:
