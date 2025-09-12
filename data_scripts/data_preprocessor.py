@@ -162,7 +162,7 @@ class DataPreprocessor:
             np.ndarray or None: Court mask or None if detection failed
         """
         try:
-            detector = CourtDetector()
+            detector = CourtDetector(yolo_model_path='models/yolov8n.pt')
             mask, clean_frame, metadata = detector.process_video(video_path, target_time=60)
             return mask
         except Exception as e:
