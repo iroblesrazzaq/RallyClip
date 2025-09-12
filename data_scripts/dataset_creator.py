@@ -351,6 +351,104 @@ class TennisDatasetCreator:
         
         return dataset_info
 
+    def combine_splits(self):
+        """
+        Combine individual video splits, apply normalization, and save final dataset files.
+        """
+        print("Combining individual splits and applying normalization...")
+        
+        scaler = StandardScaler()
+        
+        # === Step 1: Fit Scaler ONLY on Training Data ===
+        print("  Fitting scaler on training data...")
+        train_split_dir = self.output_dir / 'train'
+        train_h5_files = list(train_split_dir.glob("*.h5"))
+        
+        if not train_h5_files:
+            print("  No training files found to fit scaler. Aborting.")
+            return
+
+        # Load all training features to fit the scaler
+        all_train_features_list = []
+        for h5_file in train_h5_files:
+            try:
+                with h5py.File(h5_file, 'r') as f:
+                    # Shape: (num_sequences, seq_len, features)
+                    features = f['features'][:]
+                    all_train_features_list.append(features)
+            except Exception as e:
+                print(f"    Error loading {h5_file}: {e}")
+        
+        if not all_train_features_list:
+            print("  No training data loaded. Aborting normalization.")
+            return
+
+        # Concatenate and reshape for scaler: (total_frames, num_features)
+        combined_train_features = np.concatenate(all_train_features_list, axis=0)
+        num_train_sequences, seq_len, num_features = combined_train_features.shape
+        reshaped_train_features = combined_train_features.reshape(-1, num_features)
+        
+        # Fit the scaler
+        scaler.fit(reshaped_train_features)
+        print(f"  Scaler fitted on {reshaped_train_features.shape[0]} training frames.")
+        
+        # Save the fitted scaler for future use (e.g., in inference)
+        joblib.dump(scaler, self.scaler_path)
+        print(f"  Scaler saved to {self.scaler_path}")
+
+        # === Step 2: Transform All Splits and Save Final Datasets ===
+        for split_name in ['train', 'val', 'test']:
+            split_dir = self.output_dir / split_name
+            
+            if not split_dir.exists():
+                print(f"  No {split_name} directory found")
+                continue
+                
+            h5_files = list(split_dir.glob("*.h5"))
+            
+            if not h5_files:
+                print(f"  No files found for {split_name} split")
+                continue
+                
+            print(f"  Transforming and combining {len(h5_files)} files for {split_name} split...")
+            
+            all_features = []
+            all_targets = []
+            
+            for h5_file in h5_files:
+                try:
+                    with h5py.File(h5_file, 'r') as f:
+                        all_features.append(f['features'][:])
+                        all_targets.append(f['targets'][:])
+                except Exception as e:
+                    print(f"    Error loading {h5_file}: {e}")
+            
+            if not all_features:
+                continue
+
+            combined_features = np.concatenate(all_features, axis=0)
+            combined_targets = np.concatenate(all_targets, axis=0)
+            
+            # Reshape for transformation
+            num_seq, seq_len, num_feat = combined_features.shape
+            reshaped_features = combined_features.reshape(-1, num_feat)
+            
+            # Apply the FITTED scaler
+            normalized_features = scaler.transform(reshaped_features)
+            
+            # Reshape back to sequence format
+            final_features = normalized_features.reshape(num_seq, seq_len, num_feat)
+            
+            # Save combined and normalized dataset
+            output_file = self.output_dir / f"{split_name}.h5"
+            with h5py.File(output_file, 'w') as f:
+                f.create_dataset('features', data=final_features, compression='gzip')
+                f.create_dataset('targets', data=combined_targets, compression='gzip')
+            
+            print(f"  Saved combined and normalized {split_name} dataset:")
+            print(f"    Features shape: {final_features.shape}")
+            print(f"    Total sequences: {len(final_features)}")
+
 def main():
     """CLI entry point for TennisDatasetCreator."""
     import argparse

@@ -14,11 +14,11 @@ class PoseExtractor:
     from video segments and saves it to compressed .npz files.
     """
     
-    def __init__(self, model_path='yolov8n-pose.pt'):
+    def __init__(self, model_dir='models', model_path='yolov8n-pose.pt'):
         """
         Initialize the PoseExtractor with a YOLOv8-pose model.
         
-        Args:
+        Args:   
             model_path (str): Path to the YOLOv8-pose model file.
                          Defaults to 'yolov8s-pose.pt'
         """
@@ -31,7 +31,7 @@ class PoseExtractor:
             print(f"Using device: {self.device.upper()} (MPS not available, using CPU)")
         
         self.model_path = model_path
-        self.model = YOLO(model_path)
+        self.model = YOLO(os.path.join(model_dir, self.model_path))
         print(f"YOLOv8-pose model loaded successfully from: {model_path}")
     
     def extract_pose_data(self, video_path, confidence_threshold, start_time_seconds=0, duration_seconds=60, target_fps=15, annotations_csv=None):
