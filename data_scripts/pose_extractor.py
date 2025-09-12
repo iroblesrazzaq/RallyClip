@@ -99,6 +99,19 @@ class PoseExtractor:
         # Initialize the timestamp scheduler
         next_target_timestamp = start_time_seconds
         
+        # --- Start of Optimized Annotation Logic ---
+        EPS = 1e-6  # small tolerance for float comparisons at boundaries
+        if annotations is not None:
+            starts = annotations['start_time'].to_numpy(dtype=float)
+            ends   = annotations['end_time'].to_numpy(dtype=float)
+            annotation_index = 0
+            num_annotations = starts.size
+        else:
+            starts = ends = None
+            annotation_index = 0
+            num_annotations = 0
+        # --- End of Optimized Annotation Logic ---
+        
         # Create the robust PyAV frame iterator
         frame_generator = self.frame_iterator_pyav(video_path)
 
@@ -137,14 +150,16 @@ class PoseExtractor:
                     frame_data['keypoints'] = np.array([])
                     frame_data['conf'] = np.array([])
                 
-                # --- [EXISTING LOGIC] ---
-                # Add annotation status by checking the current timestamp
-                frame_data['annotation_status'] = 0  # Default to not in play
-                if annotations is not None:
-                    for _, row in annotations.iterrows():
-                        if row['start_time'] <= current_timestamp <= row['end_time']:
-                            frame_data['annotation_status'] = 1  # In play
-                            break
+                # --- [NEW EFFICIENT LOGIC] ---
+                annotation_status = 0
+                if num_annotations > 0:
+                    # Advance past intervals that ended before this timestamp
+                    while (annotation_index < num_annotations - 1) and (current_timestamp > ends[annotation_index] + EPS):
+                        annotation_index += 1
+                    # Check if the timestamp lies within the current interval (inclusive with epsilon)
+                    if (starts[annotation_index] - EPS) <= current_timestamp <= (ends[annotation_index] + EPS):
+                        annotation_status = 1
+                frame_data['annotation_status'] = annotation_status
                 
                 # --- CRITICAL STEP: Update the pacemaker for the *next* beat ---
                 next_target_timestamp += (1.0 / target_fps)
