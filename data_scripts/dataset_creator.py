@@ -13,6 +13,9 @@ import os
 import glob
 import json
 from pathlib import Path
+from sklearn.preprocessing import StandardScaler
+import joblib
+import shutil
 
 class TennisDatasetCreator:
     """
@@ -39,6 +42,8 @@ class TennisDatasetCreator:
         
         # Create output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        # Path to save fitted scaler for inference
+        self.scaler_path = self.output_dir / "scaler.joblib"
         
         # Sequence parameters
         self.sequence_length = 150  # 10 seconds at 15 FPS
@@ -448,6 +453,16 @@ class TennisDatasetCreator:
             print(f"  Saved combined and normalized {split_name} dataset:")
             print(f"    Features shape: {final_features.shape}")
             print(f"    Total sequences: {len(final_features)}")
+
+        # === Step 3: Cleanup intermediate per-video split files ===
+        for split_dir_name in ['train', 'val', 'test']:
+            split_dir_path = self.output_dir / split_dir_name
+            if split_dir_path.exists() and split_dir_path.is_dir():
+                try:
+                    shutil.rmtree(split_dir_path)
+                    print(f"  Cleaned intermediate split directory: {split_dir_path}")
+                except Exception as e:
+                    print(f"  Warning: Failed to remove {split_dir_path}: {e}")
 
 def main():
     """CLI entry point for TennisDatasetCreator."""
