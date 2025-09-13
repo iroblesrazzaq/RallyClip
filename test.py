@@ -6,6 +6,7 @@
 import os
 from pathlib import Path
 from typing import Optional, Tuple, Dict
+import scipy.ndimage as ndi
 
 import numpy as np
 import torch
@@ -26,14 +27,17 @@ def gaussian_kernel1d(sigma: float, kernel_size: int) -> np.ndarray:
 
 
 def gaussian_smooth(values: np.ndarray, sigma: float = 1.5, kernel_size: Optional[int] = None) -> np.ndarray:
-    """Smooth a 1D signal using a Gaussian kernel via convolution."""
-    if kernel_size is None:
-        # Common rule of thumb: cover ~3 sigmas on each side
-        kernel_size = int(max(3, 6 * sigma))
-        if kernel_size % 2 == 0:
-            kernel_size += 1
-    kernel = gaussian_kernel1d(sigma=sigma, kernel_size=kernel_size)
-    return np.convolve(values, kernel, mode='same')
+    """Smooth a 1D signal using SciPy's gaussian_filter1d.
+
+    If kernel_size is provided, it is mapped to gaussian_filter1d's truncate as
+    truncate = ((kernel_size - 1) / 2) / sigma.
+    """
+    if kernel_size is not None:
+        truncate = ((kernel_size - 1) / 2) / max(1e-6, float(sigma))
+        truncate = float(max(0.5, truncate))
+    else:
+        truncate = 4.0  # SciPy default
+    return ndi.gaussian_filter1d(values.astype(np.float32), sigma=float(sigma), mode='nearest', truncate=truncate)
 
 
 def hysteresis_threshold(
@@ -159,23 +163,82 @@ def load_model_from_checkpoint(
     bidirectional: bool = True,
     return_logits: bool = False,
 ) -> TennisPointLSTM:
+    """Load model weights from checkpoint, adapting architecture if needed.
+
+    Supports checkpoints saved either as pure state_dict or with keys like
+    'model_state_dict', 'optimizer_state_dict', etc. If a state_dict is found,
+    derive architecture (input_size, hidden_size, num_layers, bidirectional)
+    from the weights to avoid key mismatches.
+    """
+    ckpt = torch.load(str(checkpoint_path), map_location=device)
+
+    # Extract model state dict
+    if isinstance(ckpt, dict) and 'model_state_dict' in ckpt:
+        state_dict = ckpt['model_state_dict']
+    elif isinstance(ckpt, dict) and any(k.startswith('lstm.') or k.startswith('fc.') for k in ckpt.keys()):
+        state_dict = ckpt
+    else:
+        # Fallback: attempt to use as state_dict
+        state_dict = ckpt
+
+    # Infer architecture from weights if possible
+    inferred_input_size = input_size
+    inferred_hidden_size = hidden_size
+    inferred_num_layers = num_layers
+    inferred_bidirectional = bidirectional
+
+    try:
+        # weight_ih_l0 shape: (4*hidden_size, input_size)
+        w_ih_l0 = state_dict.get('lstm.weight_ih_l0', None)
+        if w_ih_l0 is not None:
+            inferred_hidden_size = w_ih_l0.shape[0] // 4
+            inferred_input_size = w_ih_l0.shape[1]
+
+        # Determine num_layers by counting layers
+        layer_indices = set()
+        for k in state_dict.keys():
+            if k.startswith('lstm.weight_ih_l'):
+                try:
+                    idx_str = k.split('lstm.weight_ih_l')[1]
+                    idx = int(idx_str.split('_')[0]) if '_' in idx_str else int(idx_str)
+                    layer_indices.add(idx)
+                except Exception:
+                    pass
+        if layer_indices:
+            inferred_num_layers = max(layer_indices) + 1
+
+        # Bidirectionality: presence of any reverse weights
+        inferred_bidirectional = any('_reverse' in k for k in state_dict.keys())
+    except Exception:
+        pass
+
+    # Build model with inferred architecture
     model = TennisPointLSTM(
-        input_size=input_size,
-        hidden_size=hidden_size,
-        num_layers=num_layers,
+        input_size=inferred_input_size,
+        hidden_size=inferred_hidden_size,
+        num_layers=inferred_num_layers,
         dropout=0.2,
-        bidirectional=bidirectional,
+        bidirectional=inferred_bidirectional,
         return_logits=return_logits,
     )
-    state = torch.load(str(checkpoint_path), map_location=device)
-    result = model.load_state_dict(state, strict=False)
-    if getattr(result, 'missing_keys', []) or getattr(result, 'unexpected_keys', []):
+
+    # Load strictly now that shapes should match
+    load_result = model.load_state_dict(state_dict, strict=True)
+    # Only print issues if any remain
+    missing = getattr(load_result, 'missing_keys', [])
+    unexpected = getattr(load_result, 'unexpected_keys', [])
+    if missing or unexpected:
         print('Warning: checkpoint keys mismatch:')
-        print(f"  missing: {getattr(result, 'missing_keys', [])}")
-        print(f"  unexpected: {getattr(result, 'unexpected_keys', [])}")
+        print(f"  missing: {missing}")
+        print(f"  unexpected: {unexpected}")
+
     model.to(device)
     model.eval()
-    print(f"Loaded checkpoint: {checkpoint_path}")
+    print(
+        f"Loaded checkpoint: {checkpoint_path} "
+        f"(input_size={inferred_input_size}, hidden_size={inferred_hidden_size}, "
+        f"num_layers={inferred_num_layers}, bidirectional={inferred_bidirectional})"
+    )
     return model
 
 
@@ -192,59 +255,61 @@ assert TEST_H5.exists(), f"Missing test set file: {TEST_H5}"
 test_dataset = TennisDataset(str(TEST_H5))
 num_sequences = len(test_dataset)
 print(f"Test sequences available: {num_sequences}")
-
+# %%
 # choose a sequence index to visualize
-seq_idx = 0  # change this as needed
-assert 0 <= seq_idx < num_sequences, "seq_idx out of range"
+for seq_idx in range(424):
+  # change this as needed
+    assert 0 <= seq_idx < num_sequences, "seq_idx out of range"
 
-seq_features, seq_target = test_dataset[seq_idx]  # shapes: (150, 360), (150,)
-with torch.no_grad():
-    inp = seq_features.unsqueeze(0).to(device)  # (1, 150, 360)
-    out = model(inp)  # (1, 150, 1), sigmoid probs by default
-raw_probs = out.squeeze().detach().cpu().numpy()  # (150,)
-target_seq = seq_target.detach().cpu().numpy().astype(np.int32)  # (150,)
-print(f"Seq {seq_idx}: probs shape={raw_probs.shape}, target shape={target_seq.shape}")
+    seq_features, seq_target = test_dataset[seq_idx]  # shapes: (150, 360), (150,)
+    with torch.no_grad():
+        inp = seq_features.unsqueeze(0).to(device)  # (1, 150, 360)
+        out = model(inp)  # (1, 150, 1), sigmoid probs by default
+    raw_probs = out.squeeze().detach().cpu().numpy()  # (150,)
+    target_seq = seq_target.detach().cpu().numpy().astype(np.int32)  # (150,)
+    print(f"Seq {seq_idx}: probs shape={raw_probs.shape}, target shape={target_seq.shape}")
+
+    # look at plot of raw probabilities vs target for a single sequence - make function to plot this
+    #plot_probs_vs_target(raw_probs, target_seq, title=f"Raw probabilities vs target (seq {seq_idx})")
+
+
+    # apply postprocessing steps, tune hyperparameters:
+    # gaussian smoothing
+    gaussian_sigma = 1.5
+    gaussian_kernel_size = None  # auto from sigma
+    smoothed_probs = gaussian_smooth(raw_probs, sigma=gaussian_sigma, kernel_size=gaussian_kernel_size)
+    print(f"Applied Gaussian smoothing: sigma={gaussian_sigma}, kernel_size={gaussian_kernel_size}")
+
+
+    # look at gaussian smoothing plot for a single sequence - use same plotting function for this
+    #plot_probs_vs_target(smoothed_probs, target_seq, title=f"Smoothed probabilities vs target (seq {seq_idx})")
+
+
+
+    # hysteresis thresholding
+    # look at hysteresis thresholding plot for a single sequence - use same plotting function for this
+    low_thresh = 0.35
+    high_thresh = 0.65
+    min_dur_frames = 6  # suppress very short bursts
+
+    # Apply on smoothed probabilities
+    hyst_pred = hysteresis_threshold(smoothed_probs, low=low_thresh, high=high_thresh, min_duration=min_dur_frames)
+
+    metrics = compute_frame_metrics(target_seq, hyst_pred)
+    print("Frame metrics (hysteresis on smoothed):")
+    for k in ['accuracy', 'precision', 'recall', 'f1', 'tp', 'tn', 'fp', 'fn']:
+        print(f"  {k}: {metrics[k]:.4f}" if isinstance(metrics[k], float) else f"  {k}: {metrics[k]}")
+
+    plot_probs_vs_target(
+        smoothed_probs,
+        target_seq,
+        pred_mask=hyst_pred,
+        title=(
+            f"Smoothed probs + hysteresis pred (seq {seq_idx})\n"
+            f"low={low_thresh}, high={high_thresh}, min_dur={min_dur_frames}, sigma={gaussian_sigma}"
+        ),
+    )
+
+
 
 # %%
-# look at plot of raw probabilities vs target for a single sequence - make function to plot this
-plot_probs_vs_target(raw_probs, target_seq, title=f"Raw probabilities vs target (seq {seq_idx})")
-
-# %%
-# apply postprocessing steps, tune hyperparameters:
-# gaussian smoothing
-gaussian_sigma = 1.5
-gaussian_kernel_size = None  # auto from sigma
-smoothed_probs = gaussian_smooth(raw_probs, sigma=gaussian_sigma, kernel_size=gaussian_kernel_size)
-print(f"Applied Gaussian smoothing: sigma={gaussian_sigma}, kernel_size={gaussian_kernel_size}")
-
-# %%
-# look at gaussian smoothing plot for a single sequence - use same plotting function for this
-plot_probs_vs_target(smoothed_probs, target_seq, title=f"Smoothed probabilities vs target (seq {seq_idx})")
-
-
-# %%
-# hysteresis thresholding
-# look at hysteresis thresholding plot for a single sequence - use same plotting function for this
-low_thresh = 0.35
-high_thresh = 0.65
-min_dur_frames = 6  # suppress very short bursts
-
-# Apply on smoothed probabilities
-hyst_pred = hysteresis_threshold(smoothed_probs, low=low_thresh, high=high_thresh, min_duration=min_dur_frames)
-
-metrics = compute_frame_metrics(target_seq, hyst_pred)
-print("Frame metrics (hysteresis on smoothed):")
-for k in ['accuracy', 'precision', 'recall', 'f1', 'tp', 'tn', 'fp', 'fn']:
-    print(f"  {k}: {metrics[k]:.4f}" if isinstance(metrics[k], float) else f"  {k}: {metrics[k]}")
-
-plot_probs_vs_target(
-    smoothed_probs,
-    target_seq,
-    pred_mask=hyst_pred,
-    title=(
-        f"Smoothed probs + hysteresis pred (seq {seq_idx})\n"
-        f"low={low_thresh}, high={high_thresh}, min_dur={min_dur_frames}, sigma={gaussian_sigma}"
-    ),
-)
-
-
