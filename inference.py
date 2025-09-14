@@ -21,10 +21,54 @@ video_feature_path = 'pose_data/features/Monica Greene unedited tennis match pla
 feature_data = np.load(video_feature_path)
 
 # create our ordered list of sequences with 50% overlap: must carefully track frame numbers
-'''
-can use numpy ops, but have to track start, end frame. ignore un-annotated frames. 
 
-num_frames = 
+num_frames = len(feature_data['features'])
+sequence_length = 300 
+overlap = 150
+if num_frames < sequence_length:
+    raise ValueError("input video too short")
+
+
+if num_frames % sequence_length == 0:
+    # divides cleanly
+    num_sequences = ((num_frames-sequence_length) // overlap) + 1
+    start_idxs = [150*s for s in range(num_sequences)]
+else:
+    num_sequences_clean = ((num_frames-sequence_length) // overlap) + 1
+    start_idxs = [150*s for s in range(num_sequences_clean)]
+    start_idxs.append(num_frames - 1 - sequence_length) # adds last sequence
+
+ordered_sequences = []
+res_arr = np.full((2, num_frames), np.nan)
+
+
+# now we construct the feature lists, tracking start indexes
+
+
+# just create num frames x2 array, fill with nan. then to check whether to put first or second row,
+# just check if first row is nan, if so then fill first row, if already filled, then put into row 2
+# ok, so if randomly filling in b/c dict key vals, then we can just check .isnan.any() on the sequence of note.
+
+
+
+'''
+case 700 (if not divisible by sequence length)
+
+0-300
+150-450
+300-600
+400-700 
+
+
+
+
+case 600 (if divisible by sequence length)
+0-300
+150-450
+300-600
+
+= num_frames-sequence_length) // overlap + 1
+
 
 
 
