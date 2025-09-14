@@ -1,8 +1,10 @@
 # file to run inference on an entire feature npz file, then apply postprocessing steps
 # to output final start_time,end_time csv file
+# %%
 import numpy as np
 import torch
 from lstm_model_arch import TennisPointLSTM
+from scipy.ndimage import gaussian_filter1d
 
 """
 My test.py file is my current evaluation file. however, it just looks at sequences, not the whole video. 
@@ -12,6 +14,9 @@ For now, we will use the same gaussian smoothing and hysteresis filtering that w
 
 Your task is to write a new file that runs the inference on an entire video's sequence file
 """
+
+GAUSSIAN_SIGMA = 2.0  # for smoothing
+
 
 def load_model_from_checkpoint(
     checkpoint_path: str,
@@ -89,7 +94,7 @@ def load_model_from_checkpoint(
     return model, device
 
 # steps: 
-
+# %%
 # load model - best 300 sequence length model
 model_path = 'checkpoints/seq_len300/best_model.pth'
 model, device = load_model_from_checkpoint(model_path, bidirectional=True, return_logits=False)
@@ -112,67 +117,36 @@ if num_frames < sequence_length:
 if num_frames % sequence_length == 0:
     # divides cleanly
     num_sequences = ((num_frames-sequence_length) // overlap) + 1
-    start_idxs = [150*s for s in range(num_sequences)]
+    start_idxs = [overlap*s for s in range(num_sequences)]
 
 else:
     num_sequences_clean = ((num_frames-sequence_length) // overlap) + 1
-    start_idxs = [150*s for s in range(num_sequences_clean)]
+    start_idxs = [overlap*s for s in range(num_sequences_clean)]
     start_idxs.append(num_frames - 1 - sequence_length) # adds last sequence
 
 ordered_sequences = []
-res_arr = np.full((2, num_frames), np.nan)
+output_arr = np.full((3, num_frames), np.nan)
 
 
 # now we construct the feature lists, perform inference, and fill output array, tracking start indexes
 for i in start_idxs:
-    feature_vec = feature_data['features'][i:i+150, :].shape
+    feature_vec = feature_data['features'][i:i+sequence_length, :].shape
     output_sequence = model(feature_vec).detach().cpu().numpy()
     # now we do the nan checks:
-    if res_arr[0, i:i+150].isnan().all(): # no overlap, can put in this row
-        res_arr[0, i:i+150] = output_sequence
-    elif res_arr[1, i:i+150].isnan().all():
-        res_arr[1, i:i+150] = output_sequence
+    if output_arr[0, i:i+sequence_length].isnan().all(): # no overlap, can put in this row
+        output_arr[0, i:i+sequence_length] = output_sequence
+    elif output_arr[1, i:i+sequence_length].isnan().all():
+        output_arr[1, i:i+sequence_length] = output_sequence
+    elif i == start_idxs[-1] and num_frames % sequence_length > 0: # we allow 3x overlap for covering end sequence
+        output_arr[2, i:i+sequence_length] = output_sequence
+    else:
+        raise ValueError('res arr filling logic messed up')
 
-
-
-
-
-# just create num frames x2 array, fill with nan. then to check whether to put first or second row,
-# just check if first row is nan, if so then fill first row, if already filled, then put into row 2
-# ok, so if randomly filling in b/c dict key vals, then we can just check .isnan.any() on the sequence of note.
-
-
-
-'''
-case 700 (if not divisible by sequence length)
-
-0-300
-150-450
-300-600
-400-700 
-
-
-
-
-case 600 (if divisible by sequence length)
-0-300
-150-450
-300-600
-
-= num_frames-sequence_length) // overlap + 1
-
-
-
-
-'''
-
-
-# perform inference on each individual sequence
-
-
-# now create final output sequence by merging all sequences, averaging all overlapping frame predictions. 
-
-# perform gaussian smoothing on that probability sequence
+# now we have filled res_arr. next, get 1, num_frames array by averaging over 0th axis, and apply gaussian smoothing
+avg_probs = np.nanmean(output_arr, axis=0)
+smoothed_probs = scipy.ndimage.gaussian_filter1d(avg_probs, sigma=GAUSSIAN_SIGMA)
+# %%
+smoothed_probs
 
 # perform hysteresis filtering on smoothed sequence
 
