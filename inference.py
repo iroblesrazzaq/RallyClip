@@ -1,21 +1,19 @@
 # file to run inference on an entire feature npz file, then apply postprocessing steps
 # to output final start_time,end_time csv file
 # %%
+import os
+import csv
+import argparse
 import numpy as np
 import torch
 from lstm_model_arch import TennisPointLSTM
 import scipy.ndimage
+from typing import Optional, List, Tuple
 
-"""
-My test.py file is my current evaluation file. however, it just looks at sequences, not the whole video. 
-I need to further establish my post processing pipeline. The final output of my pipeline should be 
-a csv of start_time, end_times, which i can compare to the annotated targets. 
-For now, we will use the same gaussian smoothing and hysteresis filtering that we're using in the test.py file. 
 
-Your task is to write a new file that runs the inference on an entire video's sequence file
-"""
 
 GAUSSIAN_SIGMA = 2.0  # for smoothing
+
 
 
 def load_model_from_checkpoint(
@@ -93,64 +91,204 @@ def load_model_from_checkpoint(
     )
     return model, device
 
-# steps: 
-# %%
-# load model - best 300 sequence length model
-model_path = 'checkpoints/seq_len300/best_model.pth'
-model, device = load_model_from_checkpoint(model_path, bidirectional=True, return_logits=False)
+def hysteresis_threshold(
+    values: np.ndarray,
+    low: float = 0.3,
+    high: float = 0.7,
+    min_duration: int = 0,
+) -> np.ndarray:
+    """Apply 1D hysteresis thresholding to a probability-like signal.
+
+    - Enter active state when values >= high
+    - Exit active state when values < low
+    - Optional min_duration suppresses short active segments
+    Returns a 0/1 array of the same length.
+    """
+    assert 0.0 <= low < high <= 1.0, "Require 0 <= low < high <= 1"
+    n = len(values)
+    pred = np.zeros(n, dtype=np.int8)
+    active = False
+    start_idx: Optional[int] = None
+
+    for i in range(n):
+        v = values[i]
+        if not active:
+            if v >= high:
+                active = True
+                start_idx = i
+        else:
+            if v < low:
+                end_idx = i
+                if start_idx is not None and (end_idx - start_idx) >= max(0, min_duration):
+                    pred[start_idx:end_idx] = 1
+                active = False
+                start_idx = None
+
+    # Handle active segment reaching the end
+    if active and start_idx is not None:
+        end_idx = n
+        if (end_idx - start_idx) >= max(0, min_duration):
+            pred[start_idx:end_idx] = 1
+
+    return pred.astype(np.int32)
+
+def generate_start_indices(num_frames: int, sequence_length: int, overlap: int) -> List[int]:
+    """Generate sequence start indices with specified overlap, covering all frames."""
+    if sequence_length <= 0:
+        raise ValueError("sequence_length must be > 0")
+    if overlap < 0 or overlap >= sequence_length:
+        raise ValueError("overlap must be in [0, sequence_length-1]")
+    if num_frames < sequence_length:
+        raise ValueError("input video too short for the chosen sequence_length")
+
+    step = sequence_length - overlap
+    start_indices: List[int] = []
+    idx = 0
+    while idx + sequence_length <= num_frames:
+        start_indices.append(idx)
+        idx += step
+    if start_indices[-1] + sequence_length < num_frames:
+        start_indices.append(num_frames - sequence_length)
+    return start_indices
 
 
+def run_windowed_inference_average(
+    model: TennisPointLSTM,
+    device: torch.device,
+    features: np.ndarray,
+    sequence_length: int,
+    overlap: int,
+) -> np.ndarray:
+    """Run sliding-window inference and average overlapping predictions per frame."""
+    num_frames = features.shape[0]
+    start_indices = generate_start_indices(num_frames, sequence_length, overlap)
+    print(f"Generated {len(start_indices)} sequences for {num_frames} frames (seq_len={sequence_length}, overlap={overlap})")
 
-# load whole feature npz file for a specific video
-video_feature_path = 'pose_data/features/yolos_0.25conf_15fps_0s_to_99999s/Aditi Narayan ｜ Matchplay_features.npz'
-feature_data = np.load(video_feature_path)
+    summed_probs = np.zeros(num_frames, dtype=np.float32)
+    counts = np.zeros(num_frames, dtype=np.int32)
 
-# create our ordered list of sequences with 50% overlap: must carefully track frame numbers
+    for seq_idx, start in enumerate(start_indices):
+        seq_np = features[start:start + sequence_length, :].astype(np.float32)
+        seq_tensor = torch.from_numpy(seq_np).unsqueeze(0).to(device)
+        with torch.no_grad():
+            output_tensor = model(seq_tensor)
+        output_sequence = output_tensor.squeeze().detach().cpu().numpy().astype(np.float32)  # (seq_len,)
 
-num_frames = len(feature_data['features'])
-sequence_length = 300 
-overlap = 150
-if num_frames < sequence_length:
-    raise ValueError("input video too short")
+        summed_probs[start:start + sequence_length] += output_sequence
+        counts[start:start + sequence_length] += 1
 
+        if seq_idx < 3 or seq_idx >= len(start_indices) - 3:
+            print(f"  Seq {seq_idx}: frames {start}-{start + sequence_length - 1}")
 
-if num_frames % sequence_length == 0:
-    # divides cleanly
-    num_sequences = ((num_frames-sequence_length) // overlap) + 1
-    start_idxs = [overlap*s for s in range(num_sequences)]
+    if np.any(counts == 0):
+        zeros = int(np.sum(counts == 0))
+        print(f"WARNING: {zeros} frames not covered by any window; filling with zeros")
 
-else:
-    num_sequences_clean = ((num_frames-sequence_length) // overlap) + 1
-    start_idxs = [overlap*s for s in range(num_sequences_clean)]
-    start_idxs.append(num_frames - 1 - sequence_length) # adds last sequence
-
-ordered_sequences = []
-output_arr = np.full((3, num_frames), np.nan)
+    avg_probs = np.divide(summed_probs, np.maximum(counts, 1), dtype=np.float32)
+    return avg_probs
 
 
-# now we construct the feature lists, perform inference, and fill output array, tracking start indexes
-for i in start_idxs:
-    # slice features and convert to tensor of shape (1, sequence_length, input_size)
-    seq_np = feature_data['features'][i:i+sequence_length, :].astype(np.float32)
-    seq_tensor = torch.from_numpy(seq_np).unsqueeze(0).to(device)
-    with torch.no_grad():
-        output_tensor = model(seq_tensor)  # (1, seq_len, 1)
-    output_sequence = output_tensor.squeeze().detach().cpu().numpy()  # (seq_len,)
-    # now we do the nan checks:
-    if np.isnan(output_arr[0, i:i+sequence_length]).all(): # no overlap, can put in this row
-        output_arr[0, i:i+sequence_length] = output_sequence
-    elif np.isnan(output_arr[1, i:i+sequence_length]).all():
-        output_arr[1, i:i+sequence_length] = output_sequence
-    elif i == start_idxs[-1] and num_frames % sequence_length > 0: # we allow 3x overlap for covering end sequence
-        output_arr[2, i:i+sequence_length] = output_sequence
-    else:
-        raise ValueError('res arr filling logic messed up')
+def extract_segments_from_binary(pred: np.ndarray) -> List[Tuple[int, int]]:
+    """Return list of (start_idx, end_idx_exclusive) where pred == 1."""
+    segments: List[Tuple[int, int]] = []
+    n = len(pred)
+    if n == 0:
+        return segments
+    in_seg = False
+    seg_start: Optional[int] = None
+    for i in range(n):
+        if not in_seg and pred[i] == 1:
+            in_seg = True
+            seg_start = i
+        elif in_seg and pred[i] == 0:
+            segments.append((seg_start, i))
+            in_seg = False
+            seg_start = None
+    if in_seg and seg_start is not None:
+        segments.append((seg_start, n))
+    return segments
 
-# now we have filled res_arr. next, get 1, num_frames array by averaging over 0th axis, and apply gaussian smoothing
-avg_probs = np.nanmean(output_arr, axis=0)
-smoothed_probs = scipy.ndimage.gaussian_filter1d(avg_probs.astype(np.float32), sigma=GAUSSIAN_SIGMA)
-_ = smoothed_probs  # silence variable display in notebooks
 
-# perform hysteresis filtering on smoothed sequence
+def write_segments_csv(
+    segments: List[Tuple[int, int]],
+    output_csv_path: str,
+    fps: float,
+    overwrite: bool = False,
+) -> None:
+    """Write segments to CSV with start_time,end_time in seconds."""
+    if os.path.exists(output_csv_path) and not overwrite:
+        print(f"✓ Output exists, skipping write (set --overwrite to replace): {output_csv_path}")
+        return
+    os.makedirs(os.path.dirname(output_csv_path) or ".", exist_ok=True)
+    with open(output_csv_path, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["start_time", "end_time"])  # header
+        for start_idx, end_idx in segments:
+            start_t = start_idx / fps
+            end_t = end_idx / fps
+            writer.writerow([f"{start_t:.3f}", f"{end_t:.3f}"])
+    print(f"✓ Wrote segments CSV: {output_csv_path} ({len(segments)} segments)")
 
-# use hysteresis for start/end times, write to csv
+
+def main():
+    parser = argparse.ArgumentParser(description="Single-video inference: average windows, smooth, hysteresis, write CSV")
+    parser.add_argument("--features", type=str, required=True, help="Path to input *_features.npz")
+    parser.add_argument("--checkpoint", type=str, required=True, help="Path to LSTM checkpoint .pth")
+    parser.add_argument("--output", type=str, required=True, help="Path to output CSV (start_time,end_time)")
+
+    parser.add_argument("--fps", type=float, default=15.0, help="Sampling FPS used during feature creation")
+    parser.add_argument("--seq-len", type=int, default=300, help="Sequence length for inference windows")
+    parser.add_argument("--overlap", type=int, default=150, help="Overlap (frames) between windows")
+
+    parser.add_argument("--sigma", type=float, default=GAUSSIAN_SIGMA, help="Gaussian smoothing sigma")
+    parser.add_argument("--low", type=float, default=0.30, help="Hysteresis low threshold")
+    parser.add_argument("--high", type=float, default=0.70, help="Hysteresis high threshold")
+    parser.add_argument("--min-dur-sec", type=float, default=0.0, help="Minimum segment duration in seconds")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite output CSV if it exists")
+
+    args = parser.parse_args()
+
+    # Load model
+    model, device = load_model_from_checkpoint(
+        args.checkpoint,
+        bidirectional=True,
+        return_logits=False,
+    )
+
+    # Load features
+    data = np.load(args.features)
+    features = data["features"]  # shape: (num_frames, input_size)
+    num_frames = features.shape[0]
+    print(f"Loaded features: {args.features} (frames={num_frames}, dim={features.shape[1]})")
+
+    # Windowed inference with averaging
+    avg_probs = run_windowed_inference_average(
+        model=model,
+        device=device,
+        features=features,
+        sequence_length=args.seq_len,
+        overlap=args.overlap,
+    )
+
+    # Smoothing
+    smoothed_probs = scipy.ndimage.gaussian_filter1d(avg_probs.astype(np.float32), sigma=float(args.sigma))
+    print(
+        "smoothed stats:",
+        "min=", float(np.nanmin(smoothed_probs)),
+        "max=", float(np.nanmax(smoothed_probs)),
+        "nans=", int(np.isnan(smoothed_probs).sum()),
+    )
+
+    # Hysteresis
+    min_duration_frames = int(round(max(0.0, args.min_dur_sec) * args.fps))
+    binary_pred = hysteresis_threshold(smoothed_probs, low=float(args.low), high=float(args.high), min_duration=min_duration_frames)
+
+    # Extract segments and write CSV in seconds (0-based timeline)
+    segments = extract_segments_from_binary(binary_pred)
+    write_segments_csv(segments, args.output, fps=float(args.fps), overwrite=bool(args.overwrite))
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
