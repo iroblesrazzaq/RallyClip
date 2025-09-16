@@ -9,10 +9,11 @@ import torch
 from lstm_model_arch import TennisPointLSTM
 import scipy.ndimage
 from typing import Optional, List, Tuple
+import joblib
 
 
 
-GAUSSIAN_SIGMA = 2.0  # for smoothing
+GAUSSIAN_SIGMA = 1.5  # for smoothing
 
 
 
@@ -233,24 +234,25 @@ def write_segments_csv(
 def main():
     parser = argparse.ArgumentParser(description="Single-video inference: average windows, smooth, hysteresis, write CSV")
     parser.add_argument("--features", type=str, required=True, help="Path to input *_features.npz")
-    parser.add_argument("--checkpoint", type=str, required=True, help="Path to LSTM checkpoint .pth")
+    parser.add_argument(f"--model-path", type=str, required=True, help="Path to LSTM .pth file")
     parser.add_argument("--output", type=str, required=True, help="Path to output CSV (start_time,end_time)")
+    parser.add_argument("--scaler-path", type=str, required=True, help="required path to StandardScaler .joblib")
 
     parser.add_argument("--fps", type=float, default=15.0, help="Sampling FPS used during feature creation")
     parser.add_argument("--seq-len", type=int, default=300, help="Sequence length for inference windows")
     parser.add_argument("--overlap", type=int, default=150, help="Overlap (frames) between windows")
 
     parser.add_argument("--sigma", type=float, default=GAUSSIAN_SIGMA, help="Gaussian smoothing sigma")
-    parser.add_argument("--low", type=float, default=0.30, help="Hysteresis low threshold")
-    parser.add_argument("--high", type=float, default=0.70, help="Hysteresis high threshold")
-    parser.add_argument("--min-dur-sec", type=float, default=0.0, help="Minimum segment duration in seconds")
+    parser.add_argument("--low", type=float, default=0.45, help="Hysteresis low threshold")
+    parser.add_argument("--high", type=float, default=0.8, help="Hysteresis high threshold")
+    parser.add_argument("--min-dur-sec", type=float, default=0.5, help="Minimum segment duration in seconds")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite output CSV if it exists")
 
     args = parser.parse_args()
 
     # Load model
     model, device = load_model_from_checkpoint(
-        args.checkpoint,
+        args.model_path,
         bidirectional=True,
         return_logits=False,
     )
@@ -260,6 +262,16 @@ def main():
     features = data["features"]  # shape: (num_frames, input_size)
     num_frames = features.shape[0]
     print(f"Loaded features: {args.features} (frames={num_frames}, dim={features.shape[1]})")
+
+    # Optional: normalize with trained scaler
+    if args.scaler_path is not None and os.path.exists(args.scaler_path):
+        try:
+            scaler = joblib.load(args.scaler_path)
+            # Expect features shape (num_frames, dim) → transform per-frame
+            features = scaler.transform(features)
+            print(f"Applied scaler from {args.scaler_path}")
+        except Exception as e:
+            print(f"WARNING: Failed to load/apply scaler {args.scaler_path}: {e}")
 
     # Windowed inference with averaging
     avg_probs = run_windowed_inference_average(
