@@ -16,7 +16,7 @@ class PoseExtractor:
     from video segments and saves it to compressed .npz files.
     """
     
-    def __init__(self, model_dir='models', model_path='yolov8n-pose.pt'):
+    def __init__(self, model_dir='models', model_path='yolov8s-pose.pt'):
         """
         Initialize the PoseExtractor with a YOLOv8-pose model.
         

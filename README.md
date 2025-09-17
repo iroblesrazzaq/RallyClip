@@ -14,13 +14,27 @@ This tool automates the process of finding and extracting points from a raw tenn
     
 ## Usage
 
-Run the main script from the command line, providing a path to your video and your trained models.
+Run the main script with your video. The model and scaler default to the seq_len=300 assets.
 
 ```bash
 python detect_points.py \
   --video /path/to/your/match.mp4 \
-  --model models/best_model.pth \
-  --scaler models/scaler.joblib \
+  --output-dir output
+```
+
+Optional overrides:
+
+```bash
+# Defaults:
+# --model defaults to checkpoints/seq_len300/best_model.pth
+# --scaler defaults to data/seq_len_300/scaler.joblib
+# --yolo-model defaults to yolov8s-pose.pt (resolved under models/)
+
+python detect_points.py \
+  --video /path/to/your/match.mp4 \
+  --model /custom/path/best_model.pth \
+  --scaler /custom/path/scaler.joblib \
+  --yolo-model yolov8n-pose.pt \
   --output-dir output
 ```
 
@@ -30,3 +44,4 @@ The script will generate two files in the specified output directory:
 
 - `match_segments.csv`: A CSV file with the start and end times of each detected point.
 - `match_segmented.mp4`: A new video file containing only the clips of the detected points.
+

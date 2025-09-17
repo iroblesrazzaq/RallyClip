@@ -25,9 +25,9 @@ from execute_segmentation import segment_video, load_intervals
 def main():
     parser = argparse.ArgumentParser(description="Tennis Point Inference & Segmentation Engine")
     parser.add_argument("--video", required=True, help="Path to the input video file.")
-    parser.add_argument("--model", required=True, help="Path to the trained LSTM model checkpoint (.pth).")
-    parser.add_argument("--scaler", required=True, help="Path to the trained StandardScaler (.joblib).")
-    parser.add_argument("--yolo-model", default="models/yolov8n-pose.pt", help="Path to the YOLOv8 pose model.")
+    parser.add_argument("--model", default="checkpoints/seq_len300/best_model.pth", help="Path to the trained LSTM model checkpoint (.pth).")
+    parser.add_argument("--scaler", default="data/seq_len_300/scaler.joblib", help="Path to the trained StandardScaler (.joblib).")
+    parser.add_argument("--yolo-model", default="yolov8s-pose.pt", help="YOLOv8 pose model filename in models/ (or full path).")
     parser.add_argument("--output-dir", default="output", help="Directory to save the output CSV and segmented video.")
     parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold for pose detection.")
     parser.add_argument("--fps", type=int, default=15, help="Target FPS for processing.")
