@@ -6,3 +6,5 @@ ultralytics>=8.0.0
 tqdm>=4.60.0
 av
 pandas
+Flask>=2.2
+Flask-Cors>=3.0
