@@ -53,3 +53,10 @@ August 27, 2025:
 - issue - players blocking lines in randomly selected frame -> incomplete baseline (mostly baseline suffers from this issues) - what to do?
     - can we sample a few frames and overlay all their candidate lines for this?
 Sept 11: MVP complete
+
+
+The point is to keep it local - web frontend for easier js gui development, but to make it free, we use the local machine. 
+
+My next steps are: 1. fully productionalizing - dockerize, test, etc, then publish. 
+2. improve model performance- increase annotated data, use data augmentation techniques, investigate other model architectures (lstm with attention), look into more sophisticating post processing steps (HMM or bayesian approach or even DL approach). 
+3. optimize performance - stepwise saving for pose extraction to reduce memory load of all npz frames, look into batched YOLO inference, later on maybe finetune yolov8nano model on large to optimize inference speed. maybe even later use tiling to get second player more consistently
