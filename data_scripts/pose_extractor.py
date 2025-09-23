@@ -54,7 +54,7 @@ class PoseExtractor:
             print(f"\n[PyAV Error] Failed to open or decode video: {e}")
             return
     
-    def extract_pose_data(self, video_path, confidence_threshold, start_time_seconds=0, duration_seconds=60, target_fps=15, annotations_csv=None):
+    def extract_pose_data(self, video_path, confidence_threshold, start_time_seconds=0, duration_seconds=60, target_fps=15, annotations_csv=None, progress_callback=None):
         """
         Extract raw pose data from a video segment and save to .npz file.
         
@@ -117,6 +117,7 @@ class PoseExtractor:
 
         # Main processing loop with a progress bar
         pbar = tqdm(frame_generator, total=total_frames, desc="Processing frames", unit="frame")
+        last_report_ts = -1.0  # throttle duplicate reports on same second
         for frame, current_timestamp in pbar:
             
             # Skip frames before our desired start time
@@ -179,6 +180,23 @@ class PoseExtractor:
             
             # Update the progress bar's postfix to show how many frames were processed
             pbar.set_postfix({"Processed": processed_frames_count})
+
+            # Report progress based on wall-clock timeline within requested segment
+            if progress_callback is not None and duration_seconds > 0:
+                # Clamp progress between 0 and 1 using timestamps
+                frac = (current_timestamp - start_time_seconds) / float(duration_seconds)
+                if frac < 0:
+                    frac = 0.0
+                if frac > 1:
+                    frac = 1.0
+                # Throttle to once per second boundary change to reduce overhead
+                current_sec_bucket = int((frac * duration_seconds) if duration_seconds > 0 else 0)
+                if current_sec_bucket != last_report_ts:
+                    last_report_ts = current_sec_bucket
+                    try:
+                        progress_callback(frac)
+                    except Exception:
+                        pass
 
         pbar.close()
 

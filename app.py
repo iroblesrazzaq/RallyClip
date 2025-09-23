@@ -38,6 +38,7 @@ from inference import (
     write_segments_csv,
 )
 from execute_segmentation import segment_video, load_intervals
+import av
 
 
 # --------------------------
@@ -124,13 +125,31 @@ def _run_pipeline(job_id: str, yolo_model_filename: str = "yolov8s-pose.pt", con
         _check_cancel(job)
         _set_step(job, "pose", "in_progress", 1)
         pose_extractor = PoseExtractor(model_path=yolo_model_filename)
+
+        # Determine actual video duration for accurate progress mapping
+        video_duration = 0.0
+        try:
+            with av.open(str(upload_path)) as container:
+                stream = container.streams.video[0]
+                if getattr(stream, "duration", None) and getattr(stream, "time_base", None):
+                    video_duration = float(stream.duration * stream.time_base)
+        except Exception:
+            video_duration = 0.0
+        if not video_duration or video_duration <= 0:
+            video_duration = 99999.0
+        def pose_progress(frac: float) -> None:
+            # Map 0..1 to 1..99 to avoid hitting 100 until completed
+            pct = int(1 + max(0.0, min(1.0, frac)) * 98)
+            _set_step(job, "pose", "in_progress", pct)
+
         raw_npz_path = pose_extractor.extract_pose_data(
             video_path=str(upload_path),
             confidence_threshold=float(conf_thresh),
             start_time_seconds=0,
-            duration_seconds=99999,
+            duration_seconds=video_duration,
             target_fps=15,
             annotations_csv=None,
+            progress_callback=pose_progress,
         )
         job["paths"]["raw_npz"] = raw_npz_path
         _set_step(job, "pose", "completed", 100)
@@ -140,6 +159,8 @@ def _run_pipeline(job_id: str, yolo_model_filename: str = "yolov8s-pose.pt", con
         _set_step(job, "preprocess", "in_progress", 1)
         preprocessor = DataPreprocessor(save_court_masks=False)
         preprocessed_npz = str(job_dir / "preprocessed.npz")
+        # Preprocess does not expose internal progress; set coarse milestones
+        _set_step(job, "preprocess", "in_progress", 10)
         ok = preprocessor.preprocess_single_video(raw_npz_path, str(upload_path), preprocessed_npz, overwrite=True)
         if not ok:
             raise RuntimeError("Preprocessing failed")
@@ -151,6 +172,7 @@ def _run_pipeline(job_id: str, yolo_model_filename: str = "yolov8s-pose.pt", con
         _set_step(job, "feature", "in_progress", 1)
         feature_engineer = FeatureEngineer()
         features_npz = str(job_dir / "features.npz")
+        _set_step(job, "feature", "in_progress", 10)
         ok = feature_engineer.create_features_from_preprocessed(preprocessed_npz, features_npz, overwrite=True)
         if not ok:
             raise RuntimeError("Feature engineering failed")
@@ -175,12 +197,19 @@ def _run_pipeline(job_id: str, yolo_model_filename: str = "yolov8s-pose.pt", con
         normalized_features = scaler.transform(feature_vectors)
 
         model, device = load_model_from_checkpoint(model_ckpt, return_logits=False)
+        # Inference can be long; update mid-way after computing avg_probs
+        def infer_progress(frac: float) -> None:
+            # Map to 1..95 before finalization
+            pct = int(1 + max(0.0, min(1.0, frac)) * 94)
+            _set_step(job, "inference", "in_progress", pct)
+
         avg_probs = run_windowed_inference_average(
-            model, device, normalized_features, sequence_length=300, overlap=150
+            model, device, normalized_features, sequence_length=300, overlap=150, progress_callback=infer_progress
         )
 
         import scipy.ndimage
 
+        _set_step(job, "inference", "in_progress", 60)
         smoothed_probs = scipy.ndimage.gaussian_filter1d(avg_probs, sigma=1.5)
         binary_pred = hysteresis_threshold(smoothed_probs, low=0.45, high=0.80, min_duration=int(0.5 * 15))
 
@@ -197,6 +226,8 @@ def _run_pipeline(job_id: str, yolo_model_filename: str = "yolov8s-pose.pt", con
         try:
             intervals = load_intervals(csv_path)
             if intervals:
+                # We don't have inner progress; set coarse estimates
+                _set_step(job, "output", "in_progress", 40)
                 segment_video(str(upload_path), intervals, video_out_path)
             else:
                 # No intervals → create an empty marker file to signal "no detections"

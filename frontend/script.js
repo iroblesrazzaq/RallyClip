@@ -7,6 +7,7 @@ class TennisTracker {
         
         this.initializeElements();
         this.bindEvents();
+        this.restoreJobIfAny();
     }
 
     initializeElements() {
@@ -193,6 +194,7 @@ class TennisTracker {
             // Upload file and start processing
             const jobId = await this.uploadFileAndStart();
             this.currentJobId = jobId;
+            try { localStorage.setItem('tennis_tracker_job_id', jobId); } catch (_) {}
             
             // Start progress monitoring
             this.startProgressMonitoring();
@@ -230,6 +232,25 @@ class TennisTracker {
                 this.stopProgressMonitoring();
             }
         }, 1000); // Update every second
+    }
+
+    async restoreJobIfAny() {
+        // On reload, try to restore an existing job
+        let storedId = null;
+        try { storedId = localStorage.getItem('tennis_tracker_job_id'); } catch (_) {}
+        if (!storedId) return;
+
+        this.currentJobId = storedId;
+        this.progressSection.style.display = 'block';
+        this.startBtn.disabled = true;
+        this.cancelBtn.disabled = false;
+        // We don't know selected file anymore; keep UI minimal
+        this.startProgressMonitoring();
+        try {
+            await this.updateProgress();
+        } catch (e) {
+            console.warn('Failed to restore job progress:', e);
+        }
     }
 
     async updateProgress() {
@@ -322,12 +343,14 @@ class TennisTracker {
         this.resultsSection.style.display = 'block';
         
         this.showSuccess('Analysis completed successfully!');
+        try { localStorage.removeItem('tennis_tracker_job_id'); } catch (_) {}
     }
 
     onAnalysisError(error) {
         this.stopProgressMonitoring();
         this.resetControls();
         this.showError(`Analysis failed: ${error}`);
+        try { localStorage.removeItem('tennis_tracker_job_id'); } catch (_) {}
     }
 
     onAnalysisCancelled() {
@@ -335,6 +358,7 @@ class TennisTracker {
         this.resetControls();
         this.resetProgress();
         this.showInfo('Analysis cancelled');
+        try { localStorage.removeItem('tennis_tracker_job_id'); } catch (_) {}
     }
 
     stopProgressMonitoring() {

@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from lstm_model_arch import TennisPointLSTM
 import scipy.ndimage
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Callable
 import joblib
 
 
@@ -159,6 +159,7 @@ def run_windowed_inference_average(
     features: np.ndarray,
     sequence_length: int,
     overlap: int,
+    progress_callback: Optional[Callable[[float], None]] = None,
 ) -> np.ndarray:
     """Run sliding-window inference and average overlapping predictions per frame."""
     num_frames = features.shape[0]
@@ -180,6 +181,12 @@ def run_windowed_inference_average(
 
         if seq_idx < 3 or seq_idx >= len(start_indices) - 3:
             print(f"  Seq {seq_idx}: frames {start}-{start + sequence_length - 1}")
+
+        if progress_callback is not None:
+            try:
+                progress_callback((seq_idx + 1) / float(len(start_indices)))
+            except Exception:
+                pass
 
     if np.any(counts == 0):
         zeros = int(np.sum(counts == 0))
