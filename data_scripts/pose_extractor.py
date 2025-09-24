@@ -67,7 +67,7 @@ class PoseExtractor:
         else:
             if profile == "mvp":
                 if self.device == "cpu":
-                    self.batch_size = 8
+                    self.batch_size = 1
                 else:
                     self.batch_size = 32
             else:
