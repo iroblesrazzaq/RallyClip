@@ -53,11 +53,11 @@ class PoseExtractor:
                 else:
                     self.device = "cpu"
             else:
-                # main profile: prefer best accelerator
-                if torch.cuda.is_available():
-                    self.device = "cuda"
-                elif torch.backends.mps.is_available():
+                # main profile: prefer MPS first for training data inference on macOS
+                if torch.backends.mps.is_available():
                     self.device = "mps"
+                elif torch.cuda.is_available():
+                    self.device = "cuda"
                 else:
                     self.device = "cpu"
         # Determine batch size with optional override via env POSE_BATCH_SIZE
@@ -65,7 +65,18 @@ class PoseExtractor:
         if env_bs.isdigit():
             self.batch_size = int(env_bs)
         else:
-            self.batch_size = 4 if self.device == "cpu" else 32
+            if profile == "mvp":
+                if self.device == "cpu":
+                    self.batch_size = 8
+                else:
+                    self.batch_size = 32
+            else:
+                if self.device == "mps":
+                    self.batch_size = 16
+                elif self.device == "cpu":
+                    self.batch_size = 4
+                else:
+                    self.batch_size = 32
         print(f"Using device: {self.device.upper()} | Batch size: {self.batch_size}")
         
         self.model_path = model_path
