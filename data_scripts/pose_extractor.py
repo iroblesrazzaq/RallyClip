@@ -8,6 +8,7 @@ import pandas as pd
 from ultralytics import YOLO
 from tqdm import tqdm
 import av
+import subprocess
 
 
 class PoseExtractor:
@@ -24,16 +25,56 @@ class PoseExtractor:
             model_path (str): Path to the YOLOv8-pose model file.
                          Defaults to 'yolov8s-pose.pt'
         """
-        # Try to use MPS if available, fallback to CPU
-        if torch.backends.mps.is_available():
-            self.device = "mps"
-            print(f"Using device: {self.device.upper()} (MPS available)")
+        # Profile-aware device policy (main|mvp)
+        # Determine profile: env override, else git branch, else default main
+        profile = os.environ.get("PIPELINE_PROFILE", "").strip().lower()
+        if not profile:
+            try:
+                git_branch = subprocess.run([
+                    "git", "rev-parse", "--abbrev-ref", "HEAD"
+                ], capture_output=True, text=True, check=True)
+                branch_name = git_branch.stdout.strip()
+                profile = "mvp" if branch_name == "mvp" else "main"
+            except Exception:
+                profile = "main"
+
+        # Auto-select device with optional override via env POSE_DEVICE
+        env_device = os.environ.get("POSE_DEVICE", "").strip().lower()
+        valid_devices = {"cpu", "cuda", "mps"}
+        if env_device in valid_devices:
+            self.device = env_device
         else:
-            self.device = "cpu"
-            print(f"Using device: {self.device.upper()} (MPS not available, using CPU)")
+            if profile == "mvp":
+                # CPU by default; upgrade to GPU (CUDA/MPS) if available
+                if torch.cuda.is_available():
+                    self.device = "cuda"
+                elif torch.backends.mps.is_available():
+                    self.device = "mps"
+                else:
+                    self.device = "cpu"
+            else:
+                # main profile: prefer best accelerator
+                if torch.cuda.is_available():
+                    self.device = "cuda"
+                elif torch.backends.mps.is_available():
+                    self.device = "mps"
+                else:
+                    self.device = "cpu"
+        # Determine batch size with optional override via env POSE_BATCH_SIZE
+        env_bs = os.environ.get("POSE_BATCH_SIZE", "").strip()
+        if env_bs.isdigit():
+            self.batch_size = int(env_bs)
+        else:
+            self.batch_size = 4 if self.device == "cpu" else 32
+        print(f"Using device: {self.device.upper()} | Batch size: {self.batch_size}")
         
         self.model_path = model_path
         self.model = YOLO(os.path.join(model_dir, self.model_path))
+        try:
+            # Move model to selected device if supported
+            self.model.to(self.device)
+        except Exception:
+            pass
         print(f"YOLOv8-pose model loaded successfully from: {model_path}")
 
     def frame_iterator_pyav(self, video_path):
@@ -115,9 +156,64 @@ class PoseExtractor:
         # Create the robust PyAV frame iterator
         frame_generator = self.frame_iterator_pyav(video_path)
 
+        # Prepare batching buffers
+        batch_frames = []
+        batch_indices = []
+
+        # Helper to run a pending batch and write results back in-place
+        def _flush_batch():
+            nonlocal batch_frames, batch_indices
+            if not batch_frames:
+                return
+            try:
+                results = self.model.predict(
+                    source=batch_frames,
+                    verbose=False,
+                    device=self.device,
+                    conf=confidence_threshold,
+                    imgsz=1920,
+                    batch=self.batch_size
+                )
+            except TypeError:
+                # Fallback if 'batch' arg not supported in this Ultralytics version
+                results = self.model.predict(
+                    source=batch_frames,
+                    verbose=False,
+                    device=self.device,
+                    conf=confidence_threshold,
+                    imgsz=1920
+                )
+            # Map results back to their respective indices
+            for i, res in enumerate(results):
+                idx = batch_indices[i]
+                frame_data = {}
+                if res is not None and getattr(res, 'boxes', None) is not None:
+                    try:
+                        frame_data['boxes'] = res.boxes.xyxy.detach().cpu().numpy()
+                    except Exception:
+                        frame_data['boxes'] = np.array([])
+                    try:
+                        frame_data['keypoints'] = res.keypoints.xy.detach().cpu().numpy()
+                        frame_data['conf'] = res.keypoints.conf.detach().cpu().numpy()
+                    except Exception:
+                        frame_data['keypoints'] = np.array([])
+                        frame_data['conf'] = np.array([])
+                else:
+                    frame_data['boxes'] = np.array([])
+                    frame_data['keypoints'] = np.array([])
+                    frame_data['conf'] = np.array([])
+                # Preserve annotation_status already set in placeholder
+                frame_data['annotation_status'] = all_frames_data[idx].get('annotation_status', 0)
+                all_frames_data[idx] = frame_data
+            # Reset buffers
+            batch_frames = []
+            batch_indices = []
+
         # Main processing loop with a progress bar
         pbar = tqdm(frame_generator, total=total_frames, desc="Processing frames", unit="frame")
         for frame, current_timestamp in pbar:
+            appended_this_iter = False
+            annotation_status_current = -100
             
             # Skip frames before our desired start time
             if current_timestamp < start_time_seconds:
@@ -133,34 +229,32 @@ class PoseExtractor:
                 
                 # This frame is SELECTED for processing
                 processed_frames_count += 1
-                
-                # --- [EXISTING LOGIC] ---
-                # Run YOLOv8-pose model on the frame
-                results = self.model(frame, verbose=False, device=self.device, conf=confidence_threshold, imgsz=1920)
-                
-                # --- [EXISTING LOGIC] ---
-                # Extract raw numerical data (boxes, keypoints, confidences)
-                frame_data = {}
-                if len(results) > 0 and results[0].boxes is not None:
-                    frame_data['boxes'] = results[0].boxes.xyxy.cpu().numpy()
-                    frame_data['keypoints'] = results[0].keypoints.xy.cpu().numpy()
-                    frame_data['conf'] = results[0].keypoints.conf.cpu().numpy()
-                else:
-                    frame_data['boxes'] = np.array([])
-                    frame_data['keypoints'] = np.array([])
-                    frame_data['conf'] = np.array([])
-                
-                # --- [NEW EFFICIENT LOGIC] ---
-                annotation_status = 0
+
+                # Compute annotation status
+                annotation_status_current = 0
                 if num_annotations > 0:
                     # Advance past intervals that ended before this timestamp
                     while (annotation_index < num_annotations - 1) and (current_timestamp > ends[annotation_index] + EPS):
                         annotation_index += 1
                     # Check if the timestamp lies within the current interval (inclusive with epsilon)
                     if (starts[annotation_index] - EPS) <= current_timestamp <= (ends[annotation_index] + EPS):
-                        annotation_status = 1
-                frame_data['annotation_status'] = annotation_status
+                        annotation_status_current = 1
                 
+                # Append placeholder and queue frame for batched inference
+                all_frames_data.append({
+                    'boxes': np.array([]),
+                    'keypoints': np.array([]),
+                    'conf': np.array([]),
+                    'annotation_status': annotation_status_current
+                })
+                batch_frames.append(frame)
+                batch_indices.append(len(all_frames_data) - 1)
+                appended_this_iter = True
+
+                # Flush if batch is full
+                if len(batch_frames) >= self.batch_size:
+                    _flush_batch()
+
                 # --- CRITICAL STEP: Update the pacemaker for the *next* beat ---
                 next_target_timestamp += (1.0 / target_fps)
 
@@ -175,10 +269,14 @@ class PoseExtractor:
                 }
 
             # Add the result (either processed or skipped) to our final list
-            all_frames_data.append(frame_data)
+            if not appended_this_iter:
+                all_frames_data.append(frame_data)
             
             # Update the progress bar's postfix to show how many frames were processed
             pbar.set_postfix({"Processed": processed_frames_count})
+
+        # Flush any remaining frames in the last partial batch
+        _flush_batch()
 
         pbar.close()
 
