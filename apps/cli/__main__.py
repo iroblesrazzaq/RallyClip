@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
-import os
-import sys
+from pathlib import Path
 
 from tennis_tracker.extraction.pose_extractor import PoseExtractor
 from tennis_tracker.preprocessing.data_preprocessor import DataPreprocessor
@@ -21,14 +20,43 @@ import scipy.ndimage
 
 
 def run(args: argparse.Namespace) -> int:
-    os.makedirs(args.output_dir, exist_ok=True)
+    video_path = Path(args.video).expanduser().resolve()
+    if not video_path.is_file():
+        print(f"Error: Video file not found at '{video_path}'")
+        return 1
+
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    model_path = Path(args.model_path).expanduser().resolve()
+    if not model_path.is_file():
+        print(f"Error: Model checkpoint not found at '{model_path}'")
+        return 1
+
+    scaler_path = Path(args.scaler_path).expanduser().resolve()
+    if not scaler_path.is_file():
+        print(f"Error: Scaler file not found at '{scaler_path}'")
+        return 1
+
+    # yolo_model may be a filename inside models/ or an absolute path
+    yolo_model_path = Path(args.yolo_model).expanduser()
+    yolo_model = str(yolo_model_path)
+
+    raw_npz = None
+    if args.raw_npz:
+        raw_npz_path = Path(args.raw_npz).expanduser().resolve()
+        if not raw_npz_path.is_file():
+            print(f"Error: Raw pose NPZ not found at '{raw_npz_path}'")
+            return 1
+        raw_npz = str(raw_npz_path)
+
     # Step 1: Pose extraction (skip if exists and not overwrite)
-    pose_extractor = PoseExtractor(model_path=args.yolo_model)
-    raw_npz = args.raw_npz or None
+    pose_extractor = PoseExtractor(model_path=yolo_model)
+    raw_npz = raw_npz or None
     if raw_npz is None:
         # create default raw path
         raw_npz = pose_extractor.extract_pose_data(
-            video_path=args.video,
+            video_path=str(video_path),
             confidence_threshold=float(args.conf),
             start_time_seconds=int(args.start_time),
             duration_seconds=int(args.duration),
@@ -36,19 +64,19 @@ def run(args: argparse.Namespace) -> int:
             annotations_csv=None,
         )
     # Step 2: Preprocess
-    preprocessed_npz = os.path.join(args.output_dir, "preprocessed.npz")
+    preprocessed_npz = output_dir / "preprocessed.npz"
     pre = DataPreprocessor(save_court_masks=False)
-    pre.preprocess_single_video(raw_npz, args.video, preprocessed_npz, overwrite=bool(args.overwrite))
+    pre.preprocess_single_video(raw_npz, str(video_path), str(preprocessed_npz), overwrite=bool(args.overwrite))
     # Step 3: Features
-    features_npz = os.path.join(args.output_dir, "features.npz")
+    features_npz = output_dir / "features.npz"
     fe = FeatureEngineer()
-    fe.create_features_from_preprocessed(preprocessed_npz, features_npz, overwrite=bool(args.overwrite))
+    fe.create_features_from_preprocessed(str(preprocessed_npz), str(features_npz), overwrite=bool(args.overwrite))
     # Step 4: Inference
-    data = np.load(features_npz)
+    data = np.load(str(features_npz))
     features = data["features"]
-    scaler = joblib.load(args.scaler_path)
+    scaler = joblib.load(str(scaler_path))
     features = scaler.transform(features)
-    model, device = load_model_from_checkpoint(args.model_path, return_logits=False)
+    model, device = load_model_from_checkpoint(str(model_path), return_logits=False)
     avg_probs = run_windowed_inference_average(model, device, features, sequence_length=int(args.seq_len), overlap=int(args.overlap))
     smoothed_probs = scipy.ndimage.gaussian_filter1d(avg_probs.astype(np.float32), sigma=float(args.sigma))
     min_duration_frames = int(round(max(0.0, float(args.min_dur_sec)) * float(args.fps)))
@@ -56,18 +84,18 @@ def run(args: argparse.Namespace) -> int:
     segments = extract_segments_from_binary(binary_pred)
     # Optionally write CSV annotations
     if args.csv:
-        csv_out = os.path.join(args.output_dir, "segments.csv")
-        write_segments_csv(segments, csv_out, fps=float(args.fps), overwrite=bool(args.overwrite))
+        csv_out = output_dir / "segments.csv"
+        write_segments_csv(segments, str(csv_out), fps=float(args.fps), overwrite=bool(args.overwrite))
     # Step 5: Segment video (optional)
     if args.segment_video:
-        video_out = os.path.join(args.output_dir, "segmented.mp4")
+        video_out = output_dir / "segmented.mp4"
         # Convert frame index segments to second-based intervals
         intervals_sec = [
             (start_idx / float(args.fps), end_idx / float(args.fps))
             for (start_idx, end_idx) in segments
         ]
         if intervals_sec:
-            segment_video(args.video, intervals_sec, video_out)
+            segment_video(str(video_path), intervals_sec, str(video_out))
     print("Done.")
     return 0
 
