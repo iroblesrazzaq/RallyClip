@@ -18,9 +18,10 @@ from tennis_tracker.preprocessing.data_preprocessor import DataPreprocessor
 from tennis_tracker.segmentation.segment import segment_video
 
 
-DEFAULT_MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
-DEFAULT_CHECKPOINT = Path(__file__).resolve().parents[2] / "checkpoints" / "seq_len300" / "best_model.pth"
-DEFAULT_SCALER = Path(__file__).resolve().parents[2] / "data" / "seq_len_300" / "scaler.joblib"
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_MODELS_DIR = PROJECT_ROOT / "models"
+DEFAULT_CHECKPOINT = PROJECT_ROOT / "checkpoints" / "seq_len300" / "best_model.pth"
+DEFAULT_SCALER = PROJECT_ROOT / "data" / "seq_len_300" / "scaler.joblib"
 
 
 def ensure_asset(path: Path, description: str) -> Path:
@@ -89,10 +90,12 @@ def run(args: argparse.Namespace) -> int:
     )
     segments = extract_segments_from_binary(binary_pred)
 
+    # Write CSV only if requested (default: off)
     if args.csv:
         csv_out = output_dir / "segments.csv"
         write_segments_csv(segments, str(csv_out), fps=float(args.fps), overwrite=bool(args.overwrite))
 
+    # Segment video by default; allow opt-out via flag
     if args.segment_video:
         video_out = output_dir / "segmented.mp4"
         intervals_sec = [
@@ -126,8 +129,10 @@ def main() -> int:
     p.add_argument("--duration", type=int, default=999999)
     p.add_argument("--overwrite", action="store_true", help="Overwrite outputs if they exist")
     p.add_argument("--raw-npz", default=None, help="Optional: point to existing raw pose npz to skip extraction")
-    p.add_argument("--segment-video", action="store_true", help="Also write segmented MP4")
-    p.add_argument("--csv", action="store_true", help="Also write segments CSV annotations to output dir")
+    # Defaults: segment on, csv off
+    p.add_argument("--segment-video", dest="segment_video", action="store_true", default=True, help="Write segmented MP4 (default: on)")
+    p.add_argument("--no-segment-video", dest="segment_video", action="store_false", help="Disable segmented MP4 output")
+    p.add_argument("--csv", action="store_true", default=False, help="Also write segments CSV annotations (default: off)")
     args = p.parse_args()
     return run(args)
 
