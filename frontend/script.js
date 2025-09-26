@@ -401,7 +401,7 @@ class DeepMatch {
             const response = await fetch(`/api/download/video/${this.currentJobId}`);
             if (response.ok) {
                 const blob = await response.blob();
-                this.downloadBlob(blob, 'tennis_analysis_video.mp4');
+                this.downloadBlob(blob, 'deepmatch_analysis_video.mp4');
             } else {
                 throw new Error('Failed to download video');
             }
@@ -418,7 +418,7 @@ class DeepMatch {
             const response = await fetch(`/api/download/csv/${this.currentJobId}`);
             if (response.ok) {
                 const blob = await response.blob();
-                this.downloadBlob(blob, 'tennis_analysis_data.csv');
+                this.downloadBlob(blob, 'deepmatch_analysis_data.csv');
             } else {
                 throw new Error('Failed to download CSV');
             }
