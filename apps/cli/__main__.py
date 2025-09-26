@@ -115,7 +115,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Tennis Tracker end-to-end CLI")
+    p = argparse.ArgumentParser(description="DeepMatch end-to-end CLI")
     p.add_argument("--video", required=True, help="Path to input MP4 video")
     p.add_argument("--output-dir", required=True, help="Directory to store outputs")
     p.add_argument("--model-path", required=True, help="Path to LSTM .pth file")

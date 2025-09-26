@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tennis-tracker"
+name = "deepmatch"
 version = "0.1.0"
-description = "Tennis point detection pipeline: CLI and GUI"
+description = "AI-powered tennis match analysis: CLI and GUI"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -29,7 +29,7 @@ train = [
 ]
 
 [project.scripts]
-tennis-tracker = "tennis_tracker.cli:main"
+deepmatch = "tennis_tracker.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

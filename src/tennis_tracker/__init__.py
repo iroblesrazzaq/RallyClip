@@ -1,13 +1,6 @@
-"""
-Tennis Tracker core library.
+"""DeepMatch core library.
 
-Subpackages:
-- extraction: Pose extraction utilities
-- preprocessing: Court filtering and player assignment
-- features: Feature engineering from preprocessed data
-- infer: Model loading and inference helpers
-- segmentation: Video segmentation utilities
-- pipeline: End-to-end orchestration helpers
+This package provides the core functionality for tennis point detection and analysis.
 """
 
 __all__ = [

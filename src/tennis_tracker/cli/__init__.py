@@ -1,4 +1,4 @@
-"""Command-line interface entry points for tennis_tracker."""
+"""Command-line interface entry points for DeepMatch."""
 
 from .main import main, run
 

@@ -1,6 +1,6 @@
-# Tennis Tracker Frontend
+# DeepMatch Frontend
 
-A modern, responsive web interface for the Tennis Tracker AI video analysis system.
+A modern, responsive web interface for the DeepMatch AI video analysis system.
 
 ## Features
 
@@ -98,10 +98,10 @@ GET /api/download/csv/{job_id}      # Returns CSV file
 - ✅ Safari 12+
 - ✅ Edge 79+
 
-## Development Notes
+### Development Notes
 
 ### Key JavaScript Classes
-- `TennisTracker`: Main application class handling all functionality
+- `DeepMatch`: Main application class handling all functionality
 - File handling with drag/drop support
 - Progress monitoring with automatic updates
 - Download management with blob handling

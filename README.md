@@ -1,4 +1,4 @@
-# Tennis Point Detector MVP
+# DeepMatch Tennis Point Detector
 
 This tool automates the process of finding and extracting points from a raw tennis match video.
 

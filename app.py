@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
 """
-Tennis Tracker Backend API
+DeepMatch Backend API
 
 Endpoints consumed by the frontend to run the pipeline and fetch progress/results.
-
-API:
-- POST   /api/upload-and-start           → Upload a video and start a background job
-- GET    /api/progress/<job_id>          → Get per-step progress and overall job status
-- POST   /api/cancel/<job_id>            → Request cancellation of a running job
-- GET    /api/download/video/<job_id>    → Download the segmented MP4
-- GET    /api/download/csv/<job_id>      → Download the segments CSV
-
-The pipeline mirrors the steps implemented in detect_points.py to expose per-step progress.
 """
 
 from __future__ import annotations

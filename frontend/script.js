@@ -1,4 +1,4 @@
-class TennisTracker {
+class DeepMatch {
     constructor() {
         this.selectedFile = null;
         this.isProcessing = false;
@@ -194,7 +194,7 @@ class TennisTracker {
             // Upload file and start processing
             const jobId = await this.uploadFileAndStart();
             this.currentJobId = jobId;
-            try { localStorage.setItem('tennis_tracker_job_id', jobId); } catch (_) {}
+            try { localStorage.setItem('deepmatch_job_id', jobId); } catch (_) {}
             
             // Start progress monitoring
             this.startProgressMonitoring();
@@ -237,7 +237,7 @@ class TennisTracker {
     async restoreJobIfAny() {
         // On reload, try to restore an existing job
         let storedId = null;
-        try { storedId = localStorage.getItem('tennis_tracker_job_id'); } catch (_) {}
+        try { storedId = localStorage.getItem('deepmatch_job_id'); } catch (_) {}
         if (!storedId) return;
 
         this.currentJobId = storedId;
@@ -343,14 +343,14 @@ class TennisTracker {
         this.resultsSection.style.display = 'block';
         
         this.showSuccess('Analysis completed successfully!');
-        try { localStorage.removeItem('tennis_tracker_job_id'); } catch (_) {}
+        try { localStorage.removeItem('deepmatch_job_id'); } catch (_) {}
     }
 
     onAnalysisError(error) {
         this.stopProgressMonitoring();
         this.resetControls();
         this.showError(`Analysis failed: ${error}`);
-        try { localStorage.removeItem('tennis_tracker_job_id'); } catch (_) {}
+        try { localStorage.removeItem('deepmatch_job_id'); } catch (_) {}
     }
 
     onAnalysisCancelled() {
@@ -358,7 +358,7 @@ class TennisTracker {
         this.resetControls();
         this.resetProgress();
         this.showInfo('Analysis cancelled');
-        try { localStorage.removeItem('tennis_tracker_job_id'); } catch (_) {}
+        try { localStorage.removeItem('deepmatch_job_id'); } catch (_) {}
     }
 
     stopProgressMonitoring() {
@@ -508,5 +508,5 @@ class TennisTracker {
 
 // Initialize the app when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    new TennisTracker();
+    new DeepMatch();
 });

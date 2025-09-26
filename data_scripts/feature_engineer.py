@@ -2,8 +2,7 @@
 """
 Tennis Feature Engineer
 
-This module contains the FeatureEngineer class that handles
-feature vector creation from preprocessed tennis pose data.
+This module provides feature vector creation from preprocessed tennis pose data.
 """
 
 import numpy as np

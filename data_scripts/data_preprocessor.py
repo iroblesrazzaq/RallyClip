@@ -2,8 +2,8 @@
 """
 Tennis Data Preprocessor
 
-This module contains the DataPreprocessor class that handles
-court filtering and player assignment in a single, cohesive class.
+This script takes raw pose data and preprocesses it by filtering out
+detections outside the court and assigning near/far player labels.
 """
 
 import numpy as np

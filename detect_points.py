@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tennis Point Inference & Segmentation Engine MVP
+DeepMatch Tennis Point Inference & Segmentation Engine
 
 This script orchestrates the entire inference pipeline, from a raw video
 to a final segmented video showing only the points.
@@ -24,7 +24,7 @@ from execute_segmentation import segment_video, load_intervals
 
 def main():
 
-    parser = argparse.ArgumentParser(description="Tennis Point Inference & Segmentation Engine")
+    parser = argparse.ArgumentParser(description="DeepMatch Tennis Point Inference & Segmentation Engine")
     parser.add_argument("--video", required=True, help="Path to the input video file.")
     parser.add_argument("--model", default="checkpoints/seq_len300/best_model.pth", help="Path to the trained LSTM model checkpoint (.pth).")
     parser.add_argument("--scaler", default="data/seq_len_300/scaler.joblib", help="Path to the trained StandardScaler (.joblib).")
