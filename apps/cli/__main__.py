@@ -17,6 +17,7 @@ from tennis_tracker.segmentation.segment import segment_video
 import numpy as np
 import joblib
 import scipy.ndimage
+import tempfile
 
 
 def run(args: argparse.Namespace) -> int:
@@ -63,12 +64,19 @@ def run(args: argparse.Namespace) -> int:
             target_fps=int(args.fps),
             annotations_csv=None,
         )
-    # Step 2: Preprocess
-    preprocessed_npz = output_dir / "preprocessed.npz"
+    # Steps 2-3: Preprocess and Features
+    if getattr(args, "save_intermediates", False):
+        preprocessed_npz = output_dir / "preprocessed.npz"
+        features_npz = output_dir / "features.npz"
+        temp_ctx = None
+    else:
+        temp_ctx = tempfile.TemporaryDirectory()
+        temp_dir = Path(temp_ctx.name)
+        preprocessed_npz = temp_dir / "preprocessed.npz"
+        features_npz = temp_dir / "features.npz"
+
     pre = DataPreprocessor(save_court_masks=False)
     pre.preprocess_single_video(raw_npz, str(video_path), str(preprocessed_npz), overwrite=bool(args.overwrite))
-    # Step 3: Features
-    features_npz = output_dir / "features.npz"
     fe = FeatureEngineer()
     fe.create_features_from_preprocessed(str(preprocessed_npz), str(features_npz), overwrite=bool(args.overwrite))
     # Step 4: Inference
@@ -96,6 +104,12 @@ def run(args: argparse.Namespace) -> int:
         ]
         if intervals_sec:
             segment_video(str(video_path), intervals_sec, str(video_out))
+    # Cleanup temp intermediates if used
+    if 'temp_ctx' in locals() and temp_ctx is not None:
+        try:
+            temp_ctx.cleanup()
+        except Exception:
+            pass
     print("Done.")
     return 0
 
@@ -119,8 +133,10 @@ def main() -> int:
     p.add_argument("--duration", type=int, default=999999)
     p.add_argument("--overwrite", action="store_true", help="Overwrite outputs if they exist")
     p.add_argument("--raw-npz", default=None, help="Optional: point to existing raw pose npz to skip extraction")
-    p.add_argument("--segment-video", action="store_true", help="Also write segmented MP4")
+    p.add_argument("--segment-video", dest="segment_video", action="store_true", default=True, help="Write segmented MP4 (default: on)")
+    p.add_argument("--no-segment-video", dest="segment_video", action="store_false", help="Disable segmented MP4 output")
     p.add_argument("--csv", action="store_true", help="Also write segments CSV annotations to output dir")
+    p.add_argument("--save-intermediates", action="store_true", default=False, help="Persist preprocessed/features npz files (default: off)")
     args = p.parse_args()
     return run(args)
 
