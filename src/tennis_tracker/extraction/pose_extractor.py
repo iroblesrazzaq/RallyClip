@@ -16,7 +16,7 @@ class PoseExtractor:
     and saves compressed npz artifacts. Designed for reuse by CLI and GUI.
     """
 
-    def __init__(self, model_dir: str = "models", model_path: str = "yolov8n-pose.pt") -> None:
+    def __init__(self, model_dir: Optional[str] = None, model_path: str = "yolov8s-pose.pt") -> None:
         profile = os.environ.get("PIPELINE_PROFILE", "").strip().lower()
         if not profile:
             try:
@@ -61,7 +61,14 @@ class PoseExtractor:
                     self.batch_size = 32
 
         self.model_path = model_path
-        self.model = YOLO(os.path.join(model_dir, self.model_path))
+        # Prefer local file if model_dir provided and file exists; otherwise let
+        # Ultralytics handle download from model name (e.g., "yolov8s-pose.pt").
+        yolo_arg = self.model_path
+        if model_dir:
+            candidate = os.path.join(model_dir, self.model_path)
+            if os.path.exists(candidate):
+                yolo_arg = candidate
+        self.model = YOLO(yolo_arg)
         try:
             self.model.to(self.device)
         except Exception:

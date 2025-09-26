@@ -15,5 +15,6 @@ src/tennis_tracker/infer/__init__.py
 src/tennis_tracker/infer/inference.py
 src/tennis_tracker/infer/model.py
 src/tennis_tracker/preprocessing/court_detector.py
+src/tennis_tracker/preprocessing/court_detector_impl.py
 src/tennis_tracker/preprocessing/data_preprocessor.py
 src/tennis_tracker/segmentation/segment.py

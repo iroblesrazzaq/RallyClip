@@ -18,6 +18,18 @@ from tennis_tracker.preprocessing.data_preprocessor import DataPreprocessor
 from tennis_tracker.segmentation.segment import segment_video
 
 
+DEFAULT_MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
+DEFAULT_CHECKPOINT = Path(__file__).resolve().parents[2] / "checkpoints" / "seq_len300" / "best_model.pth"
+DEFAULT_SCALER = Path(__file__).resolve().parents[2] / "data" / "seq_len_300" / "scaler.joblib"
+
+
+def ensure_asset(path: Path, description: str) -> Path:
+    p = path.expanduser().resolve()
+    if not p.exists():
+        raise FileNotFoundError(f"Required {description} not found at '{p}'.")
+    return p
+
+
 def run(args: argparse.Namespace) -> int:
     video_path = Path(args.video).expanduser().resolve()
     if not video_path.is_file():
@@ -27,17 +39,12 @@ def run(args: argparse.Namespace) -> int:
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    model_path = Path(args.model_path).expanduser().resolve()
-    if not model_path.is_file():
-        print(f"Error: Model checkpoint not found at '{model_path}'")
-        return 1
+    # Enforce 300-seq model assets; either provided or defaults must exist
+    model_path = ensure_asset(Path(args.model_path) if args.model_path else DEFAULT_CHECKPOINT, "LSTM checkpoint (seq_len 300)")
+    scaler_path = ensure_asset(Path(args.scaler_path) if args.scaler_path else DEFAULT_SCALER, "StandardScaler for seq_len 300")
 
-    scaler_path = Path(args.scaler_path).expanduser().resolve()
-    if not scaler_path.is_file():
-        print(f"Error: Scaler file not found at '{scaler_path}'")
-        return 1
-
-    yolo_model = str(Path(args.yolo_model).expanduser())
+    # Use small YOLO v8 pose by default; ultralytics auto-downloads if missing
+    yolo_model = str(Path(args.yolo_model).expanduser()) if args.yolo_model else "yolov8s-pose.pt"
 
     raw_npz = None
     if args.raw_npz:
@@ -47,7 +54,7 @@ def run(args: argparse.Namespace) -> int:
             return 1
         raw_npz = str(raw_npz_path)
 
-    pose_extractor = PoseExtractor(model_path=yolo_model)
+    pose_extractor = PoseExtractor(model_dir=str(DEFAULT_MODELS_DIR), model_path=yolo_model)
     raw_npz = raw_npz or None
     if raw_npz is None:
         raw_npz = pose_extractor.extract_pose_data(
@@ -103,9 +110,10 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Tennis Tracker end-to-end CLI")
     p.add_argument("--video", required=True, help="Path to input MP4 video")
     p.add_argument("--output-dir", required=True, help="Directory to store outputs")
-    p.add_argument("--model-path", required=True, help="Path to LSTM .pth file")
-    p.add_argument("--scaler-path", required=True, help="Path to StandardScaler .joblib")
-    p.add_argument("--yolo-model", default="yolov8s-pose.pt", help="YOLO pose weights file name in models/")
+    # Keep optional but enforce existence via defaults above (seq_len 300 canonical)
+    p.add_argument("--model-path", help="Path to LSTM .pth (seq_len 300). Defaults to repo checkpoints.")
+    p.add_argument("--scaler-path", help="Path to StandardScaler .joblib (seq_len 300). Defaults to repo data.")
+    p.add_argument("--yolo-model", help="YOLO pose weights (e.g., yolov8s-pose.pt). Defaults to small and auto-download.")
     p.add_argument("--fps", type=float, default=15.0)
     p.add_argument("--seq-len", type=int, default=300)
     p.add_argument("--overlap", type=int, default=150)
