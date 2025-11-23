@@ -107,3 +107,7 @@ src/*.egg-info/
 data/
 sanity_check_clips/
 sanity_check_output.mp4
+
+# include LSTM weights and scaler
+!lstm_300_v0.1.pth
+!scaler_300_v0.1.joblibt

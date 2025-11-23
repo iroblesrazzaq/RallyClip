@@ -18,6 +18,9 @@ class PoseExtractor:
     """
 
     def __init__(self, model_dir: Optional[str] = None, model_path: str = "yolov8s-pose.pt") -> None:
+        # Set early so downstream checks can use it
+        self.model_path = model_path
+
         profile = os.environ.get("PIPELINE_PROFILE", "").strip().lower()
         if not profile:
             try:
@@ -69,7 +72,6 @@ class PoseExtractor:
                 else:
                     self.batch_size = 1
 
-        self.model_path = model_path
         # Prefer local file if model_dir provided and file exists; otherwise let
         # Ultralytics handle download from model name (e.g., "yolov8s-pose.pt").
         yolo_arg = self.model_path
@@ -238,5 +240,4 @@ class PoseExtractor:
         output_path = os.path.join(output_dir, output_filename)
         np.savez_compressed(output_path, frames=all_frames_data)
         return output_path
-
 

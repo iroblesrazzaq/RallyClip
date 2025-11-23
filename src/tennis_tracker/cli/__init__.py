@@ -1,6 +1,5 @@
 """Command-line interface entry points for DeepMatch."""
 
-from .main import main, run
+from .main import main
 
-__all__ = ["main", "run"]
-
+__all__ = ["main"]

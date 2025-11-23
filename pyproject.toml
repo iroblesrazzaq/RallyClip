@@ -19,6 +19,7 @@ dependencies = [
   "joblib",
   "Flask>=2.2",
   "Flask-Cors>=3.0",
+  "tomli>=2.0.1",
 ]
 
 [project.optional-dependencies]
@@ -36,5 +37,4 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
 
