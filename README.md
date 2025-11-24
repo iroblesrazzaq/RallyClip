@@ -22,6 +22,9 @@ rallyvision --video "raw_videos/your_match.mp4"
 - Segmented video: `output_videos/<video_stem>_segmented.mp4`
 - CSV (if enabled): `output_csvs/<video_stem>_segments.csv` or the video’s directory
 
+## Input video quality
+- Recommended source resolution: at least 720p; 1080p works best and matches the pose model’s training data. Lower resolutions tend to degrade keypoint quality and downstream segmentation accuracy.
+
 ## Common CLI flags
 - `--video PATH` (required unless in config)  
 - `--output-dir PATH` (default: `./output_videos`)
