@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "deepmatch"
 version = "0.1.0"
-description = "AI-powered tennis match analysis: CLI and GUI"
+description = "AI-powered tennis match analysis CLI"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
@@ -17,8 +17,6 @@ dependencies = [
   "scipy",
   "tqdm",
   "joblib",
-  "Flask>=2.2",
-  "Flask-Cors>=3.0",
   "tomli>=2.0.1",
 ]
 

@@ -1,48 +1,42 @@
 # DeepMatch Tennis Point Detector
 
-This tool automates the process of finding and extracting points from a raw tennis match video.
+CLI tool to detect tennis points from a raw match video and output a segmented video + CSV.
 
-## Setup
-
-1.  **Install Dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-2.  **Add Model Assets:**
-    Place your trained model files (`best_model.pth`, `scaler.joblib`, and `yolov8n-pose.pt`) into the `models/` directory. See `models/README.md` for details.
-    
-## Usage
-
-Run the main script with your video. The model and scaler default to the seq_len=300 assets.
+## Install
 
 ```bash
-python detect_points.py \
-  --video /path/to/your/match.mp4 \
-  --output-dir output_videos
+pip install .
 ```
 
-Optional overrides:
+## Configure
+
+Edit `config.toml` (or point `--config` to your own):
+
+```toml
+[run]
+video_path = "raw_videos/your_match.mp4"
+output_dir = "output_videos"
+csv_output_dir = "output_csvs"
+yolo_model = "nano"      # nano | small | medium | large
+yolo_device = "mps"      # cpu | cuda | mps
+write_csv = true
+segment_video = true
+```
+
+Ensure `models/` contains `lstm_300_v0.1.pth` and `scaler_300_v0.1.joblib` (see `models/README.md`). YOLO weights auto-download.
+
+## Run
 
 ```bash
-# Defaults:
-# --model defaults to checkpoints/seq_len300/best_model.pth
-# --scaler defaults to data/seq_len_300/scaler.joblib
-# --yolo-model defaults to yolov8s-pose.pt (resolved under models/)
-# --output-dir defaults to output_videos
-
-python detect_points.py \
-  --video /path/to/your/match.mp4 \
-  --model /custom/path/best_model.pth \
-  --scaler /custom/path/scaler.joblib \
-  --yolo-model yolov8s-pose.pt \
-  --output-dir output_videos
+deepmatch --config config.toml
 ```
 
-## Outputs
+Or override inline:
 
-The script will generate two files in the specified output directory:
+```bash
+deepmatch --video raw_videos/your_match.mp4 --output-dir output_videos --yolo-size nano --yolo-device mps
+```
 
-- `match_segments.csv`: A CSV file with the start and end times of each detected point.
-- `match_segmented.mp4`: A new video file containing only the clips of the detected points.
-
+Outputs:
+- `<video_stem>_segments.csv` in `csv_output_dir`
+- `<video_stem>_segmented.mp4` in `output_dir`
