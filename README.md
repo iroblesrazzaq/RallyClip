@@ -1,6 +1,6 @@
 # RallyVision Tennis Point Detector
 
-CLI tool that extracts playable points from a tennis match video and outputs a segmented video (and optional CSV).
+CLI and GUI tool that extracts points from full tennis match video and outputs a segmented video (and optional CSV).
 
 ## Prereqs
 - Python 3.9–3.11
