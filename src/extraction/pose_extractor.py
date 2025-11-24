@@ -10,6 +10,11 @@ from ultralytics.utils import SETTINGS
 import torch
 from tqdm import tqdm
 import logging
+import os
+
+
+class PoseExtractionCancelled(Exception):
+    """Raised when upstream caller requests pose extraction cancellation."""
 
 
 class PoseExtractor:
@@ -74,22 +79,19 @@ class PoseExtractor:
                 else:
                     self.batch_size = 1
 
-        # Prefer local file if model_dir provided; otherwise let Ultralytics download.
-        model_filename = os.path.basename(self.model_path)
+        # Prefer local file if model_dir provided and file exists; otherwise let
+        # Ultralytics handle download from model name (e.g., "yolov8s-pose.pt").
         yolo_arg = self.model_path
         if model_dir:
             os.makedirs(model_dir, exist_ok=True)
-            target_path = os.path.abspath(os.path.join(model_dir, model_filename))
             # Direct ultralytics downloads into the provided models directory
             try:
                 SETTINGS["weights_dir"] = os.path.abspath(model_dir)
             except Exception:
                 pass
-            if os.path.exists(target_path):
-                yolo_arg = target_path
-            else:
-                # Ask YOLO to download directly to the target path inside models/
-                yolo_arg = target_path
+            candidate = os.path.join(model_dir, self.model_path)
+            if os.path.exists(candidate):
+                yolo_arg = candidate
         self.model = YOLO(yolo_arg)
         try:
             self.model.to(self.device)
@@ -107,7 +109,7 @@ class PoseExtractor:
                         continue
                     yield frame.to_ndarray(format="bgr24"), ts
         except Exception as e:
-            print(f"[PyAV Error] {e}")
+            logging.error("[PyAV Error] %s", e)
             return
 
     def extract_pose_data(
@@ -136,8 +138,14 @@ class PoseExtractor:
             total_frames = 0
 
         all_frames_data = []
-        processed_frames_count = 0
+        processed_frames_count = 0  # frames actually processed/saved (downsampled)
+        frames_seen = 0  # all frames iterated from the stream
         next_target_timestamp = start_time_seconds
+        first_processed_ts = None
+        last_report_time = time.time()
+        smoothed_proc_fps = 0.0
+        smoothed_seen_fps = 0.0
+        alpha = 0.9  # smoothing factor for FPS EMA
 
         EPS = 1e-6
         if annotations is not None:
@@ -198,8 +206,11 @@ class PoseExtractor:
             batch_indices = []
 
         gen = self.frame_iterator_pyav(video_path)
+        show_tqdm = os.environ.get("RALLYVISION_NO_TQDM", "").strip().lower() not in {"1", "true", "yes"}
+        iterator = tqdm(gen, total=total_frames, desc="Processing frames", unit="frame") if show_tqdm else gen
         # simple progress proxy if tqdm not desired in GUI
-        for frame, current_timestamp in tqdm(gen, total=total_frames, desc="Processing frames", unit="frame"):
+        for frame, current_timestamp in iterator:
+            frames_seen += 1
             appended = False
             annotation_status_current = -100
             if current_timestamp < start_time_seconds:
@@ -226,11 +237,33 @@ class PoseExtractor:
                 if len(batch_frames) >= self.batch_size:
                     _flush_batch()
                 next_target_timestamp += (1.0 / target_fps)
-                if progress_callback is not None and total_frames:
+                if first_processed_ts is None:
+                    first_processed_ts = time.time()
+                now = time.time()
+                elapsed = max(1e-6, now - (first_processed_ts or now))
+                inst_proc_fps = processed_frames_count / elapsed if elapsed > 0 else 0.0
+                smoothed_proc_fps = inst_proc_fps if smoothed_proc_fps == 0.0 else (alpha * smoothed_proc_fps + (1 - alpha) * inst_proc_fps)
+                inst_seen_fps = frames_seen / elapsed if elapsed > 0 else 0.0
+                smoothed_seen_fps = inst_seen_fps if smoothed_seen_fps == 0.0 else (alpha * smoothed_seen_fps + (1 - alpha) * inst_seen_fps)
+                # Throttle ETA reporting to ~3s
+                if progress_callback is not None and total_frames and (now - last_report_time) >= 3.0:
                     try:
-                        progress_callback(min(0.999, processed_frames_count / max(1, total_frames)))
+                        progress_callback(
+                            min(0.999, frames_seen / max(1, total_frames)),
+                            {
+                                "frames_done": processed_frames_count,
+                                "frames_total": max(1, total_frames),
+                                "frames_seen": frames_seen,
+                                "smoothed_proc_fps": smoothed_proc_fps,
+                                "smoothed_seen_fps": smoothed_seen_fps,
+                                "elapsed": elapsed,
+                            },
+                        )
+                    except PoseExtractionCancelled:
+                        raise
                     except Exception:
                         pass
+                    last_report_time = now
             else:
                 frame_data = {"boxes": np.array([]), "keypoints": np.array([]), "conf": np.array([]), "annotation_status": -100}
             if not appended:

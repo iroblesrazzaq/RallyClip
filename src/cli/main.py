@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -207,7 +208,6 @@ def run_pipeline(cfg: RunConfig) -> int:
     if cfg.yolo_device:
         os.environ["POSE_DEVICE"] = cfg.yolo_device
     models_dir = str(Path.cwd() / "models")
-    print(f"Models directory: {models_dir}")
     pose_extractor = PoseExtractor(model_path=cfg.yolo_weights, model_dir=models_dir)
     raw_npz = pose_extractor.extract_pose_data(
         video_path=str(cfg.video_path),
@@ -264,6 +264,18 @@ def run_pipeline(cfg: RunConfig) -> int:
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "gui":
+        sys.argv.pop(1)
+        try:
+            from gui.app import launch
+        except SystemExit:
+            raise
+        except Exception as exc:  # pragma: no cover - runtime safety
+            print("rallyvision gui requires GUI extras. Install with `pip install .[gui]`.", file=sys.stderr)
+            print(f"Details: {exc}", file=sys.stderr)
+            return 1
+        return launch()
+
     p = argparse.ArgumentParser(description="RallyVision end-to-end CLI with optional config.toml.")
     p.add_argument("--config", help="Path to config.toml. If omitted, looks for ./config.toml.")
     p.add_argument("--video", required=False, help="Path to input MP4 video (required unless set in config)")

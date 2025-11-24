@@ -1,4 +1,5 @@
 import os
+import logging
 import numpy as np
 
 
@@ -140,9 +141,9 @@ class FeatureEngineer:
     def create_features_from_preprocessed(self, input_npz_path: str, output_file: str, overwrite: bool = False) -> bool:
         try:
             if os.path.exists(output_file) and not overwrite:
-                print(f"  ✓ Already exists, skipping: {os.path.basename(output_file)}")
+                logging.info("Features skip (exists): %s", os.path.basename(output_file))
                 return True
-            print(f"  Loading preprocessed data from: {input_npz_path}")
+            logging.info("Loading preprocessed data from: %s", input_npz_path)
             data = np.load(input_npz_path, allow_pickle=True)
             frames = data['frames']
             targets = data['targets']
@@ -176,12 +177,9 @@ class FeatureEngineer:
                 target_array = np.empty((0,))
             os.makedirs(os.path.dirname(output_file), exist_ok=True)
             np.savez_compressed(output_file, features=feature_array, targets=target_array)
-            print(f"  ✓ Features saved to: {output_file}")
+            logging.info("Features saved to: %s", output_file)
             return True
         except Exception as e:
-            print(f"  ❌ Error processing {input_npz_path}: {e}")
-            import traceback
-            traceback.print_exc()
+            logging.error("Error processing %s: %s", input_npz_path, e, exc_info=True)
             return False
-
 

@@ -1,4 +1,5 @@
 import os
+import logging
 import numpy as np
 
 from preprocessing.court_detector import CourtDetector
@@ -92,11 +93,11 @@ class DataPreprocessor:
 
     def generate_court_mask(self, video_path: str):
         try:
-            detector = CourtDetector(yolo_model_path='models/yolov8s.pt', weights_dir='models')
+            detector = CourtDetector(yolo_model_path='models/yolov8s.pt')
             mask, clean_frame, metadata = detector.process_video(video_path, target_time=60)
             return mask
         except Exception as e:
-            print(f"  ⚠️  Error during court detection: {e}")
+            logging.warning("Court detection failed: %s", e)
             return None
 
     def filter_frame_by_court(self, frame_data, mask):
@@ -118,17 +119,17 @@ class DataPreprocessor:
     def preprocess_single_video(self, input_npz_path: str, video_path: str, output_npz_path: str, overwrite: bool = False) -> bool:
         try:
             if os.path.exists(output_npz_path) and not overwrite:
-                print(f"  ✓ Already exists, skipping: {os.path.basename(output_npz_path)}")
+                logging.info("Preprocess skip (exists): %s", os.path.basename(output_npz_path))
                 return True
-            print(f"  Loading pose data from: {input_npz_path}")
+            logging.info("Loading pose data from: %s", input_npz_path)
             pose_data = np.load(input_npz_path, allow_pickle=True)['frames']
-            print(f"  Loaded {len(pose_data)} frames")
-            print(f"  Generating court mask from: {video_path}")
+            logging.info("Loaded %s frames", len(pose_data))
+            logging.info("Generating court mask from: %s", video_path)
             mask = self.generate_court_mask(video_path)
             if mask is not None:
-                print(f"  ✓ Generated mask: {mask.shape}")
+                logging.info("Generated mask: %s", getattr(mask, 'shape', None))
             else:
-                print(f"  ⚠️  No court mask available - processing without filtering")
+                logging.info("No court mask available - processing without filtering")
             all_frame_data, all_targets, all_near_players, all_far_players = [], [], [], []
             for frame_idx, frame_data in enumerate(pose_data):
                 annotation_status = frame_data.get('annotation_status', 0)
@@ -144,16 +145,14 @@ class DataPreprocessor:
                 all_near_players.append(assigned_players['near_player'])
                 all_far_players.append(assigned_players['far_player'])
                 if (frame_idx + 1) % 100 == 0:
-                    print(f"    Processed {frame_idx + 1}/{len(pose_data)} frames")
+                    logging.debug("Processed %s/%s frames", frame_idx + 1, len(pose_data))
             os.makedirs(os.path.dirname(output_npz_path), exist_ok=True)
             save_data = { 'frames': all_frame_data, 'targets': np.array(all_targets), 'near_players': all_near_players, 'far_players': all_far_players }
             if self.save_court_masks and mask is not None:
                 save_data['court_mask'] = mask
             np.savez_compressed(output_npz_path, **save_data)
-            print(f"  ✓ Preprocessed data saved to: {output_npz_path}")
+            logging.info("Preprocessed data saved: %s", output_npz_path)
             return True
         except Exception as e:
-            print(f"  ❌ Error processing {input_npz_path}: {e}")
-            import traceback
-            traceback.print_exc()
+            logging.error("Error processing %s: %s", input_npz_path, e, exc_info=True)
             return False

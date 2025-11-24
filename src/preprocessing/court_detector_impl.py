@@ -3,6 +3,7 @@ import math
 import cv2
 import numpy as np
 import os
+import logging
 from typing import List, Tuple, Optional, Union
 
 # Import YOLO directly
@@ -11,7 +12,7 @@ try:
     YOLO_AVAILABLE = True
 except ImportError:
     YOLO_AVAILABLE = False
-    print("Warning: YOLO not available. Install ultralytics and ensure yolov8n.pt exists.")
+    logging.warning("YOLO not available. Install ultralytics and ensure yolov8n.pt exists.")
 
 
 class CourtDetector:
@@ -34,9 +35,9 @@ class CourtDetector:
         if YOLO_AVAILABLE:
             try:
                 self.yolo_model = YOLO(yolo_model_path)
-                print("YOLO model loaded successfully")
+                logging.info("YOLO model loaded successfully")
             except Exception as e:
-                print(f"YOLO model failed to load: {e}")
+                logging.warning("YOLO model failed to load: %s", e)
                 self.yolo_model = None
     
     def extract_clean_frame(self, video_path: str, target_time: int = 60) -> np.ndarray:
@@ -60,7 +61,7 @@ class CourtDetector:
         try:
             if self.yolo_model is None:
                 # Fallback to single frame extraction
-                print("YOLO not available, using single frame at target time")
+                logging.info("YOLO not available, using single frame at target time")
                 cap.set(cv2.CAP_PROP_POS_FRAMES, int(fps * target_time))
                 ret, frame = cap.read()
                 if not ret or frame is None:
@@ -68,7 +69,7 @@ class CourtDetector:
                 return frame
             
             # Use YOLO + Homography for robust background reconstruction
-            print("Using YOLO + Homography for robust background reconstruction")
+            logging.info("Using YOLO + Homography for robust background reconstruction")
             
             # Step 1: Select base frame and find occlusions
             base_frame_num = int(target_time * fps)
@@ -92,7 +93,7 @@ class CourtDetector:
                 except Exception:
                     continue
             
-            print(f"Detected {len(player_bboxes)} players in base frame")
+            logging.info("Detected %s players in base frame", len(player_bboxes))
             
             # Step 2: Find suitable reference frame
             reference_frame = None
@@ -151,15 +152,15 @@ class CourtDetector:
                 if is_suitable:
                     reference_frame = candidate_frame
                     reference_time = search_time
-                    print(f"Found suitable reference frame at {search_time}s")
+                    logging.info("Found suitable reference frame at %ss", search_time)
                     break
             
             if reference_frame is None:
-                print("No suitable reference frame found, using base frame")
+                logging.info("No suitable reference frame found, using base frame")
                 return base_frame
             
             # Step 3: Align frames using homography
-            print("Aligning frames using homography...")
+            logging.info("Aligning frames using homography...")
             
             # Initialize ORB detector
             orb = cv2.ORB_create(nfeatures=1000)
@@ -202,16 +203,16 @@ class CourtDetector:
                         
                         # Create the final clean frame
                         clean_frame = np.where(occlusion_mask[:, :, None] == 255, warped_ref_frame, base_frame)
-                        print("Successfully created clean frame using homography alignment")
+                        logging.info("Successfully created clean frame using homography alignment")
                         return clean_frame.astype(np.uint8)
                     else:
-                        print("Homography calculation failed, using base frame")
+                        logging.info("Homography calculation failed, using base frame")
                         return base_frame
                 else:
-                    print("Insufficient feature matches, using base frame")
+                    logging.info("Insufficient feature matches, using base frame")
                     return base_frame
             else:
-                print("Feature detection failed, using base frame")
+                logging.info("Feature detection failed, using base frame")
                 return base_frame
                 
         finally:
@@ -399,23 +400,21 @@ class CourtDetector:
         line_count = len(diagonal_lines)
         
         if line_count == 0:
-            print(f"{side.capitalize()} side: No diagonal lines found")
+            logging.debug("%s side: No diagonal lines found", side.capitalize())
             return None
         elif line_count == 1:
-            print(f"{side.capitalize()} side: Only one diagonal line found")
+            logging.debug("%s side: Only one diagonal line found", side.capitalize())
             return None
         elif line_count == 2:
-            # Ideal case: exactly 2 lines
-            print(f"{side.capitalize()} side: Ideal case (2 lines)")
+            logging.debug("%s side: Ideal case (2 lines)", side.capitalize())
             doubles_sideline = self._find_outer_line(diagonal_lines)
             if self._validate_sideline_candidate(doubles_sideline, baseline, image_width):
                 return doubles_sideline
             else:
-                print(f"{side.capitalize()} side: Validation failed for ideal case")
+                logging.debug("%s side: Validation failed for ideal case", side.capitalize())
                 return None
         else:
-            # Red herring case: more than 2 lines
-            print(f"{side.capitalize()} side: Red herring case ({line_count} lines)")
+            logging.debug("%s side: Red herring case (%s lines)", side.capitalize(), line_count)
             
             # Check baseline width to determine strategy
             bx1, by1, bx2, by2 = baseline[0]
@@ -429,7 +428,7 @@ class CourtDetector:
                 if is_valid:
                     return doubles_sideline
                 else:
-                    print(f"{side.capitalize()} side: Full-width baseline case failed")
+                    logging.debug("%s side: Full-width baseline case failed", side.capitalize())
                     return None
             else:
                 # Partially visible baseline
@@ -438,7 +437,7 @@ class CourtDetector:
                 if self._validate_sideline_candidate(doubles_sideline, baseline, image_width):
                     return doubles_sideline
                 else:
-                    print(f"{side.capitalize()} side: Partial baseline case failed")
+                    logging.debug("%s side: Partial baseline case failed", side.capitalize())
                     return None
     
     def estimate_playable_court_area(self, left_doubles_sideline: Optional[List], 
@@ -458,7 +457,7 @@ class CourtDetector:
             numpy.ndarray: Binary mask where white (255) represents the "out" area.
         """
         if left_doubles_sideline is None or right_doubles_sideline is None or baseline is None:
-            print("Warning: Missing court lines, cannot estimate 'out' area mask")
+            logging.warning("Missing court lines, cannot estimate 'out' area mask")
             return np.zeros(image_shape[:2], dtype=np.uint8)
         
         # --- Calculate the EXTENDED sidelines (same logic as in draw_court_lines) ---
@@ -538,7 +537,7 @@ class CourtDetector:
             - clean_frame is the extracted frame
             - metadata contains detection status and error information
         """
-        print(f"Processing video: {video_path}")
+        logging.info("Processing video: %s", video_path)
         
         # Initialize metadata
         metadata = {
@@ -567,7 +566,7 @@ class CourtDetector:
             # Step 4: Find baseline
             baseline = self.find_baseline(merged_horizontal)
             if baseline is None:
-                print("❌ No valid baseline found - court detection failed")
+                logging.warning("No valid baseline found - court detection failed")
                 metadata["error"] = "No baseline found"
                 return None, clean_frame, metadata
             
@@ -585,7 +584,7 @@ class CourtDetector:
             
             # Check if we have enough court lines for a valid mask
             if not left_doubles_sideline or not right_doubles_sideline:
-                print("❌ Missing sidelines - court detection failed")
+                logging.warning("Missing sidelines - court detection failed")
                 if not left_doubles_sideline and not right_doubles_sideline:
                     metadata["error"] = "Both sidelines missing"
                 elif not left_doubles_sideline:
@@ -598,19 +597,19 @@ class CourtDetector:
             out_mask = self.estimate_playable_court_area(left_doubles_sideline, right_doubles_sideline, baseline, clean_frame.shape)
             
             if out_mask is None or not np.any(out_mask):
-                print("❌ Failed to generate valid court mask")
+                logging.warning("Failed to generate valid court mask")
                 metadata["error"] = "Failed to generate court mask"
                 return None, clean_frame, metadata
             
             # Success!
             metadata["court_detection_success"] = True
             metadata["error"] = None
-            print("✅ Court detection successful")
+            logging.info("Court detection successful")
             
             return out_mask, clean_frame, metadata
             
         except Exception as e:
-            print(f"❌ Court detection failed with exception: {e}")
+            logging.error("Court detection failed with exception: %s", e, exc_info=True)
             metadata["error"] = f"Exception during court detection: {str(e)}"
             # If clean_frame wasn't created yet, create a dummy one
             if 'clean_frame' not in locals():
@@ -1048,7 +1047,7 @@ def filter_players_by_playable_area(player_bboxes: List[Tuple[int, int, int, int
             playable_area_mask[center_y, center_x] == 255):
             filtered_bboxes.append(bbox)
     
-    print(f"Filtered {len(player_bboxes)} players to {len(filtered_bboxes)} in playable area")
+    logging.debug("Filtered %s players to %s in playable area", len(player_bboxes), len(filtered_bboxes))
     return filtered_bboxes
 
 
@@ -1089,5 +1088,3 @@ if __name__ == "__main__":
     else:
         print(f"\n❌ Failed to generate mask for {os.path.basename(video_path)}")
         print(f"   - Reason: {metadata.get('error', 'Unknown error')}")
-
-
