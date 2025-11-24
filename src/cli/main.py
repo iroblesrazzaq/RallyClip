@@ -126,7 +126,8 @@ def _pick_bool(arg_val: Optional[bool], cfg_val: Optional[Any], default: bool) -
 
 
 def build_run_config(args: argparse.Namespace) -> RunConfig:
-    cfg_dict = _load_config_dict(args.config) if (args.config or Path("deepmatch.toml").exists()) else {}
+    cfg_path = args.config or ("config.toml" if Path("config.toml").exists() else "deepmatch.toml")
+    cfg_dict = _load_config_dict(cfg_path) if (cfg_path and Path(cfg_path).exists()) else {}
     cfg_section = cfg_dict.get("run", cfg_dict) if isinstance(cfg_dict, dict) else {}
 
     def cfg(key: str, default=None):
