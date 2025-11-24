@@ -134,9 +134,15 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         return cfg_section.get(key, default) if isinstance(cfg_section, dict) else default
 
     video_path = args.video or cfg("video_path")
+<<<<<<< HEAD
     output_dir = args.output_dir or cfg("output_dir")
     if not video_path or not output_dir:
         raise SystemExit("Please provide both video and output_dir via CLI flags or config [run] section.")
+=======
+    output_dir = args.output_dir or cfg("output_dir") or str(Path.cwd() / "output_videos")
+    if not video_path:
+        raise SystemExit("Please provide a video via CLI flag or config [run] section.")
+>>>>>>> old-origin/deepmatch-v0.1-CLI
 
     output_name = args.output_name or cfg("output_name")
     csv_output_dir_raw = args.csv_output_dir or cfg("csv_output_dir")
@@ -264,8 +270,13 @@ def run_pipeline(cfg: RunConfig) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(description="RallyVision end-to-end CLI with optional config.toml.")
     p.add_argument("--config", help="Path to config.toml. If omitted, looks for ./config.toml.")
+<<<<<<< HEAD
     p.add_argument("--video", help="Path to input MP4 video")
     p.add_argument("--output-dir", help="Directory to store outputs")
+=======
+    p.add_argument("--video", required=False, help="Path to input MP4 video (required unless set in config)")
+    p.add_argument("--output-dir", help="Directory to store outputs (defaults to ./output_videos)")
+>>>>>>> old-origin/deepmatch-v0.1-CLI
     p.add_argument("--output-name", help="Optional base name for outputs (without extension)")
     p.add_argument("--csv-output-dir", help="Optional directory for CSV output (defaults to video directory)")
     p.add_argument("--model-path", help="Path to LSTM .pth (defaults to checkpoints/seq_len300/best_model.pth if present)")
