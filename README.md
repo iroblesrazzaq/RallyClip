@@ -59,7 +59,7 @@ high = 0.8
 
 
 # Other parameters: (usually leave as-is)
-sigma = 1.5 # for temporal signal gaussian smoothing, ot super relevant
+sigma = 1.5 # for temporal signal gaussian smoothing, not super relevant
 fps = 15.0 # do not modify
 seq_len = 300 # do not modify
 overlap = 150 # probably don't modify
