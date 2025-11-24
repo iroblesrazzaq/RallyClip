@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rallyvision"
+version = "0.1.0"
+description = "AI-powered tennis match analysis CLI"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "numpy",
+  "torch",
+  "ultralytics",
+  "opencv-python",
+  "av",
+  "scipy",
+  "tqdm",
+  "joblib",
+  "tomli>=2.0.1",
+]
+
+[project.optional-dependencies]
+train = [
+  "scikit-learn",
+  "matplotlib",
+  "pandas",
+]
+
+[project.scripts]
+rallyvision = "cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

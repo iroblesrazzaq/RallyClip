@@ -1,0 +1,33 @@
+[run]
+# Required paths  - can also set with CLI args:
+video_path = "raw_videos/Set (1) Play Uncut Derek vs. Alex short.mp4"
+output_dir = "output_videos"
+
+# Optional custom output base name - otherwise just "[video_name]_segmented.mp4"
+# output_name = "match1"
+
+# Write outputs
+write_csv = true
+segment_video = true
+csv_output_dir = "output_csvs" # defaults to input video directory
+
+# YOLO pose model choice: nano | small | medium | large
+yolo_model = "nano"
+# Optional device: cpu | cuda | mps (defaults to auto; set to "mps" for Apple Silicon)
+yolo_device = "mps" # get mps warning so switches to cpu if don't set this var
+
+# Optional overrides for assets:
+# model_path = "/path/to/lstm_300_v0.1.pth"
+# scaler_path = "/path/to/scaler_300_v0.1.joblib"
+
+# Pipeline parameters — defaults shown
+fps = 15.0
+seq_len = 300
+overlap = 150
+sigma = 1.5
+low = 0.45
+high = 0.8
+min_dur_sec = 0.5
+conf = 0.25
+start_time = 0
+duration = 999999

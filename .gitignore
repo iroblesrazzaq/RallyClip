@@ -1,0 +1,113 @@
+dist/
+build/
+*.spec
+
+# generated data and outputs
+raw_videos/
+pose_data/
+output_videos/
+output_csvs/
+jobs/
+logs/
+checkpoints/
+
+# large artifacts
+*.npz
+*.h5
+*.pth
+*.joblib
+
+# notebooks and env
+.ipynb_checkpoints/
+.venv/
+
+*.mp4
+.DS_Store
+.csv
+*.llc
+repomix-output.xml
+*.npz
+*.pt
+*.pyc
+*cpython*
+*.h5
+*pth
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dylib
+*.egg
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+.wheelhouse/
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Type checking & linters
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.tox/
+.nox/
+.pyre/
+
+# Caches
+.cache/
+
+# Environments & secrets
+.env
+.env.*
+venv/
+ENV/
+env/
+.conda/
+.python-version
+
+# Editors/OS
+.vscode/
+.idea/
+*.swp
+*.swo
+Thumbs.db
+
+# Node/Frontend
+node_modules/
+frontend/node_modules/
+apps/gui/frontend/node_modules/
+frontend/.next/
+frontend/build/
+frontend/dist/
+apps/gui/frontend/build/
+apps/gui/frontend/dist/
+*.map
+
+# Packaging metadata
+src/*.egg-info/
+
+# Additional media/artifacts
+*.avi
+*.mov
+*.mkv
+*.log
+*.dmg
+*.app
+*.pkg
+
+# Project data (generated)
+data/
+sanity_check_clips/
+sanity_check_output.mp4
+
+# include LSTM weights and scaler
+!lstm_300_v0.1.pth
+!scaler_300_v0.1.joblibt
