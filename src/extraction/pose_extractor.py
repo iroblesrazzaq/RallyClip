@@ -6,6 +6,7 @@ from typing import Callable, Optional
 import numpy as np
 import av
 from ultralytics import YOLO
+from ultralytics.utils import SETTINGS
 import torch
 from tqdm import tqdm
 import logging
@@ -20,6 +21,7 @@ class PoseExtractor:
     def __init__(self, model_dir: Optional[str] = None, model_path: str = "yolov8s-pose.pt") -> None:
         # Set early so downstream checks can use it
         self.model_path = model_path
+        self.model_dir = model_dir
 
         profile = os.environ.get("PIPELINE_PROFILE", "").strip().lower()
         if not profile:
@@ -76,6 +78,12 @@ class PoseExtractor:
         # Ultralytics handle download from model name (e.g., "yolov8s-pose.pt").
         yolo_arg = self.model_path
         if model_dir:
+            os.makedirs(model_dir, exist_ok=True)
+            # Direct ultralytics downloads into the provided models directory
+            try:
+                SETTINGS["weights_dir"] = os.path.abspath(model_dir)
+            except Exception:
+                pass
             candidate = os.path.join(model_dir, self.model_path)
             if os.path.exists(candidate):
                 yolo_arg = candidate
@@ -240,4 +248,3 @@ class PoseExtractor:
         output_path = os.path.join(output_dir, output_filename)
         np.savez_compressed(output_path, frames=all_frames_data)
         return output_path
-

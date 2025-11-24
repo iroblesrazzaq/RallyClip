@@ -150,7 +150,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         yolo_weights = YOLO_SIZE_MAP["small"]
     yolo_device = args.yolo_device or cfg("yolo_device")
 
-    write_csv = _pick_bool(args.write_csv, cfg("write_csv"), True)
+    write_csv = _pick_bool(args.write_csv, cfg("write_csv"), False)
     segment_video_flag = _pick_bool(args.segment_video, cfg("segment_video"), True)
 
     model_path = _resolve_asset(
@@ -206,7 +206,8 @@ def run_pipeline(cfg: RunConfig) -> int:
 
     if cfg.yolo_device:
         os.environ["POSE_DEVICE"] = cfg.yolo_device
-    pose_extractor = PoseExtractor(model_path=cfg.yolo_weights)
+    models_dir = str(Path.cwd() / "models")
+    pose_extractor = PoseExtractor(model_path=cfg.yolo_weights, model_dir=models_dir)
     raw_npz = pose_extractor.extract_pose_data(
         video_path=str(cfg.video_path),
         confidence_threshold=float(cfg.conf),

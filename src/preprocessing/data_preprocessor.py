@@ -92,7 +92,7 @@ class DataPreprocessor:
 
     def generate_court_mask(self, video_path: str):
         try:
-            detector = CourtDetector(yolo_model_path='models/yolov8s.pt')
+            detector = CourtDetector(yolo_model_path='models/yolov8s.pt', weights_dir='models')
             mask, clean_frame, metadata = detector.process_video(video_path, target_time=60)
             return mask
         except Exception as e:
@@ -157,4 +157,3 @@ class DataPreprocessor:
             import traceback
             traceback.print_exc()
             return False
-
