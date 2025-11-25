@@ -1,21 +1,26 @@
+import csv
 import os
 from typing import List, Tuple
 
 import av
-import pandas as pd
 import cv2
 
 
 def load_intervals(csv_path: str) -> List[Tuple[float, float]]:
-    df = pd.read_csv(csv_path)
-    df.columns = [c.strip().lower() for c in df.columns]
-    if 'start_time' not in df.columns or 'end_time' not in df.columns:
-        raise ValueError("CSV must contain 'start_time' and 'end_time' columns")
-    df = df[['start_time', 'end_time']].dropna()
-    df['start_time'] = pd.to_numeric(df['start_time'], errors='coerce')
-    df['end_time'] = pd.to_numeric(df['end_time'], errors='coerce')
-    df = df.dropna().sort_values(['start_time', 'end_time']).reset_index(drop=True)
-    return [(float(r.start_time), float(r.end_time)) for r in df.itertuples(index=False)]
+    with open(csv_path, newline='') as f:
+        reader = csv.DictReader(f)
+        reader.fieldnames = [c.strip().lower() for c in reader.fieldnames]
+        if 'start_time' not in reader.fieldnames or 'end_time' not in reader.fieldnames:
+            raise ValueError("CSV must contain 'start_time' and 'end_time' columns")
+        intervals = []
+        for row in reader:
+            try:
+                start = float(row['start_time'])
+                end = float(row['end_time'])
+                intervals.append((start, end))
+            except (ValueError, KeyError, TypeError):
+                continue
+        return sorted(intervals, key=lambda x: (x[0], x[1]))
 
 
 def segment_video(input_video: str, intervals: List[Tuple[float, float]], output_path: str, eps: float = 1e-6) -> None:

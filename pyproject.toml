@@ -7,25 +7,22 @@ name = "rallyvision"
 version = "0.1.0"
 description = "AI-powered tennis match analysis CLI"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
   "numpy",
   "torch",
   "ultralytics",
   "opencv-python",
   "av",
-  "scipy",
   "tqdm",
   "joblib",
   "tomli>=2.0.1",
+  "pandas",
+  "scikit-learn==1.7.1",
 ]
 
 [project.optional-dependencies]
-train = [
-  "scikit-learn",
-  "matplotlib",
-  "pandas",
-]
+
 gui = [
   "Flask>=2.3",
   "flask-cors>=4.0",

@@ -4,10 +4,21 @@ from typing import Optional, List, Tuple, Callable
 
 import numpy as np
 import torch
-import scipy.ndimage
 import joblib
 
 from .model import TennisPointLSTM
+
+
+def gaussian_filter1d(data: np.ndarray, sigma: float) -> np.ndarray:
+    """1D Gaussian filter using numpy convolution (replaces scipy.ndimage.gaussian_filter1d)."""
+    if sigma <= 0:
+        return data.copy()
+    radius = int(3 * sigma + 0.5)
+    x = np.arange(-radius, radius + 1)
+    kernel = np.exp(-0.5 * (x / sigma) ** 2)
+    kernel = kernel / kernel.sum()
+    padded = np.pad(data, radius, mode='edge')
+    return np.convolve(padded, kernel, mode='valid').astype(data.dtype)
 
 
 def load_model_from_checkpoint(

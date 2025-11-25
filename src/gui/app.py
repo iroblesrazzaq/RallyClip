@@ -24,7 +24,6 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
 
 import joblib
 import numpy as np
-import scipy.ndimage
 import av
 
 from cli.main import YOLO_SIZE_MAP, _candidate_roots, _resolve_asset
@@ -32,6 +31,7 @@ from extraction.pose_extractor import PoseExtractionCancelled, PoseExtractor
 from features.feature_engineer import FeatureEngineer
 from infer import (
     extract_segments_from_binary,
+    gaussian_filter1d,
     hysteresis_threshold,
     load_model_from_checkpoint,
     run_windowed_inference_average,
@@ -380,7 +380,7 @@ def _run_pipeline(job_id: str) -> None:
             overlap=int(cfg["overlap"]),
             progress_callback=infer_progress,
         )
-        smoothed_probs = scipy.ndimage.gaussian_filter1d(avg_probs.astype(np.float32), sigma=float(cfg["sigma"]))
+        smoothed_probs = gaussian_filter1d(avg_probs.astype(np.float32), sigma=float(cfg["sigma"]))
         min_duration_frames = int(round(max(0.0, float(cfg["min_dur_sec"])) * float(cfg["fps"])))
         binary_pred = hysteresis_threshold(
             smoothed_probs,

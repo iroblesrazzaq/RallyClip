@@ -1,6 +1,6 @@
 [run]
 # Required paths  - can also set with CLI args:
-video_path = "raw_videos/Set (1) Play Uncut Derek vs. Alex short.mp4"
+video_path = "output_videos/Set_1_Play_Uncut_Derek_vs._Alex_short_segmented.mp4"
 output_dir = "output_videos"
 
 # Optional custom output base name - otherwise just "[video_name]_segmented.mp4"

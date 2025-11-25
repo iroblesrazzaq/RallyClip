@@ -2,7 +2,6 @@ import os
 import subprocess
 import time
 from typing import Callable, Optional
-
 import numpy as np
 import av
 from ultralytics import YOLO
@@ -10,7 +9,7 @@ from ultralytics.utils import SETTINGS
 import torch
 from tqdm import tqdm
 import logging
-import os
+
 
 
 class PoseExtractionCancelled(Exception):
@@ -122,12 +121,23 @@ class PoseExtractor:
         annotations_csv: Optional[str] = None,
         progress_callback: Optional[Callable[[float], None]] = None,
     ) -> str:
-        import pandas as pd
+        import csv
 
         annotations = None
         if annotations_csv and annotations_csv != "None" and os.path.exists(annotations_csv):
             try:
-                annotations = pd.read_csv(annotations_csv)
+                with open(annotations_csv, newline='') as f:
+                    reader = csv.DictReader(f)
+                    reader.fieldnames = [c.strip().lower() for c in reader.fieldnames]
+                    starts_list, ends_list = [], []
+                    for row in reader:
+                        try:
+                            starts_list.append(float(row['start_time']))
+                            ends_list.append(float(row['end_time']))
+                        except (ValueError, KeyError, TypeError):
+                            continue
+                    if starts_list:
+                        annotations = {'starts': np.array(starts_list), 'ends': np.array(ends_list)}
             except Exception as e:
                 print(f"Warning: could not read annotations {annotations_csv}: {e}")
 
@@ -149,8 +159,8 @@ class PoseExtractor:
 
         EPS = 1e-6
         if annotations is not None:
-            starts = annotations["start_time"].to_numpy(dtype=float)
-            ends = annotations["end_time"].to_numpy(dtype=float)
+            starts = annotations['starts']
+            ends = annotations['ends']
             annotation_index = 0
             num_annotations = starts.size
         else:
