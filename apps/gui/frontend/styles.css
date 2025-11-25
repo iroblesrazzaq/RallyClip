@@ -9,7 +9,7 @@ body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     line-height: 1.6;
     color: #333;
-    background: radial-gradient(circle at 10% 20%, #eef2ff 0%, #dfe7ff 30%, #f8fbff 70%, #ffffff 100%);
+    background: radial-gradient(circle at 10% 20%, #f0fff4 0%, #dcfce7 30%, #f0fdf4 70%, #ffffff 100%);
     min-height: 100vh;
 }
 
@@ -32,23 +32,24 @@ body {
     font-size: 3rem;
     font-weight: 800;
     margin-bottom: 10px;
-    color: #1f2a44;
+    color: #1a2e1a;
     letter-spacing: -0.5px;
 }
 
 .header-content h1 i {
-    color: #3f7cff;
+    color: #CCFF00;
     margin-right: 12px;
+    text-shadow: 0 0 8px rgba(204, 255, 0, 0.5);
 }
 
 .subtitle {
     font-size: 1.2rem;
-    color: #4a5568;
+    color: #3d5a3d;
 }
 
 .note {
     margin-top: 8px;
-    color: #2b6cb0;
+    color: #2E7D32;
     font-weight: 600;
 }
 
@@ -58,7 +59,7 @@ body {
     background: white;
     border-radius: 20px;
     padding: 32px;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 20px 40px rgba(46, 125, 50, 0.1);
     margin-bottom: 20px;
 }
 
@@ -73,31 +74,31 @@ body {
 }
 
 .file-drop-zone {
-    border: 2px dashed #3f7cff;
+    border: 2px dashed #4CAF50;
     border-radius: 16px;
     padding: 56px 20px;
     text-align: center;
-    background: #f7f9ff;
+    background: #f0fff4;
     transition: all 0.25s ease;
     cursor: pointer;
     position: relative;
 }
 
 .file-drop-zone:hover {
-    border-color: #2756d8;
-    background: #eef3ff;
+    border-color: #2E7D32;
+    background: #dcfce7;
     transform: translateY(-2px);
 }
 
 .file-drop-zone.dragover {
-    border-color: #1d4ed8;
-    background: #e2ecff;
+    border-color: #1B5E20;
+    background: #c8f7d0;
     transform: scale(1.01);
 }
 
 .drop-content .upload-icon {
     font-size: 3.5rem;
-    color: #3f7cff;
+    color: #4CAF50;
     margin-bottom: 16px;
     display: block;
 }
@@ -116,7 +117,7 @@ body {
 .browse-btn {
     background: none;
     border: none;
-    color: #1d4ed8;
+    color: #2E7D32;
     text-decoration: underline;
     cursor: pointer;
     font-size: inherit;
@@ -124,7 +125,7 @@ body {
 }
 
 .browse-btn:hover {
-    color: #153e99;
+    color: #1B5E20;
 }
 
 .file-info {
@@ -141,15 +142,15 @@ body {
     display: flex;
     align-items: center;
     padding: 18px;
-    background: #f8fafc;
-    border: 2px solid #e2e8f0;
+    background: #f0fdf4;
+    border: 2px solid #a7f3d0;
     border-radius: 12px;
     gap: 15px;
 }
 
 .file-icon {
     font-size: 2rem;
-    color: #2563eb;
+    color: #2E7D32;
 }
 
 .file-details {
@@ -213,13 +214,13 @@ body {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
     color: white;
-    box-shadow: 0 10px 20px rgba(37, 99, 235, 0.25);
+    box-shadow: 0 10px 20px rgba(76, 175, 80, 0.3);
 }
 
 .btn-primary:disabled {
-    background: #a5b4fc;
+    background: #a5d6a7;
     cursor: not-allowed;
     box-shadow: none;
 }
@@ -236,9 +237,9 @@ body {
 }
 
 .btn-tertiary {
-    background: #e0f2fe;
-    color: #075985;
-    border: 1px solid #bae6fd;
+    background: #dcfce7;
+    color: #166534;
+    border: 1px solid #86efac;
 }
 
 .btn-download {
@@ -299,6 +300,13 @@ body {
     background: white;
 }
 
+.field input:focus,
+.field select:focus {
+    outline: none;
+    border-color: #4CAF50;
+    box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.15);
+}
+
 .field input:disabled {
     background: #f3f4f6;
     color: #6b7280;
@@ -326,7 +334,7 @@ body {
 .link-btn {
     background: none;
     border: none;
-    color: #2563eb;
+    color: #2E7D32;
     font-weight: 700;
     cursor: pointer;
 }
@@ -343,10 +351,10 @@ body {
 }
 
 .progress-item {
-    background: #f8fafc;
+    background: #f0fdf4;
     padding: 14px;
     border-radius: 12px;
-    border: 1px solid #e5e7eb;
+    border: 1px solid #bbf7d0;
 }
 
 .progress-header {
@@ -362,7 +370,7 @@ body {
 }
 
 .progress-status.in_progress {
-    color: #2563eb;
+    color: #2E7D32;
 }
 
 .progress-status.completed {
@@ -380,7 +388,7 @@ body {
 .progress-fill {
     height: 100%;
     width: 0;
-    background: linear-gradient(135deg, #60a5fa 0%, #2563eb 100%);
+    background: linear-gradient(135deg, #86efac 0%, #4CAF50 100%);
     transition: width 0.2s ease;
 }
 
@@ -392,7 +400,7 @@ body {
 
 .overall-progress {
     margin-top: 20px;
-    background: #0f172a;
+    background: linear-gradient(135deg, #1a2e1a 0%, #0f1f0f 100%);
     color: white;
     padding: 16px;
     border-radius: 12px;
@@ -415,8 +423,9 @@ body {
 .overall-progress-fill {
     height: 100%;
     width: 0;
-    background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+    background: linear-gradient(135deg, #CCFF00 0%, #9ACD32 100%);
     transition: width 0.2s ease;
+    box-shadow: 0 0 10px rgba(204, 255, 0, 0.5);
 }
 
 .overall-eta {
@@ -426,8 +435,8 @@ body {
 }
 
 .eta-pill {
-    background: rgba(255, 255, 255, 0.18);
-    color: #e5e7eb;
+    background: rgba(204, 255, 0, 0.2);
+    color: #CCFF00;
     padding: 4px 10px;
     border-radius: 999px;
     font-size: 0.9rem;
@@ -442,10 +451,10 @@ body {
 /* Results Section */
 .results-section {
     margin-top: 30px;
-    background: #f9fafb;
+    background: #f0fdf4;
     padding: 20px;
     border-radius: 12px;
-    border: 1px solid #e5e7eb;
+    border: 1px solid #bbf7d0;
 }
 
 .results-container {
@@ -457,7 +466,7 @@ body {
 
 .result-item {
     background: white;
-    border: 1px solid #e5e7eb;
+    border: 1px solid #a7f3d0;
     border-radius: 12px;
     padding: 14px;
     display: flex;
@@ -473,7 +482,7 @@ body {
 
 .result-icon {
     font-size: 1.5rem;
-    color: #2563eb;
+    color: #2E7D32;
 }
 
 .result-details h4 {
@@ -488,7 +497,7 @@ body {
 /* Footer */
 .footer {
     text-align: center;
-    color: #4b5563;
+    color: #3d5a3d;
     margin-bottom: 20px;
 }
 
@@ -516,7 +525,7 @@ body {
 }
 
 .notification-info {
-    background: #2563eb;
+    background: #2E7D32;
 }
 
 @media (max-width: 768px) {
