@@ -19,7 +19,7 @@ try:
     from werkzeug.utils import secure_filename
 except ImportError as exc:  # pragma: no cover - handled at runtime
     raise SystemExit(
-        "rallyvision gui requires GUI extras. Install with `pip install .[gui]`."
+        "rallyvision gui requires Flask. Reinstall with `pip install .`."
     ) from exc
 
 import joblib

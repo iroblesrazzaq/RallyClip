@@ -271,7 +271,7 @@ def main() -> int:
         except SystemExit:
             raise
         except Exception as exc:  # pragma: no cover - runtime safety
-            print("rallyvision gui requires GUI extras. Install with `pip install .[gui]`.", file=sys.stderr)
+            print("rallyvision gui requires Flask. Reinstall with `pip install .`.", file=sys.stderr)
             print(f"Details: {exc}", file=sys.stderr)
             return 1
         return launch()

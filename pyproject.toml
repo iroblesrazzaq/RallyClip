@@ -17,13 +17,7 @@ dependencies = [
   "tqdm",
   "joblib",
   "tomli>=2.0.1",
-  "pandas",
-  "scikit-learn==1.7.1",
-]
-
-[project.optional-dependencies]
-
-gui = [
+  "scikit-learn>=1.7.1",
   "Flask>=2.3",
   "flask-cors>=4.0",
 ]
