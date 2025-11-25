@@ -13,6 +13,7 @@
 <body>
     <div class="page">
         <header class="header">
+            <p class="byline">A project by <strong>Ismael Robles-Razzaq</strong></p>
             <h1>RallyVision</h1>
             <p class="tagline">Free, open-source tennis match segmentation.<br>Runs entirely on your machine.</p>
             <a href="https://github.com/iroblesrazzaq/RallyVision" class="github-link" target="_blank">GitHub ↗</a>
@@ -32,16 +33,16 @@
             <section id="about">
                 <h2>What It Does</h2>
                 <p>RallyVision takes a full tennis match recording and extracts only the points—removing the dead time between rallies. Drop in a 2-hour match video, get back a condensed video containing just the action, plus an optional CSV with timestamps for each point.</p>
-                <p>It uses a pipeline of computer vision and deep learning: court detection, YOLOv8 pose estimation, feature engineering, and a bidirectional LSTM that predicts frame-by-frame whether play is happening.</p>
+                <p>It works through a pipeline of computer vision and deep learning: court detection, pose estimation with YOLOv8, feature engineering, and a bidirectional LSTM that predicts frame-by-frame whether play is happening. The result is a segmented video with only the rallies, ready for review.</p>
             </section>
 
             <!-- Motivation -->
             <section id="motivation">
                 <h2>Motivation</h2>
-                <p>Watching yourself play is one of the best ways to improve at tennis. But only about 25% of a recorded match is actually "in-point"—the rest is dead time. Scrubbing through footage to find the actual rallies is tedious.</p>
-                <p>Software like SwingVision solves this, but limits you to 2 hours/month of free segmentation before pushing an expensive subscription. While SwingVision offers many analytics, match segmentation is one of their most popular features.</p>
-                <p><strong>I believe match segmentation should be free for anyone.</strong> That's why RallyVision is open-source and runs locally—no cloud costs, no subscriptions.</p>
-                <p>The trade-off: video inference is computationally expensive, so processing takes time on a laptop. Here are benchmarks from my MacBook Pro M2:</p>
+                <p>Watching yourself play is one of the best ways to get better at competing in tennis. However, only ~25% of a recorded match is spent "in-point"—the rest is dead time. When you're going through your footage, it's a pain to have to parse through this dead time to get to the actual points.</p>
+                <p>Software like SwingVision has tools that accomplish this exactly. However, SwingVision only allows you 2 hours a month free of match segmentation, forcing you to buy their expensive subscription. While SwingVision does have many more analytics, their match segmentation is one of their most popular and useful features.</p>
+                <p>I built RallyVision (there's not a ton of tennis/computer vision name schemes so cut me some slack on the name) to solve this problem exactly. <strong>I believe this match segmentation should be made free for anyone to use</strong>, which is why I made RallyVision open-source and local.</p>
+                <p>To avoid the costs of cloud compute, you run RallyVision directly on your computer. There are trade-offs with this: this type of video inference is computationally expensive, so running it on your laptop may take some time. I'm using a MacBook Pro M2—here are the metrics for running it on my laptop. Note that using GPU acceleration significantly improves performance:</p>
                 
                 <table>
                     <thead>
@@ -57,17 +58,17 @@
                             <td>YOLO nano</td>
                             <td>~0.8× video length</td>
                             <td>~3× video length</td>
-                            <td>3.75×</td>
+                            <td>~3.75×</td>
                         </tr>
                         <tr>
                             <td>YOLO small</td>
                             <td>~1.5× video length</td>
                             <td>~7× video length</td>
-                            <td>4.7×</td>
+                            <td>~4.7×</td>
                         </tr>
                     </tbody>
                 </table>
-                <p class="caption">GPU acceleration provides ~4× speedup. Use CUDA or MPS if available.</p>
+                <p class="caption">In other words, GPU acceleration provides ~4× gains, so if you have CUDA or MPS, please select to use it.</p>
             </section>
 
             <!-- How It Works -->
@@ -75,60 +76,63 @@
                 <h2>How It Works</h2>
                 
                 <h3>1. Court Detection</h3>
-                <p>Classical CV methods detect court lines, then heuristics identify the baseline and sidelines based on line angles. This creates a mask of the playable area, ensuring we only track players on the relevant court—ignoring people on adjacent courts.</p>
+                <p>Runs a script to find the lines of the court. Uses classical CV methods to detect lines, then uses heuristics based on the angles of lines to detect the near baseline, singles and doubles sidelines. From those, it creates a court mask of the region where the players would be.</p>
+                <p>This enables us to only use bounding boxes from players in the playable area: if there are other players/people on nearby courts, this ensures that we don't use their pose data in our model.</p>
                 
                 <h3>2. Pose Extraction</h3>
-                <p>YOLOv8 pose models run on 15fps downsampled video, extracting bounding boxes and keypoint (joint) positions for each player.</p>
+                <p>Runs YOLOv8 pose models on 15 fps downsampled video to extract all potential bounding boxes and keypoint (joints) estimation of players.</p>
                 
-                <h3>3. Feature Engineering</h3>
-                <p>Filter bounding boxes to those inside the court mask. Compute features: limb lengths, joint velocities, and accelerations.</p>
+                <h3>3. Preprocessing & Feature Engineering</h3>
+                <p>Preprocess the data: filter out all bounding boxes with centroids not inside our court mask, feature engineer limb lengths, joint velocity and acceleration.</p>
                 
                 <h3>4. LSTM Inference</h3>
-                <p>Overlapping 20-second chunks feed into a bidirectional LSTM, which outputs per-frame probabilities of "in point" vs "out of point."</p>
+                <p>Create overlapping chunks of 20 seconds, feed into trained bidirectional LSTM, which outputs frame-by-frame probabilities of being in a point vs out of point.</p>
                 
                 <h3>5. Output Generation</h3>
-                <p>Average the signal, apply smoothing and hysteresis filtering to get discrete start/end times. Write the "in-point" segments to the output video.</p>
+                <p>Average output signal, apply smoothing and hysteresis filtering to get discrete point start/end times; write these "in-point" chunks to output video.</p>
             </section>
 
             <!-- Challenges -->
             <section id="challenges">
                 <h2>Challenges</h2>
-                <p>The main challenges: finding a data modality with consistent signal, and building a model efficient enough to run locally.</p>
+                <p>This project had some decently nontrivial challenges. The main challenges I faced were finding a data modality with consistent signal, and creating a model that ran locally, so was very computationally efficient.</p>
                 
                 <h3>Choosing the Data Modality</h3>
-                <p><strong>Raw video:</strong> Infeasible. Training CNNs or video transformers would require far more data than I could access.</p>
-                <p><strong>Audio:</strong> Unreliable. Multiple courts make it hard to isolate sounds; not all shots are audible; some recordings lack audio entirely.</p>
-                <p><strong>Ball tracking:</strong> Possible, but fails with occlusion or when ball and court colors blend.</p>
-                <p><strong>Player poses:</strong> This is what I chose. Points require distinct movement patterns. Players are consistently visible during rallies. And pose extraction is cheap—YOLOv8-pose models are only 3–12M parameters.</p>
+                <p>Firstly, I had to decide on a data modality to train my models on.</p>
+                <p><strong>Raw video/images:</strong> The pure image/video is computationally infeasible. Training a video transformer or CNN to extract relevant features—even if training on single frames and not including temporal convolutions—CNNs would require much more data than I could reasonably gain access to.</p>
+                <p><strong>Sound:</strong> Using sound fails for several reasons: (1) Videos with multiple courts make it very difficult to differentiate if the sound of the racket hitting the ball came from the relevant or irrelevant match. (2) Not all shots produce sound, not all players hit hard enough to make loud enough sounds to detect. (3) Sound can be noisy/inconsistent, or a recording may not even have sound.</p>
+                <p><strong>Ball tracking:</strong> Ball tracking is doable—but can fail in obfuscation cases, or when the court and ball blend together—it can be very hard to see.</p>
+                <p><strong>Player poses:</strong> I finally decided on using player pose data. A point being in play requires the players to move and swing their rackets in distinct patterns. Furthermore, as players will almost certainly be visible in frame during points, they will provide a consistent signal. Lastly, pose extraction is computationally cheap—the YOLOv8-pose models I use are 3.1 and 11.6 million parameters, which result in fast feature extraction.</p>
                 
                 <h3>Training Data</h3>
-                <p>No public datasets exist for this task. <strong>I manually annotated ~8 hours of match footage.</strong> Building a working model on so little data required careful feature engineering—proof that clever approaches can match brute-force big data methods.</p>
+                <p>Lastly, there are no publicly available datasets I can use to train on this—<strong>I manually annotated data for ~8 hours of matches</strong> to train my first models on. I'm quite proud that I built a functioning model trained on such low amounts of data, proof that with clever engineering you can achieve similar results to brute-force big data approaches.</p>
                 
                 <h3>Limitations</h3>
-                <p>If court detection fails (low light, bad camera angle) and extra people appear on screen, the pose detector may track wrong individuals, producing unreliable output. The model may also struggle with videos that differ significantly from training data. More data collection will improve this.</p>
+                <p>If the court detection mask fails and there are more people on the screen than the 2 players, the model could fail as pose detector could pick up on wrong people, and output would be completely unreliable. There are very few cases where this occurs: mainly in low light conditions where classical CV methods fail to detect edges, or where the camera angle is terrible.</p>
+                <p>Furthermore, the model could fail to generalize to some videos, likely due to some potential overfitting or insufficient representation of the distribution of match videos. As I collect more data, performance will improve in this regard.</p>
             </section>
 
             <!-- Future -->
             <section id="future">
                 <h2>Future Improvements</h2>
                 <ul>
-                    <li><strong>Model distillation:</strong> Fine-tune YOLO nano on YOLO large outputs to close the accuracy gap while keeping fast inference.</li>
-                    <li><strong>More data:</strong> Expand training data with additional hand-labeled examples and model-generated pseudo-labels.</li>
-                    <li><strong>Attention mechanisms:</strong> Upgrade to LSTM with attention to learn which parts of each 20-second window matter most.</li>
-                    <li><strong>Rally detection:</strong> Train a separate model for rally-only detection (current model has learned to associate serves/returns with point starts).</li>
+                    <li><strong>Model distillation:</strong> Currently, the YOLO nano pose model is computationally the most feasible, but at the cost of some accuracy compared to YOLO small. I plan to fine-tune the nano YOLO pose model on the outputs of the YOLO large model to close this gap while keeping efficient computation.</li>
+                    <li><strong>More data:</strong> I will increase and augment data—using some more hand-labelled data, and using model outputs to create more training data.</li>
+                    <li><strong>Attention mechanisms:</strong> As my data increases, I will switch to LSTM with attention, which will improve performance, as it can learn which parts of the 20s window are most relevant with respect to each other.</li>
+                    <li><strong>Rally detection:</strong> Finally, I will add a rally detection model. My current model doesn't perform as well on this because it has presumably learned that a service or return motion is associated with the start of a point. I'll simply train a model with the same pipeline on rally data instead of match data.</li>
                 </ul>
-                <p class="note">Have ideas? PRs welcome—I'm open to feedback and contributions.</p>
+                <p class="note">If you have any potential improvements, please PR them! I'm super open to feedback and help.</p>
             </section>
 
             <!-- Install -->
             <section id="install">
                 <h2>Installation</h2>
-                <p class="requirements">Requires Python 3.10+. GPU optional (MPS/CUDA supported).</p>
+                <p class="requirements">Requires Python 3.10+. 8GB+ RAM recommended. GPU optional (MPS/CUDA supported).</p>
 <pre><code><span class="comment"># Clone and install</span>
 git clone https://github.com/iroblesrazzaq/RallyVision.git
 cd RallyVision
 pip install .</code></pre>
-                <p class="caption">Models included in repo. YOLO weights auto-download on first run.</p>
+                <p class="caption">Models are included in the repo. YOLO weights auto-download on first run.</p>
             </section>
 
             <!-- Usage -->
@@ -136,20 +140,23 @@ pip install .</code></pre>
                 <h2>Usage</h2>
                 
                 <h3>GUI</h3>
-                <p>Launch the browser interface:</p>
+                <p>Launch the browser-based interface:</p>
 <pre><code>rallyvision gui</code></pre>
-                <p>Drag and drop your video, adjust settings, download results.</p>
+                <p>Drag and drop your video, adjust settings if needed, and download the result. The GUI provides real-time progress tracking and advanced settings.</p>
                 
                 <h3>CLI</h3>
-<pre><code><span class="comment"># Basic</span>
+<pre><code><span class="comment"># Basic usage—only video path required</span>
 rallyvision --video "match.mp4"
 
-<span class="comment"># With CSV export</span>
+<span class="comment"># With CSV output</span>
 rallyvision --video "match.mp4" --write-csv
 
-<span class="comment"># Custom output</span>
-rallyvision --video "match.mp4" --output-dir "./processed"</code></pre>
-                <p>See <a href="https://github.com/iroblesrazzaq/RallyVision#readme" target="_blank">README</a> for full CLI options.</p>
+<span class="comment"># Custom output directory</span>
+rallyvision --video "match.mp4" --output-dir "./processed"
+
+<span class="comment"># Use config file for all options</span>
+rallyvision --config config.toml</code></pre>
+                <p>See the <a href="https://github.com/iroblesrazzaq/RallyVision#readme" target="_blank">README</a> for full CLI options and config file documentation.</p>
             </section>
         </main>
 

@@ -35,6 +35,17 @@ body {
     border-bottom: 1px solid #e8e4df;
 }
 
+.byline {
+    font-size: 14px;
+    color: #888;
+    margin-bottom: 8px;
+}
+
+.byline strong {
+    color: #1a1a1a;
+    font-weight: 500;
+}
+
 .header h1 {
     font-size: 32px;
     font-weight: 600;
