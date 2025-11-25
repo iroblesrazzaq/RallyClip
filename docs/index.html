@@ -9,14 +9,14 @@
     <link rel="apple-touch-icon" href="rallyclip_favicon_transparent2.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="page">
         <header class="header">
             <p class="byline">A project by <strong>Ismael Robles-Razzaq</strong></p>
-            <img src="rallyclip_favicon_transparent2.png" alt="RallyClip logo" class="header-logo">
+            <img src="rallyclip_logo_cropped.png" alt="RallyClip logo" class="header-logo">
             <h1>RallyClip</h1>
             <p class="tagline">Free, open-source tennis match segmentation.<br>Runs entirely on your machine.</p>
             <a href="https://github.com/iroblesrazzaq/RallyClip" class="github-link" target="_blank">GitHub ↗</a>
@@ -104,7 +104,7 @@
                 <p>Firstly, I had to decide on a data modality to train my models on.</p>
                 <p><strong>Raw video/images:</strong> The pure image/video is computationally infeasible. Training a video transformer or CNN to extract relevant features, even if training on single frames and not including temporal convolutions, would require much more data than I could reasonably gain access to.</p>
                 <p><strong>Sound:</strong> Using sound fails for several reasons: (1) Videos with multiple courts make it very difficult to differentiate if the sound of the racket hitting the ball came from the relevant or irrelevant match. (2) Not all shots produce sound, not all players hit hard enough to make loud enough sounds to detect. (3) Sound can be noisy/inconsistent, or a recording may not even have sound.</p>
-                <p><strong>Ball tracking:</strong> Ball tracking is doable, but can fail in obfuscation cases, or when the court and ball blend together. It can be very hard to see.</p>
+                <p><strong>Ball tracking:</strong> Ball tracking is doable, but can fail in obfuscation cases, or when the court and ball blend together, it can be very hard to see.</p>
                 <p><strong>Player poses:</strong> I finally decided on using player pose data. A point being in play requires the players to move and swing their rackets in distinct patterns. Furthermore, as players will almost certainly be visible in frame during points, they will provide a consistent signal. Lastly, pose extraction is computationally cheap: the YOLOv8-pose models I use are 3.1 and 11.6 million parameters, which result in fast feature extraction.</p>
                 
                 <h3>Training Data</h3>
