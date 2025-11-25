@@ -3,7 +3,7 @@
 CLI and GUI tool that extracts points from full tennis match video and outputs a segmented video (and optional CSV).
 
 ## Prereqs
-- Python 3.10+
+- Python 3.10-3.11
 - A clean virtual environment is recommended (`python -m venv .venv && source .venv/bin/activate` or conda equivalent).
 
 ## Install
