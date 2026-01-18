@@ -26,6 +26,11 @@ dependencies = [
   "flask-cors>=4.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+  "pytest",
+]
+
 [project.scripts]
 rallyvision = "cli:main"
 
