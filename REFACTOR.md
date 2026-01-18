@@ -107,6 +107,7 @@ Segment-level:
 - scripts/convert_annotations.py: CSV -> JSON annotation converter.
 - scripts/preprocess_yolo.py: HDF5 preprocessing runner.
 - scripts/build_features.py: feature builder runner.
+- scripts/build_dataset.py: dataset builder runner.
 - src/training/
   - io/annotations.py            # CSV -> JSON, JSON loader
   - io/metadata.py               # per-video metadata registry
