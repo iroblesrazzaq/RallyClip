@@ -118,9 +118,11 @@ Segment-level:
   - features/v1.py               # current feature engineering
   - dataset/builder.py           # offline HDF5 dataset creation
   - dataset/splits.py            # split strategies
+  - dataset/hdf5_dataset.py      # in-memory dataset loader
   - models/lstm.py               # LSTM model definition
   - train/loop.py                # training loop + metrics + W&B
   - eval/evaluator.py            # evaluation on val/test
+  - eval/checkpoint.py           # evaluate saved checkpoints
   - metrics/frame.py             # frame metrics
   - metrics/segment.py           # segment metrics
   - viz/renderer.py              # video overlay helpers

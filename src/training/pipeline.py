@@ -10,7 +10,10 @@ from training.dataset.splits import SplitConfig
 from training.features.builder import FeatureBuildConfig, FeatureBuilder
 from training.io.videos import resolve_videos
 from training.pose.yolo_hdf5 import YoloExtractConfig, YoloHdf5Extractor
+from training.eval.checkpoint import evaluate_checkpoint
+from training.eval.evaluator import SegmentEvalConfig
 from training.preprocess.preprocessor import Hdf5Preprocessor, PreprocessConfig
+from training.train.loop import train as train_loop
 
 logger = logging.getLogger(__name__)
 
@@ -268,11 +271,54 @@ def _run_dataset(config: Dict[str, Any]) -> None:
 
 
 def _run_train(config: Dict[str, Any]) -> None:
-    logger.info("TODO: training loop")
+    data_root = Path(config["data_root"])
+    train_cfg = config.get("train", {})
+    preprocess_cfg = config.get("preprocess", {})
+    run_dir = data_root / "runs" / config.get("run_id", "default")
+    dataset_dir = data_root / "datasets" / config.get("run_id", "default")
+
+    segment_cfg = train_cfg.get("segment_eval", {})
+    train_cfg["segment_eval"] = SegmentEvalConfig(
+        low=float(segment_cfg.get("low", 0.45)),
+        high=float(segment_cfg.get("high", 0.8)),
+        sigma=float(segment_cfg.get("sigma", 1.5)),
+        min_dur_sec=float(segment_cfg.get("min_dur_sec", 0.5)),
+    )
+    train_cfg["fps"] = float(preprocess_cfg.get("target_fps", 15))
+    train_loop(dataset_dir, run_dir, train_cfg)
 
 
 def _run_eval(config: Dict[str, Any]) -> None:
-    logger.info("TODO: evaluation")
+    data_root = Path(config["data_root"])
+    train_cfg = config.get("train", {})
+    preprocess_cfg = config.get("preprocess", {})
+
+    run_dir = data_root / "runs" / config.get("run_id", "default")
+    dataset_dir = data_root / "datasets" / config.get("run_id", "default")
+    checkpoint_path = run_dir / "checkpoints" / "best.pth"
+    test_path = dataset_dir / "test.h5"
+
+    seg_cfg = train_cfg.get("segment_eval", {})
+    segment_cfg = SegmentEvalConfig(
+        low=float(seg_cfg.get("low", 0.45)),
+        high=float(seg_cfg.get("high", 0.8)),
+        sigma=float(seg_cfg.get("sigma", 1.5)),
+        min_dur_sec=float(seg_cfg.get("min_dur_sec", 0.5)),
+    )
+
+    metrics, loss = evaluate_checkpoint(
+        checkpoint_path,
+        test_path,
+        device_str=train_cfg.get("device"),
+        threshold=float(train_cfg.get("threshold", 0.5)),
+        segment_cfg=segment_cfg,
+        fps=float(preprocess_cfg.get("target_fps", 15)),
+        pos_weight=float(train_cfg.get("pos_weight", 3.0)),
+    )
+    logger.info("Test loss: %.4f", loss)
+    logger.info("Test metrics: %s", metrics)
+
+
 
 
 def _format_conf(conf: float) -> str:
