@@ -104,6 +104,9 @@ Segment-level:
 - visualize.py (repo root): config-driven visualization entrypoint.
 - scripts/extract_yolo.py: standalone YOLO-to-HDF5 extraction.
 - scripts/cache_court_masks.py: standalone court mask cache runner.
+- scripts/convert_annotations.py: CSV -> JSON annotation converter.
+- scripts/preprocess_yolo.py: HDF5 preprocessing runner.
+- scripts/build_features.py: feature builder runner.
 - src/training/
   - io/annotations.py            # CSV -> JSON, JSON loader
   - io/metadata.py               # per-video metadata registry
