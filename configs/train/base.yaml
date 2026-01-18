@@ -42,14 +42,16 @@ features:
   overwrite: false
 
 dataset:
-  seq_len: 300
-  overlap: 150
+  seq_len_seconds: 20
+  overlap_seconds: 10
   split:
     strategy: hybrid
     seed: 1337
     test_videos: []
     val_ratio: 0.1
     test_ratio: 0.1
+  mode: annotated
+  videos: []
 
 train:
   batch_size: 32
