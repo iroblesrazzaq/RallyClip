@@ -10,6 +10,8 @@ _DEFAULTS: Dict[str, Any] = {
     "data_root": "data",
     "steps": ["extract", "preprocess", "features", "dataset", "train", "eval"],
     "wandb": {"enabled": False, "project": None, "entity": None},
+    "videos": [],
+    "overwrite_all": False,
 }
 
 
