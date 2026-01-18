@@ -27,6 +27,11 @@ preprocess:
   target_fps: 15
   save_court_masks: true
 
+court:
+  model_path: yolov8s.pt
+  target_time: 60
+  force: false
+
 features:
   feature_set: v1
 

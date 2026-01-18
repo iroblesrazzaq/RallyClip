@@ -103,6 +103,7 @@ Segment-level:
 - train.py (repo root): config-driven CLI entrypoint for the pipeline.
 - visualize.py (repo root): config-driven visualization entrypoint.
 - scripts/extract_yolo.py: standalone YOLO-to-HDF5 extraction.
+- scripts/cache_court_masks.py: standalone court mask cache runner.
 - src/training/
   - io/annotations.py            # CSV -> JSON, JSON loader
   - io/metadata.py               # per-video metadata registry
