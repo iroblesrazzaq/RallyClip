@@ -11,6 +11,17 @@ steps:
 yolo:
   model: yolov8s-pose.pt
   conf: 0.25
+  model_dir: models
+  device: null
+  batch_size: null
+
+extract:
+  mode: annotated
+  videos: []
+  start_time: 0
+  duration: null
+  overwrite: false
+  resume: true
 
 preprocess:
   target_fps: 15
