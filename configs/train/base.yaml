@@ -1,0 +1,41 @@
+data_root: data
+run_id: null
+steps:
+  - extract
+  - preprocess
+  - features
+  - dataset
+  - train
+  - eval
+
+yolo:
+  model: yolov8s-pose.pt
+  conf: 0.25
+
+preprocess:
+  target_fps: 15
+  save_court_masks: true
+
+features:
+  feature_set: v1
+
+dataset:
+  seq_len: 300
+  overlap: 150
+  split:
+    strategy: hybrid
+    seed: 1337
+    test_videos: []
+    val_ratio: 0.1
+    test_ratio: 0.1
+
+train:
+  batch_size: 32
+  epochs: 50
+  lr: 0.001
+  checkpoint_metric: balanced_accuracy
+
+wandb:
+  enabled: false
+  project: null
+  entity: null
