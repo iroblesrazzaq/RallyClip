@@ -26,6 +26,9 @@ extract:
 preprocess:
   target_fps: 15
   save_court_masks: true
+  mode: annotated
+  videos: []
+  overwrite: false
 
 court:
   model_path: yolov8s.pt
@@ -34,6 +37,9 @@ court:
 
 features:
   feature_set: v1
+  mode: annotated
+  videos: []
+  overwrite: false
 
 dataset:
   seq_len: 300
