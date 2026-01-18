@@ -102,6 +102,7 @@ Segment-level:
 ## New modules and files
 - train.py (repo root): config-driven CLI entrypoint for the pipeline.
 - visualize.py (repo root): config-driven visualization entrypoint.
+- scripts/extract_yolo.py: standalone YOLO-to-HDF5 extraction.
 - src/training/
   - io/annotations.py            # CSV -> JSON, JSON loader
   - io/metadata.py               # per-video metadata registry
