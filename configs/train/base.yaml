@@ -7,6 +7,8 @@ steps:
   - dataset
   - train
   - eval
+videos: []
+overwrite_all: false
 
 yolo:
   model: yolov8s-pose.pt
