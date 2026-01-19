@@ -17,7 +17,8 @@ def compute_frame_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: flo
         "f1": float(f1_score(y_true, y_pred, zero_division=0)),
     }
     try:
-        metrics["auroc"] = float(roc_auc_score(y_true, y_prob))
+        auroc = float(roc_auc_score(y_true, y_prob))
+        metrics["auroc"] = None if np.isnan(auroc) else auroc
     except ValueError:
         metrics["auroc"] = None
     return metrics
