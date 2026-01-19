@@ -293,10 +293,11 @@ def _raw_h5_path(data_root: Path, video_path: Path, yolo_cfg: Dict[str, Any], ex
     conf = float(yolo_cfg.get("conf", 0.25))
     conf_tag = f"{conf:.3f}".rstrip("0").rstrip(".").replace(".", "p")
     model_tag = Path(str(yolo_cfg.get("model", "yolov8s-pose.pt"))).name
+    imgsz = int(yolo_cfg.get("imgsz", 1920))
     start_time = extract_cfg.get("start_time", 0)
     duration = extract_cfg.get("duration")
     dur_tag = "full" if duration in (None, "", "null") else str(duration)
-    raw_root = data_root / "pose_data" / "raw" / f"yolo={model_tag}" / f"conf={conf_tag}"
+    raw_root = data_root / "pose_data" / "raw" / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
     return raw_root / f"{video_path.stem}__start{start_time}__dur{dur_tag}.h5"
 
 
@@ -304,8 +305,17 @@ def _preproc_h5_path(data_root: Path, video_path: Path, yolo_cfg: Dict[str, Any]
     conf = float(yolo_cfg.get("conf", 0.25))
     conf_tag = f"{conf:.3f}".rstrip("0").rstrip(".").replace(".", "p")
     model_tag = Path(str(yolo_cfg.get("model", "yolov8s-pose.pt"))).name
+    imgsz = int(yolo_cfg.get("imgsz", 1920))
     fps = preprocess_cfg.get("target_fps", 15)
-    preproc_root = data_root / "pose_data" / "preprocessed" / f"yolo={model_tag}" / f"conf={conf_tag}" / f"fps={fps}"
+    preproc_root = (
+        data_root
+        / "pose_data"
+        / "preprocessed"
+        / f"yolo={model_tag}"
+        / f"conf={conf_tag}"
+        / f"imgsz={imgsz}"
+        / f"fps={fps}"
+    )
     return preproc_root / f"{video_path.stem}__fps{fps}.h5"
 
 

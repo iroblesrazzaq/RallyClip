@@ -112,6 +112,7 @@ def main() -> int:
 
     conf = float(yolo_cfg.get("conf", 0.25))
     model_path = str(yolo_cfg.get("model", "yolov8s-pose.pt"))
+    imgsz = int(yolo_cfg.get("imgsz", 1920))
     model_dir = yolo_cfg.get("model_dir", "models")
     device = yolo_cfg.get("device")
     batch_size = yolo_cfg.get("batch_size")
@@ -123,12 +124,15 @@ def main() -> int:
             model_dir=str(model_dir) if model_dir else None,
             device=device,
             batch_size=batch_size,
+            imgsz=imgsz,
         )
     )
 
     conf_tag = _format_conf(conf)
     model_tag = Path(model_path).name
-    output_root = data_root / "pose_data" / "raw" / f"yolo={model_tag}" / f"conf={conf_tag}"
+    output_root = (
+        data_root / "pose_data" / "raw" / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
+    )
 
     for video_name in videos:
         video_path = Path(video_name)

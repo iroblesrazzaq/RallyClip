@@ -12,10 +12,27 @@
 
 
 - test YOLO preproc hyperparams, particularly yolo size on quality of model outputs
-- fine tune YOLO-n on YOLO-L outputs
 
 
 - test automating data collection with model self-dataset generation
 - SwingVision data generation
+
+
+- improve postprocessing: train another model with IOU?
+- another LSTM?
+
+
+- try LSTM with attention, other architectures, hyperparams. 
+
+- optimize inference: push YOLO inference cost as far down as possible
+- minimize downsampled frames
+- introduce linear interpolation for features?
+
+- fine tune YOLO-n on YOLO-L outputs, reduced imgsz
+
+- optimize inference with batching, other stuff?
+- video resolution: if we can reduce video res for smaller yolo inference, would be optimal: potentially reduce imgsz
+
+
 
 
