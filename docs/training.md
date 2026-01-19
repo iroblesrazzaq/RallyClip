@@ -18,6 +18,7 @@ data/
 ```
 
 Annotation files are expected at `data/annotations/<video_filename>.json` where `<video_filename>` includes the extension (e.g., `match1.mp4.json`).
+Raw/preprocessed/features are nested by YOLO model, confidence, and `imgsz` (plus target FPS where relevant).
 
 ## Annotation format
 ```json
@@ -76,9 +77,9 @@ python visualize.py --config configs/train/base.yaml --stage preproc --video mat
 Outputs land in `data/visualizations/<run_id>/` and use the source video FPS.
 
 ## Output artifacts
-- `data/pose_data/raw/.../*.h5`: raw YOLO detections per frame.
-- `data/pose_data/preprocessed/.../*.h5`: downsampled per-frame detections + targets.
-- `data/pose_data/features/.../*.h5`: feature vectors + targets.
+- `data/pose_data/raw/yolo=<model>/conf=<conf>/imgsz=<imgsz>/*.h5`: raw YOLO detections per frame.
+- `data/pose_data/preprocessed/yolo=<model>/conf=<conf>/imgsz=<imgsz>/fps=<fps>/*.h5`: downsampled per-frame detections + targets.
+- `data/pose_data/features/yolo=<model>/conf=<conf>/imgsz=<imgsz>/fps=<fps>/*.h5`: feature vectors + targets.
 - `data/datasets/<run_id>/train.h5`, `val.h5`, `test.h5`.
 - `data/datasets/<run_id>/scaler.joblib`.
 - `data/datasets/<run_id>/dataset_manifest.json`.
@@ -93,3 +94,4 @@ Outputs land in `data/visualizations/<run_id>/` and use the source video FPS.
 - `dataset.seq_len_seconds` + `overlap_seconds`: sequence windowing in seconds.
 - `dataset.split.strategy`: `by_video`, `within_video`, or `hybrid`.
 - `train.device`: `cuda`, `mps`, or `cpu` (auto-picks if null).
+- `yolo.imgsz`: input resize for YOLO (higher = more compute).

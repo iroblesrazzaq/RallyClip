@@ -67,6 +67,7 @@ def _run_extract(config: Dict[str, Any]) -> None:
     conf = float(yolo_cfg.get("conf", 0.25))
     model_path = str(yolo_cfg.get("model", "yolov8s-pose.pt"))
     model_dir = yolo_cfg.get("model_dir", "models")
+    imgsz = int(yolo_cfg.get("imgsz", 1920))
 
     start_time = float(extract_cfg.get("start_time", 0))
     duration = _parse_optional_float(extract_cfg.get("duration"))
@@ -79,12 +80,15 @@ def _run_extract(config: Dict[str, Any]) -> None:
             model_dir=str(model_dir) if model_dir else None,
             device=yolo_cfg.get("device"),
             batch_size=yolo_cfg.get("batch_size"),
+            imgsz=imgsz,
         )
     )
 
     conf_tag = _format_conf(conf)
     model_tag = Path(model_path).name
-    output_root = data_root / "pose_data" / "raw" / f"yolo={model_tag}" / f"conf={conf_tag}"
+    output_root = (
+        data_root / "pose_data" / "raw" / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
+    )
 
     for video in videos:
         video_path = Path(video)
@@ -126,13 +130,22 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
     conf = float(yolo_cfg.get("conf", 0.25))
     model_tag = Path(str(yolo_cfg.get("model", "yolov8s-pose.pt"))).name
     conf_tag = _format_conf(conf)
+    imgsz = int(yolo_cfg.get("imgsz", 1920))
     fps = float(preprocess_cfg.get("target_fps", 15))
 
-    output_root = data_root / "pose_data" / "preprocessed" / f"yolo={model_tag}" / f"conf={conf_tag}" / f"fps={fps}"
+    output_root = (
+        data_root
+        / "pose_data"
+        / "preprocessed"
+        / f"yolo={model_tag}"
+        / f"conf={conf_tag}"
+        / f"imgsz={imgsz}"
+        / f"fps={fps}"
+    )
 
     start_time = float(extract_cfg.get("start_time", 0))
     duration = _parse_optional_float(extract_cfg.get("duration"))
-    raw_root = data_root / "pose_data" / "raw" / f"yolo={model_tag}" / f"conf={conf_tag}"
+    raw_root = data_root / "pose_data" / "raw" / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
 
     preprocessor = Hdf5Preprocessor(
         PreprocessConfig(
@@ -190,11 +203,28 @@ def _run_features(config: Dict[str, Any]) -> None:
     conf = float(yolo_cfg.get("conf", 0.25))
     model_tag = Path(str(yolo_cfg.get("model", "yolov8s-pose.pt"))).name
     conf_tag = _format_conf(conf)
+    imgsz = int(yolo_cfg.get("imgsz", 1920))
     fps = float(preprocess_cfg.get("target_fps", 15))
     feature_set = features_cfg.get("feature_set", "v1")
 
-    preproc_root = data_root / "pose_data" / "preprocessed" / f"yolo={model_tag}" / f"conf={conf_tag}" / f"fps={fps}"
-    output_root = data_root / "pose_data" / "features" / f"yolo={model_tag}" / f"conf={conf_tag}" / f"fps={fps}"
+    preproc_root = (
+        data_root
+        / "pose_data"
+        / "preprocessed"
+        / f"yolo={model_tag}"
+        / f"conf={conf_tag}"
+        / f"imgsz={imgsz}"
+        / f"fps={fps}"
+    )
+    output_root = (
+        data_root
+        / "pose_data"
+        / "features"
+        / f"yolo={model_tag}"
+        / f"conf={conf_tag}"
+        / f"imgsz={imgsz}"
+        / f"fps={fps}"
+    )
 
     overwrite = bool(config.get("overwrite_all") or features_cfg.get("overwrite", False))
 
@@ -243,10 +273,19 @@ def _run_dataset(config: Dict[str, Any]) -> None:
     conf = float(yolo_cfg.get("conf", 0.25))
     model_tag = Path(str(yolo_cfg.get("model", "yolov8s-pose.pt"))).name
     conf_tag = _format_conf(conf)
+    imgsz = int(yolo_cfg.get("imgsz", 1920))
     fps = float(preprocess_cfg.get("target_fps", 15))
     feature_set = features_cfg.get("feature_set", "v1")
 
-    feature_root = data_root / "pose_data" / "features" / f"yolo={model_tag}" / f"conf={conf_tag}" / f"fps={fps}"
+    feature_root = (
+        data_root
+        / "pose_data"
+        / "features"
+        / f"yolo={model_tag}"
+        / f"conf={conf_tag}"
+        / f"imgsz={imgsz}"
+        / f"fps={fps}"
+    )
 
     split_cfg = SplitConfig(
         strategy=dataset_cfg.get("split", {}).get("strategy", "hybrid"),

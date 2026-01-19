@@ -31,6 +31,7 @@ def test_validate_metadata_mismatch(tmp_path):
         h5f.attrs["duration"] = -1.0
         h5f.attrs["yolo_model"] = "model.pt"
         h5f.attrs["conf"] = 0.25
+        h5f.attrs["imgsz"] = 1920
         h5f.create_group("frames")
         h5f.create_group("detections")
 
@@ -43,4 +44,5 @@ def test_validate_metadata_mismatch(tmp_path):
                 duration=None,
                 model_path="model.pt",
                 conf=0.25,
+                imgsz=1920,
             )

@@ -45,8 +45,17 @@ def main() -> int:
     yolo_model = Path(yolo_cfg.get("model", "yolov8s-pose.pt")).name
     conf = float(yolo_cfg.get("conf", 0.25))
     conf_tag = f"{conf:.3f}".rstrip("0").rstrip(".").replace(".", "p")
+    imgsz = int(yolo_cfg.get("imgsz", 1920))
 
-    output_root = data_root / "pose_data" / "preprocessed" / f"yolo={yolo_model}" / f"conf={conf_tag}" / f"fps={preprocess_cfg.get('target_fps', 15)}"
+    output_root = (
+        data_root
+        / "pose_data"
+        / "preprocessed"
+        / f"yolo={yolo_model}"
+        / f"conf={conf_tag}"
+        / f"imgsz={imgsz}"
+        / f"fps={preprocess_cfg.get('target_fps', 15)}"
+    )
 
     start_time = extract_cfg.get("start_time", 0)
     duration = extract_cfg.get("duration")
@@ -78,6 +87,7 @@ def main() -> int:
             / "raw"
             / f"yolo={yolo_model}"
             / f"conf={conf_tag}"
+            / f"imgsz={imgsz}"
             / f"{video_path.stem}__start{start_time}__dur{dur_tag}.h5"
         )
         if not raw_h5.exists():

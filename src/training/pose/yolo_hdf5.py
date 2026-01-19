@@ -25,6 +25,7 @@ class YoloExtractConfig:
     model_dir: Optional[str] = None
     device: Optional[str] = None
     batch_size: Optional[int] = None
+    imgsz: int = 1920
 
 
 class YoloHdf5Extractor:
@@ -137,7 +138,7 @@ class YoloHdf5Extractor:
                 verbose=False,
                 device=self.device,
                 conf=self.cfg.conf,
-                imgsz=1920,
+                imgsz=self.cfg.imgsz,
                 batch=self.batch_size,
             )
         except TypeError:
@@ -146,7 +147,7 @@ class YoloHdf5Extractor:
                 verbose=False,
                 device=self.device,
                 conf=self.cfg.conf,
-                imgsz=1920,
+                imgsz=self.cfg.imgsz,
             )
 
     @staticmethod
@@ -221,12 +222,21 @@ class YoloHdf5Extractor:
         h5f = h5py.File(output_path, mode)
 
         if "frames" in h5f and "detections" in h5f:
-            self._validate_metadata(h5f, video_path, start_time, duration, self.cfg.model_path, self.cfg.conf)
+            self._validate_metadata(
+                h5f,
+                video_path,
+                start_time,
+                duration,
+                self.cfg.model_path,
+                self.cfg.conf,
+                self.cfg.imgsz,
+            )
             return h5f
 
         h5f.attrs["video_path"] = str(video_path)
         h5f.attrs["yolo_model"] = self.cfg.model_path
         h5f.attrs["conf"] = float(self.cfg.conf)
+        h5f.attrs["imgsz"] = int(self.cfg.imgsz)
         h5f.attrs["start_time"] = float(start_time)
         h5f.attrs["duration"] = -1.0 if duration is None else float(duration)
         h5f.attrs["width"] = int(width)
@@ -321,6 +331,7 @@ class YoloHdf5Extractor:
         duration: Optional[float],
         model_path: str,
         conf: float,
+        imgsz: int,
     ) -> None:
         expected = {
             "video_path": str(video_path),
@@ -328,6 +339,7 @@ class YoloHdf5Extractor:
             "duration": -1.0 if duration is None else float(duration),
             "yolo_model": model_path,
             "conf": float(conf),
+            "imgsz": int(imgsz),
         }
         for key, value in expected.items():
             if key not in h5f.attrs:

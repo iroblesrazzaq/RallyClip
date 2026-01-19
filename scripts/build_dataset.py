@@ -45,10 +45,19 @@ def main() -> int:
     yolo_model = Path(yolo_cfg.get("model", "yolov8s-pose.pt")).name
     conf = float(yolo_cfg.get("conf", 0.25))
     conf_tag = f"{conf:.3f}".rstrip("0").rstrip(".").replace(".", "p")
+    imgsz = int(yolo_cfg.get("imgsz", 1920))
     fps = float(preprocess_cfg.get("target_fps", 15))
 
     feature_set = features_cfg.get("feature_set", "v1")
-    feature_root = data_root / "pose_data" / "features" / f"yolo={yolo_model}" / f"conf={conf_tag}" / f"fps={fps}"
+    feature_root = (
+        data_root
+        / "pose_data"
+        / "features"
+        / f"yolo={yolo_model}"
+        / f"conf={conf_tag}"
+        / f"imgsz={imgsz}"
+        / f"fps={fps}"
+    )
 
     split_cfg = SplitConfig(
         strategy=dataset_cfg.get("split", {}).get("strategy", "hybrid"),
