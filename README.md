@@ -82,3 +82,10 @@ Run with:
 ```bash
 rallyvision --config config.toml
 ```
+
+## Training pipeline (dev)
+Training uses a separate YAML config and step-based pipeline.
+
+- Config: `configs/train/base.yaml`
+- Entry point: `python train.py --config configs/train/base.yaml`
+- Docs: `docs/training.md`
