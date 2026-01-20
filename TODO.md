@@ -34,4 +34,8 @@
 
 
 
+- add aggresiveness slider for postprocessing tuning of to have more sensitive to inclusion vs not
 
+
+
+- document failure cases for court detector, maybe make more robust?
