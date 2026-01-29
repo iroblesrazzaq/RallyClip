@@ -346,7 +346,7 @@ class YoloHdf5Extractor:
                 continue
             if h5f.attrs[key] != value:
                 raise ValueError(
-                    f\"Resume metadata mismatch for {key}: {h5f.attrs[key]} != {value}\"
+                    f"Resume metadata mismatch for {key}: {h5f.attrs[key]} != {value}"
                 )
 
 
