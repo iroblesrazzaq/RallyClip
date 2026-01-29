@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from preprocessing.court_detector_impl import CourtDetector
+from training.paths import pose_courts_dir
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ class CourtMaskCache:
         self.target_time = target_time
 
     def cache_path(self, data_root: Path, video_path: Path) -> Path:
-        return data_root / "pose_data" / "courts" / f"{video_path.stem}.npz"
+        return pose_courts_dir(data_root) / f"{video_path.stem}.npz"
 
     def load(self, cache_path: Path, current_video_meta: Optional[Dict[str, Any]] = None) -> Optional[CourtCacheResult]:
         if not cache_path.exists():

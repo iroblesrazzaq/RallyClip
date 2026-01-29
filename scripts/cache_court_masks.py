@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from training.courts.cache import CourtMaskCache  # noqa: E402
 from training.io.config import load_config  # noqa: E402
 from training.io.videos import resolve_videos  # noqa: E402
+from training.paths import annotations_dir, raw_videos_dir, resolve_data_root  # noqa: E402
 
 
 def main() -> int:
@@ -25,14 +26,14 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
     config = load_config(args.config)
-    data_root = Path(config.get("data_root", "data")).expanduser().resolve()
+    data_root = resolve_data_root(config)
 
     court_cfg = config.get("court", {})
     mode = args.mode or court_cfg.get("mode", "annotated")
     explicit = args.video or court_cfg.get("videos")
 
-    raw_dir = data_root / "raw_videos"
-    ann_dir = data_root / "annotations"
+    raw_dir = raw_videos_dir(data_root)
+    ann_dir = annotations_dir(data_root)
 
     videos = resolve_videos(mode, raw_dir, ann_dir, explicit)
     if not videos:

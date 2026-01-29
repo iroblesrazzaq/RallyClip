@@ -7,11 +7,21 @@ from typing import Any, Dict, Iterable, Optional
 
 from training.dataset.builder import DatasetBuilder, DatasetConfig
 from training.dataset.splits import SplitConfig
-from training.features.builder import FeatureBuildConfig, FeatureBuilder
-from training.io.videos import resolve_videos
-from training.pose.yolo_hdf5 import YoloExtractConfig, YoloHdf5Extractor
 from training.eval.checkpoint import evaluate_checkpoint
 from training.eval.evaluator import SegmentEvalConfig
+from training.features.builder import FeatureBuildConfig, FeatureBuilder
+from training.io.videos import resolve_videos
+from training.paths import (
+    annotations_dir,
+    datasets_dir,
+    pose_features_dir,
+    pose_preprocessed_dir,
+    pose_raw_dir,
+    raw_videos_dir,
+    resolve_data_root,
+    runs_dir,
+)
+from training.pose.yolo_hdf5 import YoloExtractConfig, YoloHdf5Extractor
 from training.preprocess.preprocessor import Hdf5Preprocessor, PreprocessConfig
 from training.train.loop import train as train_loop
 
@@ -25,7 +35,7 @@ def run_pipeline(config: Dict[str, Any], steps_override: Optional[Iterable[str]]
     run_id = config.get("run_id") or datetime.now().strftime("%Y%m%d_%H%M%S")
     config["run_id"] = run_id
 
-    data_root = Path(config.get("data_root", "data")).expanduser().resolve()
+    data_root = resolve_data_root(config)
     config["data_root"] = str(data_root)
 
     logger.info("Run id: %s", run_id)
@@ -52,8 +62,8 @@ def _run_extract(config: Dict[str, Any]) -> None:
     extract_cfg = config.get("extract", {})
     yolo_cfg = config.get("yolo", {})
 
-    raw_dir = data_root / "raw_videos"
-    ann_dir = data_root / "annotations"
+    raw_dir = raw_videos_dir(data_root)
+    ann_dir = annotations_dir(data_root)
 
     videos = resolve_videos(
         extract_cfg.get("mode", "annotated"),
@@ -86,9 +96,7 @@ def _run_extract(config: Dict[str, Any]) -> None:
 
     conf_tag = _format_conf(conf)
     model_tag = Path(model_path).name
-    output_root = (
-        data_root / "pose_data" / "raw" / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
-    )
+    output_root = pose_raw_dir(data_root) / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
 
     for video in videos:
         video_path = Path(video)
@@ -115,8 +123,8 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
     extract_cfg = config.get("extract", {})
     yolo_cfg = config.get("yolo", {})
 
-    raw_dir = data_root / "raw_videos"
-    ann_dir = data_root / "annotations"
+    raw_dir = raw_videos_dir(data_root)
+    ann_dir = annotations_dir(data_root)
 
     videos = resolve_videos(
         preprocess_cfg.get("mode", "annotated"),
@@ -134,9 +142,7 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
     fps = float(preprocess_cfg.get("target_fps", 15))
 
     output_root = (
-        data_root
-        / "pose_data"
-        / "preprocessed"
+        pose_preprocessed_dir(data_root)
         / f"yolo={model_tag}"
         / f"conf={conf_tag}"
         / f"imgsz={imgsz}"
@@ -145,7 +151,7 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
 
     start_time = float(extract_cfg.get("start_time", 0))
     duration = _parse_optional_float(extract_cfg.get("duration"))
-    raw_root = data_root / "pose_data" / "raw" / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
+    raw_root = pose_raw_dir(data_root) / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
 
     preprocessor = Hdf5Preprocessor(
         PreprocessConfig(
@@ -188,8 +194,8 @@ def _run_features(config: Dict[str, Any]) -> None:
     preprocess_cfg = config.get("preprocess", {})
     yolo_cfg = config.get("yolo", {})
 
-    raw_dir = data_root / "raw_videos"
-    ann_dir = data_root / "annotations"
+    raw_dir = raw_videos_dir(data_root)
+    ann_dir = annotations_dir(data_root)
 
     videos = resolve_videos(
         features_cfg.get("mode", "annotated"),
@@ -208,18 +214,14 @@ def _run_features(config: Dict[str, Any]) -> None:
     feature_set = features_cfg.get("feature_set", "v1")
 
     preproc_root = (
-        data_root
-        / "pose_data"
-        / "preprocessed"
+        pose_preprocessed_dir(data_root)
         / f"yolo={model_tag}"
         / f"conf={conf_tag}"
         / f"imgsz={imgsz}"
         / f"fps={fps}"
     )
     output_root = (
-        data_root
-        / "pose_data"
-        / "features"
+        pose_features_dir(data_root)
         / f"yolo={model_tag}"
         / f"conf={conf_tag}"
         / f"imgsz={imgsz}"
@@ -258,8 +260,8 @@ def _run_dataset(config: Dict[str, Any]) -> None:
     preprocess_cfg = config.get("preprocess", {})
     yolo_cfg = config.get("yolo", {})
 
-    raw_dir = data_root / "raw_videos"
-    ann_dir = data_root / "annotations"
+    raw_dir = raw_videos_dir(data_root)
+    ann_dir = annotations_dir(data_root)
 
     videos = resolve_videos(
         dataset_cfg.get("mode", "annotated"),
@@ -278,9 +280,7 @@ def _run_dataset(config: Dict[str, Any]) -> None:
     feature_set = features_cfg.get("feature_set", "v1")
 
     feature_root = (
-        data_root
-        / "pose_data"
-        / "features"
+        pose_features_dir(data_root)
         / f"yolo={model_tag}"
         / f"conf={conf_tag}"
         / f"imgsz={imgsz}"
@@ -305,7 +305,7 @@ def _run_dataset(config: Dict[str, Any]) -> None:
         )
     )
 
-    output_dir = data_root / "datasets" / config.get("run_id", "default")
+    output_dir = datasets_dir(data_root) / config.get("run_id", "default")
     builder.build(feature_root, output_dir, videos, feature_set)
 
 
@@ -313,8 +313,8 @@ def _run_train(config: Dict[str, Any]) -> None:
     data_root = Path(config["data_root"])
     train_cfg = config.get("train", {})
     preprocess_cfg = config.get("preprocess", {})
-    run_dir = data_root / "runs" / config.get("run_id", "default")
-    dataset_dir = data_root / "datasets" / config.get("run_id", "default")
+    run_dir = runs_dir(data_root) / config.get("run_id", "default")
+    dataset_dir = datasets_dir(data_root) / config.get("run_id", "default")
 
     segment_cfg = train_cfg.get("segment_eval", {})
     train_cfg["segment_eval"] = SegmentEvalConfig(
@@ -332,8 +332,8 @@ def _run_eval(config: Dict[str, Any]) -> None:
     train_cfg = config.get("train", {})
     preprocess_cfg = config.get("preprocess", {})
 
-    run_dir = data_root / "runs" / config.get("run_id", "default")
-    dataset_dir = data_root / "datasets" / config.get("run_id", "default")
+    run_dir = runs_dir(data_root) / config.get("run_id", "default")
+    dataset_dir = datasets_dir(data_root) / config.get("run_id", "default")
     checkpoint_path = run_dir / "checkpoints" / "best.pth"
     test_path = dataset_dir / "test.h5"
 

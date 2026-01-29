@@ -6,8 +6,10 @@ from typing import Any, Dict
 
 import yaml
 
+from training.paths import DATA_ROOT_DEFAULT
+
 _DEFAULTS: Dict[str, Any] = {
-    "data_root": "data",
+    "data_root": DATA_ROOT_DEFAULT,
     "steps": ["extract", "preprocess", "features", "dataset", "train", "eval"],
     "wandb": {"enabled": False, "project": None, "entity": None},
     "videos": [],
