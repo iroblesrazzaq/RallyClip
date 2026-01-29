@@ -12,6 +12,13 @@ sys.path.insert(0, str(ROOT / "src"))
 from training.features.builder import FeatureBuildConfig, FeatureBuilder  # noqa: E402
 from training.io.config import load_config  # noqa: E402
 from training.io.videos import resolve_videos  # noqa: E402
+from training.paths import (
+    annotations_dir,
+    pose_features_dir,
+    pose_preprocessed_dir,
+    raw_videos_dir,
+    resolve_data_root,
+)  # noqa: E402
 
 
 def main() -> int:
@@ -25,7 +32,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
     config = load_config(args.config)
-    data_root = Path(config.get("data_root", "data")).expanduser().resolve()
+    data_root = resolve_data_root(config)
 
     features_cfg = config.get("features", {})
     preprocess_cfg = config.get("preprocess", {})
@@ -34,8 +41,8 @@ def main() -> int:
     mode = args.mode or features_cfg.get("mode", "annotated")
     explicit = args.video or features_cfg.get("videos")
 
-    raw_dir = data_root / "raw_videos"
-    ann_dir = data_root / "annotations"
+    raw_dir = raw_videos_dir(data_root)
+    ann_dir = annotations_dir(data_root)
 
     videos = resolve_videos(mode, raw_dir, ann_dir, explicit)
     if not videos:
@@ -48,18 +55,14 @@ def main() -> int:
     fps = float(preprocess_cfg.get("target_fps", 15))
 
     preproc_root = (
-        data_root
-        / "pose_data"
-        / "preprocessed"
+        pose_preprocessed_dir(data_root)
         / f"yolo={yolo_model}"
         / f"conf={conf_tag}"
         / f"imgsz={imgsz}"
         / f"fps={fps}"
     )
     output_root = (
-        data_root
-        / "pose_data"
-        / "features"
+        pose_features_dir(data_root)
         / f"yolo={yolo_model}"
         / f"conf={conf_tag}"
         / f"imgsz={imgsz}"

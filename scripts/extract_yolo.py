@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from training.io.config import load_config  # noqa: E402
+from training.paths import annotations_dir, pose_raw_dir, raw_videos_dir, resolve_data_root  # noqa: E402
 from training.pose.yolo_hdf5 import YoloExtractConfig, YoloHdf5Extractor  # noqa: E402
 
 VIDEO_EXTS = [".mp4", ".mov", ".avi", ".mkv"]
@@ -88,7 +89,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
     config = load_config(args.config)
-    data_root = Path(config.get("data_root", "data")).expanduser().resolve()
+    data_root = resolve_data_root(config)
 
     yolo_cfg = config.get("yolo", {})
     extract_cfg = config.get("extract", {})
@@ -96,8 +97,8 @@ def main() -> int:
     mode = args.mode or extract_cfg.get("mode", "annotated")
     explicit_videos = args.video or extract_cfg.get("videos")
 
-    raw_dir = data_root / "raw_videos"
-    ann_dir = data_root / "annotations"
+    raw_dir = raw_videos_dir(data_root)
+    ann_dir = annotations_dir(data_root)
 
     videos = _resolve_videos(mode, raw_dir, ann_dir, explicit_videos)
     if not videos:
@@ -130,9 +131,7 @@ def main() -> int:
 
     conf_tag = _format_conf(conf)
     model_tag = Path(model_path).name
-    output_root = (
-        data_root / "pose_data" / "raw" / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
-    )
+    output_root = pose_raw_dir(data_root) / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
 
     for video_name in videos:
         video_path = Path(video_name)

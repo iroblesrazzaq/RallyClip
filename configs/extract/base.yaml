@@ -1,0 +1,22 @@
+data_root: data
+run_id: null
+steps:
+  - extract
+videos: []
+overwrite_all: false
+
+yolo:
+  model: yolov8s-pose.pt
+  conf: 0.25
+  imgsz: 1920
+  model_dir: models
+  device: null
+  batch_size: null
+
+extract:
+  mode: all
+  videos: []
+  start_time: 0
+  duration: null
+  overwrite: false
+  resume: true

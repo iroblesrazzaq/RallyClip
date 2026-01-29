@@ -9,6 +9,14 @@ import cv2
 import h5py
 import numpy as np
 
+from training.paths import (
+    pose_courts_dir,
+    pose_preprocessed_dir,
+    pose_raw_dir,
+    raw_videos_dir,
+    resolve_data_root,
+    visualizations_dir,
+)
 from training.viz.overlays import (
     draw_boxes,
     draw_keypoints,
@@ -35,7 +43,7 @@ def render_stage(stage: str, config: Dict[str, Any], videos: Iterable[str]) -> N
 
 
 def _render_yolo(video: str, config: Dict[str, Any]) -> None:
-    data_root = Path(config.get("data_root", "data")).expanduser().resolve()
+    data_root = resolve_data_root(config)
     yolo_cfg = config.get("yolo", {})
     extract_cfg = config.get("extract", {})
 
@@ -48,9 +56,9 @@ def _render_yolo(video: str, config: Dict[str, Any]) -> None:
 
 
 def _render_court(video: str, config: Dict[str, Any]) -> None:
-    data_root = Path(config.get("data_root", "data")).expanduser().resolve()
+    data_root = resolve_data_root(config)
     video_path = _resolve_video(data_root, video)
-    cache_path = data_root / "pose_data" / "courts" / f"{video_path.stem}.npz"
+    cache_path = pose_courts_dir(data_root) / f"{video_path.stem}.npz"
     if not cache_path.exists():
         raise FileNotFoundError(f"Court cache not found: {cache_path}")
 
@@ -60,7 +68,7 @@ def _render_court(video: str, config: Dict[str, Any]) -> None:
 
 
 def _render_preproc(video: str, config: Dict[str, Any]) -> None:
-    data_root = Path(config.get("data_root", "data")).expanduser().resolve()
+    data_root = resolve_data_root(config)
     yolo_cfg = config.get("yolo", {})
     preprocess_cfg = config.get("preprocess", {})
 
@@ -283,7 +291,7 @@ def _scale_keypoints(kps: np.ndarray, scale: Tuple[float, float]) -> np.ndarray:
 def _resolve_video(data_root: Path, video: str) -> Path:
     video_path = Path(video)
     if not video_path.is_absolute():
-        video_path = data_root / "raw_videos" / video
+        video_path = raw_videos_dir(data_root) / video
     if not video_path.exists():
         raise FileNotFoundError(f"Video not found: {video_path}")
     return video_path
@@ -297,7 +305,7 @@ def _raw_h5_path(data_root: Path, video_path: Path, yolo_cfg: Dict[str, Any], ex
     start_time = extract_cfg.get("start_time", 0)
     duration = extract_cfg.get("duration")
     dur_tag = "full" if duration in (None, "", "null") else str(duration)
-    raw_root = data_root / "pose_data" / "raw" / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
+    raw_root = pose_raw_dir(data_root) / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
     return raw_root / f"{video_path.stem}__start{start_time}__dur{dur_tag}.h5"
 
 
@@ -308,9 +316,7 @@ def _preproc_h5_path(data_root: Path, video_path: Path, yolo_cfg: Dict[str, Any]
     imgsz = int(yolo_cfg.get("imgsz", 1920))
     fps = preprocess_cfg.get("target_fps", 15)
     preproc_root = (
-        data_root
-        / "pose_data"
-        / "preprocessed"
+        pose_preprocessed_dir(data_root)
         / f"yolo={model_tag}"
         / f"conf={conf_tag}"
         / f"imgsz={imgsz}"
@@ -320,4 +326,4 @@ def _preproc_h5_path(data_root: Path, video_path: Path, yolo_cfg: Dict[str, Any]
 
 
 def _output_path(data_root: Path, run_id: str, stem: str, stage: str) -> Path:
-    return data_root / "visualizations" / run_id / f"{stem}__{stage}.mp4"
+    return visualizations_dir(data_root) / run_id / f"{stem}__{stage}.mp4"

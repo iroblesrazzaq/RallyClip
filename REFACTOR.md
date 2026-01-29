@@ -130,73 +130,73 @@ Segment-level:
 
 ## TODO checklist (implementation plan)
 1) Branch and scaffolding
-- [ ] Create branch: training-pipeline
-- [ ] Add src/training/ package skeleton and __init__.py files
-- [ ] Add train.py CLI stub with config parsing
+- [x] Create branch: training-pipeline
+- [x] Add src/training/ package skeleton and __init__.py files
+- [x] Add train.py CLI stub with config parsing
 
 2) Annotation and metadata
-- [ ] Add CSV -> JSON converter (preserve CSV input)
+- [x] Add CSV -> JSON converter (preserve CSV input)
 - [ ] Add JSON schema validation
 - [ ] Add metadata registry in data/metadata/videos.jsonl
 - [ ] Create a small script to update metadata per video
 
 3) YOLO extraction (native fps)
-- [ ] Add HDF5 writer for per-frame YOLO outputs
-- [ ] Store boxes, keypoints, confidences, timestamps, fps
-- [ ] Ensure extraction is independent from downstream steps
-- [ ] Add resumable mode (skip if already extracted)
+- [x] Add HDF5 writer for per-frame YOLO outputs
+- [x] Store boxes, keypoints, confidences, timestamps, fps
+- [x] Ensure extraction is independent from downstream steps
+- [x] Add resumable mode (skip if already extracted)
 
 4) Court detection cache
-- [ ] Store mask + metadata in data/pose_data/courts/<video>.npz
+- [x] Store mask + metadata in data/pose_data/courts/<video>.npz
 - [ ] Log per-video success/failure to court_log.jsonl
-- [ ] Expose cache load/save helpers
+- [x] Expose cache load/save helpers
 
 5) Preprocessing (downsampling + filtering)
-- [ ] Load native-fps YOLO HDF5
-- [ ] Downsample to target fps without re-running YOLO (timestamp-based schedule)
-- [ ] Apply court mask filter + player assignment
-- [ ] Save preprocessed HDF5 with per-frame labels
-- [ ] Persist sampled frame indices + timestamps for visualization mapping
+- [x] Load native-fps YOLO HDF5
+- [x] Downsample to target fps without re-running YOLO (timestamp-based schedule)
+- [x] Apply court mask filter + player assignment
+- [x] Save preprocessed HDF5 with per-frame labels
+- [x] Persist sampled frame indices + timestamps for visualization mapping
 
 6) Feature engineering registry
-- [ ] Implement FeatureSetRegistry (name -> class)
-- [ ] Add FeatureSetV1 to match current feature vector
-- [ ] Allow feature flags per run in config
-- [ ] Save feature metadata with output
+- [x] Implement FeatureSetRegistry (name -> class)
+- [x] Add FeatureSetV1 to match current feature vector
+- [x] Allow feature flags per run in config
+- [x] Save feature metadata with output
 
 7) Dataset creation (offline default)
-- [ ] Build sequences with overlap from feature HDF5
-- [ ] Implement split strategies (by_video, within_video, hybrid)
-- [ ] Fit scaler on train only, save scaler.joblib
-- [ ] Save datasets to data/datasets/<run_id>/train|val|test.h5
-- [ ] Emit dataset_manifest.json (videos, splits, metadata)
+- [x] Build sequences with overlap from feature HDF5
+- [x] Implement split strategies (by_video, within_video, hybrid)
+- [x] Fit scaler on train only, save scaler.joblib
+- [x] Save datasets to data/datasets/<run_id>/train|val|test.h5
+- [x] Emit dataset_manifest.json (videos, splits, metadata)
 - [ ] Add optional on-the-fly Dataset class for research
 
 8) Training loop
-- [ ] Implement LSTM training loop with metrics
+- [x] Implement LSTM training loop with metrics
 - [ ] Add W&B logging (optional)
 - [ ] Add early stopping + checkpointing
 - [ ] Save run config + git commit hash
 
 9) Evaluation
-- [ ] Frame-level eval on val/test
-- [ ] Segment-level eval (hysteresis + IoU matching)
+- [x] Frame-level eval on val/test
+- [x] Segment-level eval (hysteresis + IoU matching)
 - [ ] Produce eval summary JSON and per-video breakdown
 
 10) CLI and configs
-- [ ] Add config templates in configs/train/*.yaml
-- [ ] Support step selection (extract, preprocess, features, dataset, train, eval)
+- [x] Add config templates in configs/train/*.yaml
+- [x] Support step selection (extract, preprocess, features, dataset, train, eval)
 - [ ] Add dry-run mode to validate config and paths
 
 11) Documentation
-- [ ] Write docs/training.md with end-to-end usage
-- [ ] Add examples for common workflows
+- [x] Write docs/training.md with end-to-end usage
+- [x] Add examples for common workflows
 - [ ] Document how to add new feature sets and models
 
 12) Visualization (manual QA)
-- [ ] Implement visualize.py with stage selection: yolo|court|preproc
-- [ ] YOLO stage: draw boxes + keypoints + COCO skeleton lines
-- [ ] Court stage: overlay mask (alpha) + optional detected lines
-- [ ] Preproc stage: draw near/far player overlays with centroid, vx/vy, ax/ay, speed, accel
+- [x] Implement visualize.py with stage selection: yolo|court|preproc
+- [x] YOLO stage: draw boxes + keypoints + COCO skeleton lines
+- [x] Court stage: overlay mask (alpha) + optional detected lines
+- [x] Preproc stage: draw near/far player overlays with centroid, vx/vy, ax/ay, speed, accel
 - [ ] Render at native fps; blank overlays on non-sampled frames
 - [ ] Use stored sampled frame indices for deterministic mapping

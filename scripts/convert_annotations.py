@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from training.io.annotations import csv_to_json, write_annotations_json  # noqa: E402
 from training.io.videos import match_video_from_annotation  # noqa: E402
+from training.paths import annotations_dir, raw_videos_dir  # noqa: E402
 
 
 def main() -> int:
@@ -22,8 +23,8 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
     data_root = Path(args.data_root).expanduser().resolve()
-    ann_dir = data_root / "annotations"
-    raw_dir = data_root / "raw_videos"
+    ann_dir = annotations_dir(data_root)
+    raw_dir = raw_videos_dir(data_root)
 
     csv_files = [Path(p) for p in (args.csv or ann_dir.glob("*.csv"))]
     if not csv_files:
