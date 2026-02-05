@@ -8,7 +8,7 @@ overwrite_all: false
 yolo:
   model: yolov8n-pose.pt
   conf: 0.25
-  imgsz: 1920
+  imgsz: 1440
   model_dir: models
   device: null
   batch_size: null
