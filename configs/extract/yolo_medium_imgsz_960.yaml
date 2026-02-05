@@ -6,9 +6,9 @@ videos: []
 overwrite_all: false
 
 yolo:
-  model: yolov8s-pose.pt
+  model: yolov8m-pose.pt
   conf: 0.25
-  imgsz: 1920
+  imgsz: 960
   model_dir: models
   device: null
   batch_size: null
