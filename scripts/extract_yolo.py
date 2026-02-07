@@ -29,6 +29,21 @@ def _format_time(value: Optional[float]) -> str:
     return text.replace(".", "p")
 
 
+def _raw_h5_filename(
+    stem: str,
+    start_time: float,
+    duration: Optional[float],
+    sampling_mode: str,
+    sample_fps: Optional[float],
+) -> str:
+    base = f"{stem}__start{_format_time(start_time)}__dur{_format_time(duration)}"
+    if sampling_mode == "downsample_then_extract":
+        if sample_fps is None:
+            raise ValueError("sample_fps must be set when sampling_mode='downsample_then_extract'")
+        return f"{base}__samplefps{_format_time(sample_fps)}.h5"
+    return f"{base}.h5"
+
+
 def _match_video_from_annotation(csv_path: Path, raw_dir: Path) -> Optional[str]:
     base = csv_path.name
     if base.endswith(".csv"):
@@ -107,6 +122,9 @@ def main() -> int:
     start_time = float(extract_cfg.get("start_time", 0))
     duration = extract_cfg.get("duration")
     duration_val = None if duration in (None, "", "null") else float(duration)
+    sampling_mode = str(extract_cfg.get("sampling_mode", "full_then_downsample"))
+    sample_fps = extract_cfg.get("sample_fps")
+    sample_fps_val = None if sample_fps in (None, "", "null") else float(sample_fps)
 
     overwrite = bool(args.overwrite or extract_cfg.get("overwrite", False))
     resume = bool(args.resume or extract_cfg.get("resume", True))
@@ -141,13 +159,15 @@ def main() -> int:
             logging.warning("Video not found: %s", video_path)
             continue
         stem = video_path.stem
-        out_name = f"{stem}__start{_format_time(start_time)}__dur{_format_time(duration_val)}.h5"
+        out_name = _raw_h5_filename(stem, start_time, duration_val, sampling_mode, sample_fps_val)
         output_path = output_root / out_name
         extractor.extract(
             video_path=video_path,
             output_path=output_path,
             start_time=start_time,
             duration=duration_val,
+            sampling_mode=sampling_mode,
+            sample_fps=sample_fps_val,
             overwrite=overwrite,
             resume=resume,
         )

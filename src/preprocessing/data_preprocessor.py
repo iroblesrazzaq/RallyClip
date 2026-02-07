@@ -93,7 +93,7 @@ class DataPreprocessor:
 
     def generate_court_mask(self, video_path: str):
         try:
-            detector = CourtDetector(yolo_model_path='models/yolov8s.pt')
+            detector = CourtDetector(yolo_model_path='models/yolov8s-pose.pt')
             mask, clean_frame, metadata = detector.process_video(video_path, target_time=60)
             return mask
         except Exception as e:
@@ -134,7 +134,7 @@ class DataPreprocessor:
             for frame_idx, frame_data in enumerate(pose_data):
                 annotation_status = frame_data.get('annotation_status', 0)
                 all_targets.append(annotation_status)
-                if annotation_status == -100:
+                if annotation_status == -1:
                     all_frame_data.append({'boxes': np.array([]), 'keypoints': np.array([]), 'conf': np.array([])})
                     all_near_players.append(None)
                     all_far_players.append(None)

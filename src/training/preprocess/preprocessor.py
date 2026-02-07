@@ -13,6 +13,7 @@ from training.io.annotations import load_annotations_json
 from training.preprocess.player_assigner import PlayerAssigner
 
 logger = logging.getLogger(__name__)
+UNLABELED_TARGET = -1
 
 
 @dataclass
@@ -151,7 +152,7 @@ def _sample_indices(timestamps: np.ndarray, target_fps: float) -> np.ndarray:
 def _build_targets(timestamps: np.ndarray, annotations: Dict) -> np.ndarray:
     segments = annotations.get("segments", [])
     if not segments:
-        return np.full(timestamps.shape[0], -100, dtype=np.int8)
+        return np.full(timestamps.shape[0], UNLABELED_TARGET, dtype=np.int8)
     starts = np.array([seg["start_time"] for seg in segments], dtype=np.float64)
     ends = np.array([seg["end_time"] for seg in segments], dtype=np.float64)
     targets = np.zeros(timestamps.shape[0], dtype=np.int8)

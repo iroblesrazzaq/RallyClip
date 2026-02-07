@@ -25,7 +25,7 @@ class FeatureSetV1:
         far: Dict[str, np.ndarray],
         prev_near: Dict[str, np.ndarray] | None,
         prev_far: Dict[str, np.ndarray] | None,
-        prev_velocities: Dict[str, Tuple[float, float]] | None,
+        prev_velocities: Dict | None,
         dt: float,
         num_keypoints: int = 17,
     ) -> np.ndarray:
@@ -40,7 +40,7 @@ class FeatureSetV1:
         self,
         player: Dict[str, np.ndarray],
         prev_player: Dict[str, np.ndarray] | None,
-        prev_velocities: Dict[str, Tuple[float, float]] | None,
+        prev_velocities: Dict | None,
         dt: float,
         num_keypoints: int,
         prefix: str = "near",
@@ -67,21 +67,24 @@ class FeatureSetV1:
         kp_accel = np.zeros((num_keypoints, 2), dtype=np.float32)
         kp_speed = np.full(num_keypoints, -1.0, dtype=np.float32)
         kp_accel_mag = np.full(num_keypoints, -1.0, dtype=np.float32)
-        limb_lengths = np.full(14, -1.0, dtype=np.float32)
+        limb_lengths = self._limb_lengths(keypoints)
+
+        prev_centroid_vel, prev_kp_vel = self._motion_parts(prev_velocities, prefix)
 
         if prev_player and prev_player.get("exists", False):
             prev_centroid = self._centroid(prev_player["box"])
             velocity = self._velocity(centroid, prev_centroid, dt)
             speed = float(np.sqrt(velocity[0] ** 2 + velocity[1] ** 2))
-            if prev_velocities and prev_velocities.get(prefix):
-                acceleration = self._acceleration(velocity, prev_velocities[prefix], dt)
+            if prev_centroid_vel is not None:
+                acceleration = self._acceleration(velocity, prev_centroid_vel, dt)
                 accel_mag = float(np.sqrt(acceleration[0] ** 2 + acceleration[1] ** 2))
 
             prev_kps = prev_player["keypoints"]
             kp_vel = self._keypoint_velocity(keypoints, prev_kps, dt)
             kp_speed = np.sqrt(kp_vel[:, 0] ** 2 + kp_vel[:, 1] ** 2)
+            if prev_kp_vel is not None and prev_kp_vel.shape == kp_vel.shape:
+                kp_accel = self._keypoint_acceleration(kp_vel, prev_kp_vel, dt)
             kp_accel_mag = np.sqrt(kp_accel[:, 0] ** 2 + kp_accel[:, 1] ** 2)
-            limb_lengths = self._limb_lengths(keypoints)
 
         feature[0] = 1.0
         idx = 1
@@ -135,6 +138,25 @@ class FeatureSetV1:
         if dt <= 0:
             return np.zeros((curr.shape[0], 2), dtype=np.float32)
         return (curr - prev) / dt
+
+    @staticmethod
+    def _keypoint_acceleration(curr_vel: np.ndarray, prev_vel: np.ndarray, dt: float) -> np.ndarray:
+        if dt <= 0:
+            return np.zeros_like(curr_vel, dtype=np.float32)
+        return (curr_vel - prev_vel) / dt
+
+    @staticmethod
+    def _motion_parts(prev_velocities: Dict | None, prefix: str):
+        if not prev_velocities:
+            return None, None
+        value = prev_velocities.get(prefix)
+        if value is None:
+            return None, None
+        if isinstance(value, dict):
+            return value.get("centroid"), value.get("keypoints")
+        if isinstance(value, tuple) and len(value) == 2:
+            return value, None
+        return None, None
 
     @staticmethod
     def _limb_lengths(keypoints: np.ndarray) -> np.ndarray:

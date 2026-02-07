@@ -10,6 +10,7 @@ from training.dataset.splits import SplitConfig
 from training.eval.checkpoint import evaluate_checkpoint
 from training.eval.evaluator import SegmentEvalConfig
 from training.features.builder import FeatureBuildConfig, FeatureBuilder
+from training.io.config import resolve_court_model_path
 from training.io.videos import resolve_videos
 from training.paths import (
     annotations_dir,
@@ -81,6 +82,8 @@ def _run_extract(config: Dict[str, Any]) -> None:
 
     start_time = float(extract_cfg.get("start_time", 0))
     duration = _parse_optional_float(extract_cfg.get("duration"))
+    sampling_mode = str(extract_cfg.get("sampling_mode", "full_then_downsample"))
+    sample_fps = _parse_optional_float(extract_cfg.get("sample_fps"))
     overwrite = bool(config.get("overwrite_all") or extract_cfg.get("overwrite", False))
 
     extractor = YoloHdf5Extractor(
@@ -104,13 +107,15 @@ def _run_extract(config: Dict[str, Any]) -> None:
             video_path = raw_dir / video
         if not video_path.exists():
             raise FileNotFoundError(f"Video not found: {video_path}")
-        out_name = f"{video_path.stem}__start{_format_time(start_time)}__dur{_format_time(duration)}.h5"
+        out_name = _raw_h5_filename(video_path.stem, start_time, duration, sampling_mode, sample_fps)
         output_path = output_root / out_name
         extractor.extract(
             video_path=video_path,
             output_path=output_path,
             start_time=start_time,
             duration=duration,
+            sampling_mode=sampling_mode,
+            sample_fps=sample_fps,
             overwrite=overwrite,
             resume=bool(extract_cfg.get("resume", True)),
         )
@@ -122,6 +127,7 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
     court_cfg = config.get("court", {})
     extract_cfg = config.get("extract", {})
     yolo_cfg = config.get("yolo", {})
+    court_model_path = resolve_court_model_path(config)
 
     raw_dir = raw_videos_dir(data_root)
     ann_dir = annotations_dir(data_root)
@@ -151,13 +157,15 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
 
     start_time = float(extract_cfg.get("start_time", 0))
     duration = _parse_optional_float(extract_cfg.get("duration"))
+    sampling_mode = str(extract_cfg.get("sampling_mode", "full_then_downsample"))
+    sample_fps = _parse_optional_float(extract_cfg.get("sample_fps"))
     raw_root = pose_raw_dir(data_root) / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
 
     preprocessor = Hdf5Preprocessor(
         PreprocessConfig(
             target_fps=fps,
             save_court_masks=bool(preprocess_cfg.get("save_court_masks", False)),
-            court_model_path=court_cfg.get("model_path", "yolov8s.pt"),
+            court_model_path=court_model_path,
             court_target_time=int(court_cfg.get("target_time", 60)),
             court_force=bool(court_cfg.get("force", False)),
         )
@@ -172,7 +180,7 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
         if not video_path.exists():
             raise FileNotFoundError(f"Video not found: {video_path}")
 
-        raw_h5 = raw_root / f"{video_path.stem}__start{_format_time(start_time)}__dur{_format_time(duration)}.h5"
+        raw_h5 = raw_root / _raw_h5_filename(video_path.stem, start_time, duration, sampling_mode, sample_fps)
         if not raw_h5.exists():
             raise FileNotFoundError(f"Raw HDF5 not found: {raw_h5}")
 
@@ -376,3 +384,18 @@ def _parse_optional_float(value: Any) -> Optional[float]:
     if value in (None, "", "null"):
         return None
     return float(value)
+
+
+def _raw_h5_filename(
+    stem: str,
+    start_time: float,
+    duration: Optional[float],
+    sampling_mode: str,
+    sample_fps: Optional[float],
+) -> str:
+    base = f"{stem}__start{_format_time(start_time)}__dur{_format_time(duration)}"
+    if sampling_mode == "downsample_then_extract":
+        if sample_fps is None:
+            raise ValueError("sample_fps must be set when sampling_mode='downsample_then_extract'")
+        return f"{base}__samplefps{_format_time(sample_fps)}.h5"
+    return f"{base}.h5"

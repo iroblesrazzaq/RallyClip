@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from training.io.config import load_config  # noqa: E402
+from training.io.config import load_config, resolve_court_model_path  # noqa: E402
 from training.io.videos import resolve_videos  # noqa: E402
 from training.paths import (
     annotations_dir,
@@ -19,6 +19,22 @@ from training.paths import (
     resolve_data_root,
 )  # noqa: E402
 from training.preprocess.preprocessor import Hdf5Preprocessor, PreprocessConfig  # noqa: E402
+
+
+def _format_time(value):
+    if value in (None, "", "null"):
+        return "full"
+    text = f"{float(value):.3f}".rstrip("0").rstrip(".")
+    return text.replace(".", "p")
+
+
+def _raw_h5_filename(stem: str, start_time, duration, sampling_mode: str, sample_fps) -> str:
+    base = f"{stem}__start{_format_time(start_time)}__dur{_format_time(duration)}"
+    if sampling_mode == "downsample_then_extract":
+        if sample_fps in (None, "", "null"):
+            raise ValueError("sample_fps must be set when sampling_mode='downsample_then_extract'")
+        return f"{base}__samplefps{_format_time(sample_fps)}.h5"
+    return f"{base}.h5"
 
 
 def main() -> int:
@@ -33,6 +49,7 @@ def main() -> int:
 
     config = load_config(args.config)
     data_root = resolve_data_root(config)
+    court_model_path = resolve_court_model_path(config)
 
     preprocess_cfg = config.get("preprocess", {})
     court_cfg = config.get("court", {})
@@ -64,13 +81,14 @@ def main() -> int:
 
     start_time = extract_cfg.get("start_time", 0)
     duration = extract_cfg.get("duration")
-    dur_tag = "full" if duration in (None, "", "null") else str(duration)
+    sampling_mode = str(extract_cfg.get("sampling_mode", "full_then_downsample"))
+    sample_fps = extract_cfg.get("sample_fps")
 
     preprocessor = Hdf5Preprocessor(
         PreprocessConfig(
             target_fps=float(preprocess_cfg.get("target_fps", 15)),
             save_court_masks=bool(preprocess_cfg.get("save_court_masks", False)),
-            court_model_path=court_cfg.get("model_path", "yolov8s.pt"),
+            court_model_path=court_model_path,
             court_target_time=int(court_cfg.get("target_time", 60)),
             court_force=bool(court_cfg.get("force", False)),
         )
@@ -91,7 +109,7 @@ def main() -> int:
             / f"yolo={yolo_model}"
             / f"conf={conf_tag}"
             / f"imgsz={imgsz}"
-            / f"{video_path.stem}__start{start_time}__dur{dur_tag}.h5"
+            / _raw_h5_filename(video_path.stem, start_time, duration, sampling_mode, sample_fps)
         )
         if not raw_h5.exists():
             logging.warning("Raw HDF5 not found: %s", raw_h5)

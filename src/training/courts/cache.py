@@ -63,7 +63,7 @@ def _warn_on_video_metadata_mismatch(cache_meta: Dict[str, Any], current_meta: D
 
 
 class CourtMaskCache:
-    def __init__(self, model_path: str = "yolov8s.pt", target_time: int = 60) -> None:
+    def __init__(self, model_path: str = "models/yolov8s-pose.pt", target_time: int = 60) -> None:
         self.model_path = model_path
         self.target_time = target_time
 

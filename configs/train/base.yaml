@@ -23,6 +23,8 @@ extract:
   videos: []
   start_time: 0
   duration: null
+  sampling_mode: full_then_downsample  # or: downsample_then_extract
+  sample_fps: null
   overwrite: false
   resume: true
 
@@ -34,7 +36,7 @@ preprocess:
   overwrite: false
 
 court:
-  model_path: yolov8s.pt
+  model_path: null
   target_time: 60
   force: false
 
@@ -48,9 +50,9 @@ dataset:
   seq_len_seconds: 20
   overlap_seconds: 10
   split:
-    strategy: hybrid
+    strategy: hybrid  # options: hybrid, by_video, within_video, loso_temporal_val
     seed: 1337
-    test_videos: []
+    test_videos: []  # for loso_temporal_val: set exactly one held-out video per run
     val_ratio: 0.1
     test_ratio: 0.1
   mode: annotated

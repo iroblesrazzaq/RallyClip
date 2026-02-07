@@ -41,9 +41,16 @@ class YoloHdf5Extractor:
         output_path: Path,
         start_time: float = 0.0,
         duration: Optional[float] = None,
+        sampling_mode: str = "full_then_downsample",
+        sample_fps: Optional[float] = None,
         overwrite: bool = False,
         resume: bool = True,
     ) -> Path:
+        if sampling_mode not in {"full_then_downsample", "downsample_then_extract"}:
+            raise ValueError(f"Unknown sampling_mode: {sampling_mode}")
+        if sampling_mode == "downsample_then_extract" and (sample_fps is None or sample_fps <= 0):
+            raise ValueError("sample_fps must be > 0 when sampling_mode='downsample_then_extract'")
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if output_path.exists() and not overwrite:
             with h5py.File(output_path, "r") as h5f:
@@ -79,6 +86,8 @@ class YoloHdf5Extractor:
                 fps_nominal=fps_nominal,
                 start_time=start_time,
                 duration=duration,
+                sampling_mode=sampling_mode,
+                sample_fps=sample_fps,
                 overwrite=overwrite,
             )
             try:
@@ -86,6 +95,9 @@ class YoloHdf5Extractor:
                 iterator = tqdm(frame_iter, total=total_frames, desc="YOLO", unit="frame")
                 batch_frames = []
                 batch_meta = []
+                sample_step = None if sample_fps is None else (1.0 / float(sample_fps))
+                next_sample_ts = float(start_time)
+                eps = 1e-9
 
                 for frame_idx, frame_rgb, timestamp in iterator:
                     if timestamp < start_time:
@@ -94,6 +106,13 @@ class YoloHdf5Extractor:
                         break
                     if frame_idx <= last_frame_index:
                         continue
+                    if sampling_mode == "downsample_then_extract":
+                        if sample_step is None:
+                            continue
+                        if timestamp + eps < next_sample_ts:
+                            continue
+                        while timestamp + eps >= next_sample_ts:
+                            next_sample_ts += sample_step
                     batch_frames.append(frame_rgb)
                     batch_meta.append((frame_idx, timestamp))
 
@@ -216,6 +235,8 @@ class YoloHdf5Extractor:
         fps_nominal: float,
         start_time: float,
         duration: Optional[float],
+        sampling_mode: str,
+        sample_fps: Optional[float],
         overwrite: bool,
     ) -> h5py.File:
         mode = "w" if overwrite or not output_path.exists() else "a"
@@ -230,6 +251,8 @@ class YoloHdf5Extractor:
                 self.cfg.model_path,
                 self.cfg.conf,
                 self.cfg.imgsz,
+                sampling_mode,
+                sample_fps,
             )
             return h5f
 
@@ -239,6 +262,8 @@ class YoloHdf5Extractor:
         h5f.attrs["imgsz"] = int(self.cfg.imgsz)
         h5f.attrs["start_time"] = float(start_time)
         h5f.attrs["duration"] = -1.0 if duration is None else float(duration)
+        h5f.attrs["sampling_mode"] = sampling_mode
+        h5f.attrs["sample_fps"] = -1.0 if sample_fps is None else float(sample_fps)
         h5f.attrs["width"] = int(width)
         h5f.attrs["height"] = int(height)
         h5f.attrs["fps_nominal"] = float(fps_nominal)
@@ -332,6 +357,8 @@ class YoloHdf5Extractor:
         model_path: str,
         conf: float,
         imgsz: int,
+        sampling_mode: str,
+        sample_fps: Optional[float],
     ) -> None:
         expected = {
             "video_path": str(video_path),
@@ -340,6 +367,8 @@ class YoloHdf5Extractor:
             "yolo_model": model_path,
             "conf": float(conf),
             "imgsz": int(imgsz),
+            "sampling_mode": sampling_mode,
+            "sample_fps": -1.0 if sample_fps is None else float(sample_fps),
         }
         for key, value in expected.items():
             if key not in h5f.attrs:
