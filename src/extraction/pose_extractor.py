@@ -222,7 +222,7 @@ class PoseExtractor:
         for frame, current_timestamp in iterator:
             frames_seen += 1
             appended = False
-            annotation_status_current = -100
+            annotation_status_current = -1
             if current_timestamp < start_time_seconds:
                 continue
             if current_timestamp > (start_time_seconds + duration_seconds):
@@ -275,7 +275,7 @@ class PoseExtractor:
                         pass
                     last_report_time = now
             else:
-                frame_data = {"boxes": np.array([]), "keypoints": np.array([]), "conf": np.array([]), "annotation_status": -100}
+                frame_data = {"boxes": np.array([]), "keypoints": np.array([]), "conf": np.array([]), "annotation_status": -1}
             if not appended:
                 all_frames_data.append(frame_data)
 

@@ -67,21 +67,30 @@ class FeatureBuilder:
 
             prev_near = None
             prev_far = None
-            prev_vel = {"near": None, "far": None}
+            prev_motion = {
+                "near": {"centroid": None, "keypoints": None},
+                "far": {"centroid": None, "keypoints": None},
+            }
 
             for idx in labeled_idx:
                 near = _pack_player(near_kps[idx], near_conf[idx], near_box[idx], near_box_conf[idx])
                 far = _pack_player(far_kps[idx], far_conf[idx], far_box[idx], far_box_conf[idx])
 
-                vec = builder.build_feature_vector(near, far, prev_near, prev_far, prev_vel, dt)
+                vec = builder.build_feature_vector(near, far, prev_near, prev_far, prev_motion, dt)
                 feature_vectors.append(vec)
                 feature_targets.append(int(targets[idx]))
                 feature_frames.append(int(frame_index[idx]))
                 feature_times.append(float(timestamps[idx]))
 
-                prev_vel = {
-                    "near": _player_velocity(near, prev_near, dt),
-                    "far": _player_velocity(far, prev_far, dt),
+                prev_motion = {
+                    "near": {
+                        "centroid": _player_velocity(near, prev_near, dt),
+                        "keypoints": _keypoint_velocity(near, prev_near, dt),
+                    },
+                    "far": {
+                        "centroid": _player_velocity(far, prev_far, dt),
+                        "keypoints": _keypoint_velocity(far, prev_far, dt),
+                    },
                 }
                 prev_near = near
                 prev_far = far
@@ -128,3 +137,11 @@ def _player_velocity(player: Dict[str, np.ndarray], prev_player: Optional[Dict[s
     if dt <= 0:
         return (0.0, 0.0)
     return ((cx - pcx) / dt, (cy - pcy) / dt)
+
+
+def _keypoint_velocity(player: Dict[str, np.ndarray], prev_player: Optional[Dict[str, np.ndarray]], dt: float):
+    if not player.get("exists") or not prev_player or not prev_player.get("exists"):
+        return None
+    if dt <= 0:
+        return np.zeros((player["keypoints"].shape[0], 2), dtype=np.float32)
+    return (player["keypoints"] - prev_player["keypoints"]) / dt

@@ -38,3 +38,21 @@ def load_config(path: str) -> Dict[str, Any]:
     config = _deep_merge(_DEFAULTS, data)
     config["config_path"] = str(cfg_path)
     return config
+
+
+def resolve_yolo_model_path(config: Dict[str, Any]) -> str:
+    yolo_cfg = config.get("yolo", {})
+    model = str(yolo_cfg.get("model", "yolov8s-pose.pt"))
+    model_path = Path(model)
+    if model_path.is_absolute() or model_path.parent != Path("."):
+        return str(model_path)
+    model_dir = str(yolo_cfg.get("model_dir", "models"))
+    return str(Path(model_dir) / model_path.name)
+
+
+def resolve_court_model_path(config: Dict[str, Any]) -> str:
+    court_cfg = config.get("court", {})
+    explicit = court_cfg.get("model_path")
+    if explicit:
+        return str(explicit)
+    return resolve_yolo_model_path(config)

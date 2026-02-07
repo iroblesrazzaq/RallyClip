@@ -7,10 +7,12 @@ from typing import Iterable, List, Optional
 VIDEO_EXTS = [".mp4", ".mov", ".avi", ".mkv"]
 
 
-def match_video_from_annotation(csv_path: Path, raw_dir: Path) -> Optional[str]:
-    base = csv_path.name
+def match_video_from_annotation(annotation_path: Path, raw_dir: Path) -> Optional[str]:
+    base = annotation_path.name
     if base.endswith(".csv"):
         base = base[:-4]
+    elif base.endswith(".json"):
+        base = base[:-5]
     if Path(base).suffix in VIDEO_EXTS and (raw_dir / base).exists():
         return base
     for ext in VIDEO_EXTS:
@@ -21,14 +23,17 @@ def match_video_from_annotation(csv_path: Path, raw_dir: Path) -> Optional[str]:
 
 
 def list_annotated_videos(raw_dir: Path, ann_dir: Path) -> List[str]:
-    videos = []
-    for csv_path in ann_dir.glob("*.csv"):
-        match = match_video_from_annotation(csv_path, raw_dir)
+    videos: List[str] = []
+    # Prefer JSON annotations; fall back to CSV for backward compatibility.
+    annotation_files = sorted(ann_dir.glob("*.json")) or sorted(ann_dir.glob("*.csv"))
+
+    for ann_path in annotation_files:
+        match = match_video_from_annotation(ann_path, raw_dir)
         if match:
             videos.append(match)
         else:
-            logging.warning("No video found for annotation: %s", csv_path.name)
-    return videos
+            logging.warning("No video found for annotation: %s", ann_path.name)
+    return sorted(set(videos))
 
 
 def list_all_videos(raw_dir: Path) -> List[str]:
