@@ -26,7 +26,7 @@ def evaluate_checkpoint(
 
     dataset = Hdf5SequenceDataset(dataset_path)
     device = _resolve_device(device_str)
-    model = TennisPointLSTM(input_size=dataset.features.shape[-1], return_logits=True).to(device)
+    model = TennisPointLSTM(input_size=dataset.feature_dim, return_logits=True).to(device)
 
     ckpt = torch.load(str(checkpoint_path), map_location=device)
     model.load_state_dict(ckpt.get("model_state_dict", ckpt))
