@@ -74,6 +74,35 @@ train:
     min_dur_sec: 0.5
 
 wandb:
-  enabled: false
-  project: null
-  entity: null
+  enabled: true
+  project: rallyclip-cv
+  entity: isi_uchicago_neurotech
+  group: null
+  tags: []
+
+sweep:
+  enabled: true
+  run_prefix: cv
+  resume: true
+  fps_values: [15, 10, 7, 6, 5, 4, 3, 2, 1]
+  seq_len_seconds: [10, 20, 30]
+  steps_precompute: [preprocess, features]
+  steps_per_fold: [dataset, train, eval]
+  loso:
+    mode: annotated
+    videos: []
+    val_ratio: 0.1
+    seed: 67
+  datasets:
+    mode: auto
+    require_all_videos: true
+    entries: []
+    # entries example for manual mode:
+    # - name: yolos960
+    #   yolo:
+    #     model: yolov8s-pose.pt
+    #     conf: 0.25
+    #     imgsz: 960
+    #   extract:
+    #     sampling_mode: full_then_downsample
+    #     sample_fps: null
