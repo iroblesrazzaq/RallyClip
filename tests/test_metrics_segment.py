@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from training.metrics.segment import _segments_from_binary, compute_segment_metrics
+from training.metrics.segment import (
+    _segments_from_binary,
+    compute_segment_metrics,
+    compute_time_segment_metrics,
+    compute_weighted_segment_score,
+)
 
 
 def test_segments_from_binary():
@@ -20,3 +25,21 @@ def test_segment_metrics_basic():
     assert metrics["coverage"] == 0.6
     assert metrics["specificity"] == 1.0
     assert abs(metrics["mean_iou"] - 0.5833) < 1e-3
+
+
+def test_weighted_segment_score():
+    metrics = {"segment_recall": 0.8, "coverage": 0.7, "specificity": 0.9}
+    score = compute_weighted_segment_score(metrics, segment_recall_weight=0.4, coverage_weight=0.4, specificity_weight=0.2)
+    assert abs(score - 0.78) < 1e-9
+
+
+def test_time_segment_metrics_basic():
+    timestamps = np.array([0.0, 1.0, 2.0, 3.0], dtype=float)
+    y_true = np.array([0, 1, 1, 0], dtype=int)
+    y_pred = np.array([0, 1, 0, 0], dtype=int)
+    metrics = compute_time_segment_metrics(y_true, y_pred, timestamps, iou_threshold=0.6)
+    assert metrics["segment_precision"] == 0.0
+    assert metrics["segment_recall"] == 0.0
+    assert metrics["segment_f1"] == 0.0
+    assert metrics["coverage"] == 0.5
+    assert metrics["specificity"] == 1.0
