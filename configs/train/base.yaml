@@ -11,7 +11,7 @@ videos: []
 overwrite_all: false
 
 yolo:
-  model: yolov8s-pose.pt
+  model: yolov8n-pose.pt
   conf: 0.25
   imgsz: 1920
   model_dir: models
@@ -51,7 +51,7 @@ dataset:
   overlap_seconds: 10
   split:
     strategy: hybrid  # options: hybrid, by_video, within_video, loso_temporal_val
-    seed: 1337
+    seed: 67
     test_videos: []  # for loso_temporal_val: set exactly one held-out video per run
     val_ratio: 0.1
     test_ratio: 0.1
@@ -59,13 +59,19 @@ dataset:
   videos: []
 
 train:
-  batch_size: 32
-  epochs: 50
+  batch_size: 8
+  train_batch_size: 8
+  eval_batch_size: 8
+  grad_accum_steps: 1
+  num_workers: 0
+  epochs: 30
   lr: 0.001
   weight_decay: 0.01
   pos_weight: 3.0
-  device: null
+  device: mps
   threshold: 0.5
+  early_stopping_patience: 5
+  early_stopping_min_delta: 0.001
   save_every_n: 0
   segment_eval:
     low: 0.45
@@ -74,18 +80,32 @@ train:
     min_dur_sec: 0.5
 
 wandb:
-  enabled: true
+  enabled: false
   project: rallyclip-cv
   entity: isi_uchicago_neurotech
   group: null
   tags: []
 
+postprocess_eval:
+  run_prefix: loso_nano_mps_e30
+  device: cpu
+  iou_threshold: 0.5
+  datasets: []
+  fps_values: []
+  seq_len_seconds: [10]
+  weights:
+    coverage: 0.4
+    segment_recall: 0.4
+    specificity: 0.2
+
 sweep:
   enabled: true
-  run_prefix: cv
+  run_prefix: loso_nano_mps_e30
   resume: true
-  fps_values: [15, 10, 7, 6, 5, 4, 3, 2, 1]
-  seq_len_seconds: [10, 20, 30]
+  fps_values: [10, 5]
+  seq_len_seconds: [10]
+  overlap_mode: half_seq_len
+  overlap_seconds: null  # only used when overlap_mode: fixed
   steps_precompute: [preprocess, features]
   steps_per_fold: [dataset, train, eval]
   loso:
@@ -94,15 +114,22 @@ sweep:
     val_ratio: 0.1
     seed: 67
   datasets:
-    mode: auto
+    mode: manual
     require_all_videos: true
-    entries: []
-    # entries example for manual mode:
-    # - name: yolos960
-    #   yolo:
-    #     model: yolov8s-pose.pt
-    #     conf: 0.25
-    #     imgsz: 960
-    #   extract:
-    #     sampling_mode: full_then_downsample
-    #     sample_fps: null
+    entries:
+      - name: yolon960
+        yolo:
+          model: yolov8n-pose.pt
+          conf: 0.25
+          imgsz: 960
+        extract:
+          sampling_mode: full_then_downsample
+          sample_fps: null
+      - name: yolon1440
+        yolo:
+          model: yolov8n-pose.pt
+          conf: 0.25
+          imgsz: 1440
+        extract:
+          sampling_mode: full_then_downsample
+          sample_fps: null

@@ -49,8 +49,10 @@ class Hdf5Preprocessor:
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         if output_path.exists() and not overwrite:
-            logger.info("Skipping existing preprocessed file: %s", output_path)
-            return output_path
+            if _is_valid_preprocessed_h5(output_path):
+                logger.info("Skipping existing preprocessed file: %s", output_path)
+                return output_path
+            logger.warning("Existing preprocessed file is invalid; regenerating: %s", output_path)
 
         annotations = load_annotations_json(annotations_path)
         if not annotations.get("segments"):
@@ -125,6 +127,25 @@ class Hdf5Preprocessor:
 
         logger.info("Preprocessed %s", output_path)
         return output_path
+
+
+def _is_valid_preprocessed_h5(path: Path) -> bool:
+    try:
+        with h5py.File(path, "r") as h5f:
+            required_paths = (
+                ("frames", "frame_index"),
+                ("frames", "timestamps"),
+                ("players", "near"),
+                ("players", "far"),
+            )
+            for group_name, dataset_name in required_paths:
+                if group_name not in h5f or dataset_name not in h5f[group_name]:
+                    return False
+            if "targets" not in h5f:
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def _sample_indices(timestamps: np.ndarray, target_fps: float) -> np.ndarray:

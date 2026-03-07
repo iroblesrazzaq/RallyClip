@@ -1,12 +1,18 @@
 from __future__ import annotations
-
 from copy import deepcopy
+import json
 import logging
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+import h5py
+import joblib
+import numpy as np
+import torch
+
+from infer.inference import gaussian_filter1d, hysteresis_threshold, run_windowed_inference_average
 from training.dataset.builder import DatasetBuilder, DatasetConfig
 from training.dataset.splits import SplitConfig
 from training.eval.checkpoint import evaluate_checkpoint
@@ -24,6 +30,8 @@ from training.paths import (
     resolve_data_root,
     runs_dir,
 )
+from training.metrics.segment import compute_time_segment_metrics, compute_weighted_segment_score
+from training.models.lstm import TennisPointLSTM
 from training.pose.yolo_hdf5 import YoloExtractConfig, YoloHdf5Extractor
 from training.preprocess.preprocessor import Hdf5Preprocessor, PreprocessConfig
 from training.train.loop import train as train_loop
@@ -90,6 +98,8 @@ def run_sweep(config: Dict[str, Any]) -> None:
         sweep_cfg.get("seq_len_seconds"),
         [float(config.get("dataset", {}).get("seq_len_seconds", 20))],
     )
+    sweep_overlap_mode = str(sweep_cfg.get("overlap_mode", "half_seq_len"))
+    sweep_overlap_fixed = sweep_cfg.get("overlap_seconds")
     pre_steps = [str(s) for s in sweep_cfg.get("steps_precompute", ["preprocess", "features"])]
     fold_steps = [str(s) for s in sweep_cfg.get("steps_per_fold", ["dataset", "train", "eval"])]
     resume = bool(sweep_cfg.get("resume", True))
@@ -120,6 +130,12 @@ def run_sweep(config: Dict[str, Any]) -> None:
                     _apply_sweep_dataset(fold_cfg, ds)
                     fold_cfg.setdefault("preprocess", {})["target_fps"] = float(fps)
                     fold_cfg.setdefault("dataset", {})["seq_len_seconds"] = float(seq_len)
+                    fold_cfg["dataset"]["overlap_seconds"] = _resolve_sweep_overlap_seconds(
+                        seq_len=seq_len,
+                        overlap_mode=sweep_overlap_mode,
+                        overlap_fixed=sweep_overlap_fixed,
+                        base_overlap=float(config.get("dataset", {}).get("overlap_seconds", 10)),
+                    )
                     fold_cfg.setdefault("dataset", {}).setdefault("split", {})
                     fold_cfg["dataset"]["split"]["strategy"] = "loso_temporal_val"
                     fold_cfg["dataset"]["split"]["seed"] = seed
@@ -143,13 +159,121 @@ def run_sweep(config: Dict[str, Any]) -> None:
                     )
 
                     best_ckpt = runs_dir(data_root) / run_id / "checkpoints" / "best.pth"
-                    if resume and best_ckpt.exists():
+                    if resume and _is_fold_complete(
+                        data_root=data_root,
+                        run_id=run_id,
+                        expected_epochs=int(fold_cfg.get("train", {}).get("epochs", config.get("train", {}).get("epochs", 0))),
+                    ):
                         logger.info("Skipping completed fold: %s", run_id)
                         continue
 
                     run_pipeline(fold_cfg, steps_override=fold_steps)
 
     logger.info("Sweep complete")
+
+
+def run_postprocess_sweep(config: Dict[str, Any]) -> None:
+    data_root = resolve_data_root(config)
+    pp_cfg = config.get("postprocess_eval", {}) if isinstance(config.get("postprocess_eval"), dict) else {}
+    sweep_cfg = config.get("sweep", {}) if isinstance(config.get("sweep"), dict) else {}
+
+    run_prefix = str(pp_cfg.get("run_prefix") or sweep_cfg.get("run_prefix") or "")
+    if not run_prefix:
+        raise ValueError("postprocess_eval.run_prefix or sweep.run_prefix must be set")
+
+    dataset_filters = {str(v) for v in pp_cfg.get("datasets", []) if str(v)}
+    fps_filters = {float(v) for v in pp_cfg.get("fps_values", [])}
+    seq_filters = {float(v) for v in pp_cfg.get("seq_len_seconds", [])}
+    device_str = str(pp_cfg.get("device", "cpu"))
+    iou_threshold = float(pp_cfg.get("iou_threshold", 0.5))
+    weights_cfg = pp_cfg.get("weights", {}) if isinstance(pp_cfg.get("weights"), dict) else {}
+    coverage_weight = float(weights_cfg.get("coverage", 0.4))
+    segment_recall_weight = float(weights_cfg.get("segment_recall", 0.4))
+    specificity_weight = float(weights_cfg.get("specificity", 0.2))
+
+    rows = []
+    for run_dir in sorted(runs_dir(data_root).glob(f"{run_prefix}_*")):
+        if not run_dir.is_dir():
+            continue
+        parsed = _parse_sweep_run_id(run_dir.name, run_prefix)
+        if parsed is None:
+            continue
+        if dataset_filters and parsed["dataset"] not in dataset_filters:
+            continue
+        if fps_filters and float(parsed["fps"]) not in fps_filters:
+            continue
+        if seq_filters and float(parsed["seq_len_seconds"]) not in seq_filters:
+            continue
+        result = _evaluate_postprocess_run(
+            data_root=data_root,
+            run_dir=run_dir,
+            device_str=device_str,
+            iou_threshold=iou_threshold,
+            coverage_weight=coverage_weight,
+            segment_recall_weight=segment_recall_weight,
+            specificity_weight=specificity_weight,
+        )
+        if result is not None:
+            rows.append({**parsed, **result})
+
+    if not rows:
+        logger.warning("No completed runs matched postprocess filters for prefix=%s", run_prefix)
+        return
+
+    logger.info(
+        "Postprocess metric weights: coverage=%.3f segment_recall=%.3f specificity=%.3f iou_threshold=%.2f",
+        coverage_weight,
+        segment_recall_weight,
+        specificity_weight,
+        iou_threshold,
+    )
+
+    per_run_lines = ["dataset,fps,seq_len_seconds,fold,time_score,time_segment_recall,time_coverage,time_specificity,time_segment_f1,time_mean_iou"]
+    for row in rows:
+        per_run_lines.append(
+            ",".join(
+                [
+                    row["dataset"],
+                    _fmt_num(row["fps"]),
+                    _fmt_num(row["seq_len_seconds"]),
+                    str(int(row["fold"])),
+                    f"{row['time_score']:.6f}",
+                    f"{row['time_segment_recall']:.6f}",
+                    f"{row['time_coverage']:.6f}",
+                    f"{row['time_specificity']:.6f}",
+                    f"{row['time_segment_f1']:.6f}",
+                    f"{row['time_mean_iou']:.6f}",
+                ]
+            )
+        )
+    logger.info("Per-run postprocess results:\n%s", "\n".join(per_run_lines))
+
+    grouped: Dict[tuple[str, float, float], List[Dict[str, Any]]] = {}
+    for row in rows:
+        key = (row["dataset"], float(row["fps"]), float(row["seq_len_seconds"]))
+        grouped.setdefault(key, []).append(row)
+
+    summary_lines = [
+        "dataset,fps,seq_len_seconds,folds,mean_time_score,mean_time_segment_recall,mean_time_coverage,mean_time_specificity,mean_time_segment_f1,mean_time_iou"
+    ]
+    for (dataset_name, fps, seq_len), group_rows in sorted(grouped.items()):
+        summary_lines.append(
+            ",".join(
+                [
+                    dataset_name,
+                    _fmt_num(fps),
+                    _fmt_num(seq_len),
+                    str(len(group_rows)),
+                    f"{np.mean([r['time_score'] for r in group_rows]):.6f}",
+                    f"{np.mean([r['time_segment_recall'] for r in group_rows]):.6f}",
+                    f"{np.mean([r['time_coverage'] for r in group_rows]):.6f}",
+                    f"{np.mean([r['time_specificity'] for r in group_rows]):.6f}",
+                    f"{np.mean([r['time_segment_f1'] for r in group_rows]):.6f}",
+                    f"{np.mean([r['time_mean_iou'] for r in group_rows]):.6f}",
+                ]
+            )
+        )
+    logger.info("Postprocess summary by combo:\n%s", "\n".join(summary_lines))
 
 
 def _run_extract(config: Dict[str, Any]) -> None:
@@ -464,10 +588,100 @@ def _run_eval(config: Dict[str, Any]) -> None:
         fps=float(preprocess_cfg.get("target_fps", 15)),
         pos_weight=float(train_cfg.get("pos_weight", 3.0)),
     )
+    eval_path = run_dir / "eval.json"
+    with eval_path.open("w", encoding="utf-8") as handle:
+        json.dump({"loss": float(loss), "metrics": metrics}, handle, indent=2)
     logger.info("Test loss: %.4f", loss)
     logger.info("Test metrics: %s", metrics)
 
 
+
+
+def _evaluate_postprocess_run(
+    *,
+    data_root: Path,
+    run_dir: Path,
+    device_str: str,
+    iou_threshold: float,
+    coverage_weight: float,
+    segment_recall_weight: float,
+    specificity_weight: float,
+) -> Optional[Dict[str, float]]:
+    config_path = run_dir / "config.json"
+    checkpoint_path = run_dir / "checkpoints" / "best.pth"
+    dataset_dir = datasets_dir(data_root) / run_dir.name
+    scaler_path = dataset_dir / "scaler.joblib"
+    metrics_path = run_dir / "metrics.jsonl"
+    if not (config_path.exists() and checkpoint_path.exists() and scaler_path.exists() and metrics_path.exists()):
+        return None
+
+    with config_path.open("r", encoding="utf-8") as handle:
+        run_cfg = json.load(handle)
+
+    dataset_cfg = run_cfg.get("dataset", {}) if isinstance(run_cfg.get("dataset"), dict) else {}
+    split_cfg = dataset_cfg.get("split", {}) if isinstance(dataset_cfg.get("split"), dict) else {}
+    held_out_videos = split_cfg.get("test_videos", [])
+    if not held_out_videos:
+        return None
+
+    held_out_video = str(held_out_videos[0])
+    fps = float(run_cfg.get("fps", 15.0))
+    seq_len_seconds = float(dataset_cfg.get("seq_len_seconds", 10.0))
+    overlap_seconds = float(dataset_cfg.get("overlap_seconds", seq_len_seconds / 2.0))
+    imgsz = _parse_imgsz_from_run_id(run_dir.name)
+    feature_root = (
+        pose_features_dir(data_root)
+        / "yolo=yolov8n-pose.pt"
+        / "conf=0p25"
+        / f"imgsz={imgsz}"
+        / f"fps={fps}"
+    )
+    feature_path = feature_root / f"{Path(held_out_video).stem}__features__v1.h5"
+    if not feature_path.exists():
+        logger.warning("Skipping %s; feature file missing: %s", run_dir.name, feature_path)
+        return None
+
+    scaler = joblib.load(scaler_path)
+    with h5py.File(feature_path, "r") as h5f:
+        features = np.asarray(h5f["features"][:], dtype=np.float32)
+        targets = np.asarray(h5f["targets"][:], dtype=np.int8)
+        timestamps = np.asarray(h5f["timestamps"][:], dtype=np.float64)
+    scaled = scaler.transform(features.reshape(-1, features.shape[-1])).reshape(features.shape).astype(np.float32)
+
+    model, device = _load_training_checkpoint(checkpoint_path, input_size=scaled.shape[-1], device_str=device_str)
+
+    seq_len = max(1, int(round(seq_len_seconds * fps)))
+    overlap = max(0, int(round(overlap_seconds * fps)))
+    probs = run_windowed_inference_average(model, device, scaled, seq_len, overlap)
+
+    segment_cfg = run_cfg.get("segment_eval", {}) if isinstance(run_cfg.get("segment_eval"), dict) else {}
+    sigma = float(segment_cfg.get("sigma", 1.5))
+    low = float(segment_cfg.get("low", 0.45))
+    high = float(segment_cfg.get("high", 0.8))
+    min_dur_frames = int(round(float(segment_cfg.get("min_dur_sec", 0.5)) * fps))
+
+    smoothed = gaussian_filter1d(probs.astype(np.float32), sigma=sigma)
+    pred_bin = hysteresis_threshold(smoothed, low=low, high=high, min_duration=min_dur_frames)
+    metrics = compute_time_segment_metrics(
+        targets.astype(int),
+        pred_bin.astype(int),
+        timestamps=timestamps,
+        iou_threshold=iou_threshold,
+    )
+    score = compute_weighted_segment_score(
+        metrics,
+        segment_recall_weight=segment_recall_weight,
+        coverage_weight=coverage_weight,
+        specificity_weight=specificity_weight,
+    )
+    return {
+        "time_score": float(score),
+        "time_segment_recall": float(metrics.get("segment_recall", 0.0)),
+        "time_coverage": float(metrics.get("coverage", 0.0)),
+        "time_specificity": float(metrics.get("specificity", 0.0)),
+        "time_segment_f1": float(metrics.get("segment_f1", 0.0)),
+        "time_mean_iou": float(metrics.get("mean_iou", 0.0)),
+    }
 
 
 def _format_conf(conf: float) -> str:
@@ -526,6 +740,13 @@ def _resolve_sweep_datasets(
     mode = str(ds_cfg.get("mode", "auto"))
     entries = ds_cfg.get("entries") if isinstance(ds_cfg.get("entries"), list) else []
     require_all = bool(ds_cfg.get("require_all_videos", True))
+    auto_limit: Optional[int] = None
+
+    if mode.startswith("auto") and mode != "auto":
+        suffix = mode[len("auto"):]
+        if suffix.isdigit():
+            auto_limit = int(suffix)
+            mode = "auto"
 
     if mode == "manual":
         specs = [_normalize_manual_dataset_entry(e, config) for e in entries]
@@ -539,6 +760,8 @@ def _resolve_sweep_datasets(
         manual = [_normalize_manual_dataset_entry(e, config) for e in entries]
         manual_names = {m["name"] for m in manual}
         specs = [s for s in specs if s["name"] in manual_names]
+    if auto_limit is not None:
+        specs = specs[:auto_limit]
     return specs
 
 
@@ -631,3 +854,136 @@ def _slug(text: str, max_len: int) -> str:
     if not out:
         out = "x"
     return out[:max_len]
+
+
+def _resolve_sweep_overlap_seconds(
+    seq_len: float,
+    overlap_mode: str,
+    overlap_fixed: Any,
+    base_overlap: float,
+) -> float:
+    if overlap_mode == "half_seq_len":
+        return float(seq_len) / 2.0
+    if overlap_mode == "fixed":
+        if overlap_fixed in (None, "", "null"):
+            raise ValueError("sweep.overlap_seconds must be set when sweep.overlap_mode='fixed'")
+        return float(overlap_fixed)
+    if overlap_mode == "base":
+        return float(base_overlap)
+    raise ValueError(f"Unknown sweep.overlap_mode: {overlap_mode}")
+
+
+def _load_training_checkpoint(checkpoint_path: Path, input_size: int, device_str: str) -> tuple[torch.nn.Module, torch.device]:
+    device = torch.device(device_str)
+    ckpt = torch.load(str(checkpoint_path), map_location=device)
+    state_dict = ckpt.get("model_state_dict", ckpt)
+    hidden_size = 128
+    num_layers = 2
+    bidirectional = False
+    w_ih_l0 = state_dict.get("lstm.weight_ih_l0")
+    if w_ih_l0 is not None:
+        hidden_size = int(w_ih_l0.shape[0] // 4)
+        input_size = int(w_ih_l0.shape[1])
+    layer_ids = set()
+    for key in state_dict.keys():
+        match = re.match(r"lstm\.weight_ih_l(\d+)(?:_reverse)?$", key)
+        if match:
+            layer_ids.add(int(match.group(1)))
+        if "_reverse" in key:
+            bidirectional = True
+
+    if layer_ids:
+        num_layers = max(layer_ids) + 1
+
+    model = TennisPointLSTM(
+        input_size=input_size,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        bidirectional=bidirectional,
+        return_logits=False,
+    ).to(device)
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model, device
+
+
+def _parse_sweep_run_id(run_id: str, run_prefix: str) -> Optional[Dict[str, Any]]:
+    pattern = re.compile(
+        rf"^{re.escape(run_prefix)}_(?P<dataset>.+?)_fps(?P<fps>[0-9p]+)_seq(?P<seq>[0-9p]+)s_fold(?P<fold>\d+)_"
+    )
+    match = pattern.match(run_id)
+    if not match:
+        return None
+    return {
+        "dataset": match.group("dataset"),
+        "fps": _parse_fmt_num(match.group("fps")),
+        "seq_len_seconds": _parse_fmt_num(match.group("seq")),
+        "fold": int(match.group("fold")),
+    }
+
+
+def _parse_fmt_num(text: str) -> float:
+    return float(text.replace("p", "."))
+
+
+def _parse_imgsz_from_run_id(run_id: str) -> int:
+    match = re.search(r"_yolon(?P<imgsz>\d+)_", run_id)
+    if not match:
+        raise ValueError(f"Could not infer imgsz from run_id: {run_id}")
+    return int(match.group("imgsz"))
+
+
+def _is_fold_complete(data_root: Path, run_id: str, expected_epochs: int) -> bool:
+    run_dir = runs_dir(data_root) / run_id
+    best_ckpt = run_dir / "checkpoints" / "best.pth"
+    metrics_path = run_dir / "metrics.jsonl"
+    eval_path = run_dir / "eval.json"
+    if eval_path.exists() and best_ckpt.exists():
+        return True
+    if not best_ckpt.exists() or not metrics_path.exists() or expected_epochs <= 0:
+        return False
+
+    records: List[Dict[str, Any]] = []
+    try:
+        with metrics_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                records.append(json.loads(line))
+    except Exception:
+        return False
+
+    last_epoch = max(int(record.get("epoch", 0)) for record in records) if records else 0
+    if last_epoch >= expected_epochs:
+        return True
+    return _stopped_by_early_stopping(run_dir, records)
+
+
+def _stopped_by_early_stopping(run_dir: Path, records: List[Dict[str, Any]]) -> bool:
+    config_path = run_dir / "config.json"
+    if not config_path.exists() or not records:
+        return False
+    try:
+        with config_path.open("r", encoding="utf-8") as handle:
+            cfg = json.load(handle)
+    except Exception:
+        return False
+
+    patience = max(0, int(cfg.get("early_stopping_patience", 0)))
+    min_delta = float(cfg.get("early_stopping_min_delta", 0.0))
+    if patience <= 0:
+        return False
+
+    best_metric = float("-inf")
+    epochs_without_improvement = 0
+    for record in sorted(records, key=lambda item: int(item.get("epoch", 0))):
+        metric_value = float(record.get("balanced_accuracy", 0.0))
+        if metric_value > (best_metric + min_delta):
+            best_metric = metric_value
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+        if epochs_without_improvement >= patience:
+            return True
+    return False
