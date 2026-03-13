@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 from pathlib import Path
 from typing import Iterable, List, Optional
 
@@ -58,3 +59,83 @@ def resolve_videos(
     if mode == "list":
         return []
     raise ValueError(f"Unknown mode: {mode}")
+
+
+def flipped_video_name(video_name: str, suffix: str = "__flip_h") -> str:
+    path = Path(video_name)
+    return f"{path.stem}{suffix}{path.suffix}"
+
+
+def flipped_video_output_path(
+    video_path: Path,
+    *,
+    source_root: Path,
+    output_root: Path,
+    suffix: str = "__flip_h",
+) -> Path:
+    relative_path = video_path.relative_to(source_root)
+    return output_root / relative_path.parent / flipped_video_name(relative_path.name, suffix=suffix)
+
+
+def create_flipped_videos(
+    *,
+    raw_dir: Path,
+    output_dir: Path,
+    videos: Iterable[str],
+    ffmpeg_bin: str = "ffmpeg",
+    overwrite: bool = False,
+    suffix: str = "__flip_h",
+) -> List[Path]:
+    created: List[Path] = []
+    raw_dir = raw_dir.resolve()
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for video in videos:
+        video_path = Path(video)
+        if not video_path.is_absolute():
+            video_path = raw_dir / video
+        video_path = video_path.resolve()
+        if not video_path.exists():
+            raise FileNotFoundError(f"Video not found: {video_path}")
+
+        output_path = flipped_video_output_path(
+            video_path,
+            source_root=raw_dir,
+            output_root=output_dir,
+            suffix=suffix,
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if output_path.exists() and not overwrite:
+            logging.info("Skipping existing flipped video: %s", output_path)
+            created.append(output_path)
+            continue
+
+        cmd = [
+            ffmpeg_bin,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-y" if overwrite else "-n",
+            "-i",
+            str(video_path),
+            "-vf",
+            "hflip",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            str(output_path),
+        ]
+        subprocess.run(cmd, check=True)
+        logging.info("Created flipped video: %s", output_path)
+        created.append(output_path)
+
+    return created
