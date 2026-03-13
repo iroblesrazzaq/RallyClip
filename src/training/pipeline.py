@@ -3,6 +3,7 @@ from copy import deepcopy
 import json
 import logging
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -30,7 +31,11 @@ from training.paths import (
     resolve_data_root,
     runs_dir,
 )
-from training.metrics.segment import compute_time_segment_metrics, compute_weighted_segment_score
+from training.metrics.segment import (
+    compute_time_point_classification_metrics,
+    compute_time_segment_metrics,
+    compute_weighted_segment_score,
+)
 from training.models.lstm import TennisPointLSTM
 from training.pose.yolo_hdf5 import YoloExtractConfig, YoloHdf5Extractor
 from training.preprocess.preprocessor import Hdf5Preprocessor, PreprocessConfig
@@ -106,6 +111,7 @@ def run_sweep(config: Dict[str, Any]) -> None:
     run_prefix = str(sweep_cfg.get("run_prefix", "cv"))
     val_ratio = float(loso_cfg.get("val_ratio", config.get("dataset", {}).get("split", {}).get("val_ratio", 0.1)))
     seed = int(loso_cfg.get("seed", config.get("dataset", {}).get("split", {}).get("seed", 1337)))
+    cleanup_completed_datasets = bool(sweep_cfg.get("cleanup_completed_datasets", True))
 
     logger.info(
         "Sweep start: datasets=%d fps=%s seq_len=%s folds=%d",
@@ -117,14 +123,16 @@ def run_sweep(config: Dict[str, Any]) -> None:
 
     for ds in dataset_specs:
         ds_name = str(ds["name"])
-        for fps in fps_values:
+        ds_fps_values = _as_float_list(ds.get("fps_values"), fps_values)
+        ds_seq_values = _as_float_list(ds.get("seq_len_seconds"), seq_values)
+        for fps in ds_fps_values:
             pre_cfg = deepcopy(config)
             _apply_sweep_dataset(pre_cfg, ds)
             pre_cfg.setdefault("preprocess", {})["target_fps"] = float(fps)
             pre_cfg["run_id"] = f"{run_prefix}_{ds_name}_fps{_fmt_num(fps)}_prep"
             run_pipeline(pre_cfg, steps_override=pre_steps)
 
-            for seq_len in seq_values:
+            for seq_len in ds_seq_values:
                 for fold_idx, held_out_video in enumerate(videos, start=1):
                     fold_cfg = deepcopy(config)
                     _apply_sweep_dataset(fold_cfg, ds)
@@ -164,10 +172,18 @@ def run_sweep(config: Dict[str, Any]) -> None:
                         run_id=run_id,
                         expected_epochs=int(fold_cfg.get("train", {}).get("epochs", config.get("train", {}).get("epochs", 0))),
                     ):
+                        if cleanup_completed_datasets:
+                            _cleanup_completed_fold_dataset(data_root, run_id)
                         logger.info("Skipping completed fold: %s", run_id)
                         continue
 
                     run_pipeline(fold_cfg, steps_override=fold_steps)
+                    if cleanup_completed_datasets and _is_fold_complete(
+                        data_root=data_root,
+                        run_id=run_id,
+                        expected_epochs=int(fold_cfg.get("train", {}).get("epochs", config.get("train", {}).get("epochs", 0))),
+                    ):
+                        _cleanup_completed_fold_dataset(data_root, run_id)
 
     logger.info("Sweep complete")
 
@@ -186,6 +202,7 @@ def run_postprocess_sweep(config: Dict[str, Any]) -> None:
     seq_filters = {float(v) for v in pp_cfg.get("seq_len_seconds", [])}
     device_str = str(pp_cfg.get("device", "cpu"))
     iou_threshold = float(pp_cfg.get("iou_threshold", 0.5))
+    point_well_coverage_threshold = float(pp_cfg.get("point_well_coverage_threshold", 0.9))
     weights_cfg = pp_cfg.get("weights", {}) if isinstance(pp_cfg.get("weights"), dict) else {}
     coverage_weight = float(weights_cfg.get("coverage", 0.4))
     segment_recall_weight = float(weights_cfg.get("segment_recall", 0.4))
@@ -209,6 +226,7 @@ def run_postprocess_sweep(config: Dict[str, Any]) -> None:
             run_dir=run_dir,
             device_str=device_str,
             iou_threshold=iou_threshold,
+            point_well_coverage_threshold=point_well_coverage_threshold,
             coverage_weight=coverage_weight,
             segment_recall_weight=segment_recall_weight,
             specificity_weight=specificity_weight,
@@ -221,11 +239,12 @@ def run_postprocess_sweep(config: Dict[str, Any]) -> None:
         return
 
     logger.info(
-        "Postprocess metric weights: coverage=%.3f segment_recall=%.3f specificity=%.3f iou_threshold=%.2f",
+        "Postprocess metric weights: coverage=%.3f segment_recall=%.3f specificity=%.3f iou_threshold=%.2f point_well_coverage_threshold=%.2f",
         coverage_weight,
         segment_recall_weight,
         specificity_weight,
         iou_threshold,
+        point_well_coverage_threshold,
     )
 
     per_run_lines = ["dataset,fps,seq_len_seconds,fold,time_score,time_segment_recall,time_coverage,time_specificity,time_segment_f1,time_mean_iou"]
@@ -274,6 +293,62 @@ def run_postprocess_sweep(config: Dict[str, Any]) -> None:
             )
         )
     logger.info("Postprocess summary by combo:\n%s", "\n".join(summary_lines))
+
+    point_run_lines = [
+        "dataset,fps,seq_len_seconds,fold,total_true_points,total_pred_points,well_classified_points,cut_off_points,missed_points,false_detected_points,unmatched_predicted_points,well_classified_rate,cut_off_rate,missed_rate,false_detected_rate,unmatched_predicted_rate"
+    ]
+    for row in rows:
+        point_run_lines.append(
+            ",".join(
+                [
+                    row["dataset"],
+                    _fmt_num(row["fps"]),
+                    _fmt_num(row["seq_len_seconds"]),
+                    str(int(row["fold"])),
+                    str(int(row["total_true_points"])),
+                    str(int(row["total_pred_points"])),
+                    str(int(row["well_classified_points"])),
+                    str(int(row["cut_off_points"])),
+                    str(int(row["missed_points"])),
+                    str(int(row["false_detected_points"])),
+                    str(int(row["unmatched_predicted_points"])),
+                    f"{row['well_classified_rate']:.6f}",
+                    f"{row['cut_off_rate']:.6f}",
+                    f"{row['missed_rate']:.6f}",
+                    f"{row['false_detected_rate']:.6f}",
+                    f"{row['unmatched_predicted_rate']:.6f}",
+                ]
+            )
+        )
+    logger.info("Per-run point classification results:\n%s", "\n".join(point_run_lines))
+
+    point_summary_lines = [
+        "dataset,fps,seq_len_seconds,folds,sum_true_points,sum_pred_points,sum_well_classified_points,sum_cut_off_points,sum_missed_points,sum_false_detected_points,sum_unmatched_predicted_points,mean_well_classified_rate,mean_cut_off_rate,mean_missed_rate,mean_false_detected_rate,mean_unmatched_predicted_rate"
+    ]
+    for (dataset_name, fps, seq_len), group_rows in sorted(grouped.items()):
+        point_summary_lines.append(
+            ",".join(
+                [
+                    dataset_name,
+                    _fmt_num(fps),
+                    _fmt_num(seq_len),
+                    str(len(group_rows)),
+                    str(int(sum(r["total_true_points"] for r in group_rows))),
+                    str(int(sum(r["total_pred_points"] for r in group_rows))),
+                    str(int(sum(r["well_classified_points"] for r in group_rows))),
+                    str(int(sum(r["cut_off_points"] for r in group_rows))),
+                    str(int(sum(r["missed_points"] for r in group_rows))),
+                    str(int(sum(r["false_detected_points"] for r in group_rows))),
+                    str(int(sum(r["unmatched_predicted_points"] for r in group_rows))),
+                    f"{np.mean([r['well_classified_rate'] for r in group_rows]):.6f}",
+                    f"{np.mean([r['cut_off_rate'] for r in group_rows]):.6f}",
+                    f"{np.mean([r['missed_rate'] for r in group_rows]):.6f}",
+                    f"{np.mean([r['false_detected_rate'] for r in group_rows]):.6f}",
+                    f"{np.mean([r['unmatched_predicted_rate'] for r in group_rows]):.6f}",
+                ]
+            )
+        )
+    logger.info("Point classification summary by combo:\n%s", "\n".join(point_summary_lines))
 
 
 def _run_extract(config: Dict[str, Any]) -> None:
@@ -532,7 +607,14 @@ def _run_dataset(config: Dict[str, Any]) -> None:
     )
 
     output_dir = datasets_dir(data_root) / config.get("run_id", "default")
-    builder.build(feature_root, output_dir, videos, feature_set)
+    built_dir = builder.build(feature_root, output_dir, videos, feature_set)
+    if built_dir is not None:
+        run_dir = runs_dir(data_root) / config.get("run_id", "default")
+        run_dir.mkdir(parents=True, exist_ok=True)
+        scaler_src = built_dir / "scaler.joblib"
+        scaler_dst = run_dir / "scaler.joblib"
+        if scaler_src.exists():
+            shutil.copy2(scaler_src, scaler_dst)
 
 
 def _run_train(config: Dict[str, Any]) -> None:
@@ -603,6 +685,7 @@ def _evaluate_postprocess_run(
     run_dir: Path,
     device_str: str,
     iou_threshold: float,
+    point_well_coverage_threshold: float,
     coverage_weight: float,
     segment_recall_weight: float,
     specificity_weight: float,
@@ -610,7 +693,9 @@ def _evaluate_postprocess_run(
     config_path = run_dir / "config.json"
     checkpoint_path = run_dir / "checkpoints" / "best.pth"
     dataset_dir = datasets_dir(data_root) / run_dir.name
-    scaler_path = dataset_dir / "scaler.joblib"
+    scaler_path = run_dir / "scaler.joblib"
+    if not scaler_path.exists():
+        scaler_path = dataset_dir / "scaler.joblib"
     metrics_path = run_dir / "metrics.jsonl"
     if not (config_path.exists() and checkpoint_path.exists() and scaler_path.exists() and metrics_path.exists()):
         return None
@@ -668,6 +753,13 @@ def _evaluate_postprocess_run(
         timestamps=timestamps,
         iou_threshold=iou_threshold,
     )
+    point_metrics = compute_time_point_classification_metrics(
+        targets.astype(int),
+        pred_bin.astype(int),
+        timestamps=timestamps,
+        iou_threshold=iou_threshold,
+        well_coverage_threshold=point_well_coverage_threshold,
+    )
     score = compute_weighted_segment_score(
         metrics,
         segment_recall_weight=segment_recall_weight,
@@ -681,6 +773,18 @@ def _evaluate_postprocess_run(
         "time_specificity": float(metrics.get("specificity", 0.0)),
         "time_segment_f1": float(metrics.get("segment_f1", 0.0)),
         "time_mean_iou": float(metrics.get("mean_iou", 0.0)),
+        "total_true_points": int(point_metrics.get("total_true_points", 0)),
+        "total_pred_points": int(point_metrics.get("total_pred_points", 0)),
+        "well_classified_points": int(point_metrics.get("well_classified_points", 0)),
+        "cut_off_points": int(point_metrics.get("cut_off_points", 0)),
+        "missed_points": int(point_metrics.get("missed_points", 0)),
+        "false_detected_points": int(point_metrics.get("false_detected_points", 0)),
+        "unmatched_predicted_points": int(point_metrics.get("unmatched_predicted_points", 0)),
+        "well_classified_rate": float(point_metrics.get("well_classified_rate", 0.0)),
+        "cut_off_rate": float(point_metrics.get("cut_off_rate", 0.0)),
+        "missed_rate": float(point_metrics.get("missed_rate", 0.0)),
+        "false_detected_rate": float(point_metrics.get("false_detected_rate", 0.0)),
+        "unmatched_predicted_rate": float(point_metrics.get("unmatched_predicted_rate", 0.0)),
     }
 
 
@@ -774,7 +878,12 @@ def _normalize_manual_dataset_entry(entry: Any, config: Dict[str, Any]) -> Dict[
     conf = float(yolo_base.get("conf", 0.25))
     imgsz = int(yolo_base.get("imgsz", 1920))
     name = str(entry.get("name") or f"{_slug(Path(model).stem, 20)}_conf{_fmt_num(conf)}_img{imgsz}")
-    return {"name": _slug(name, 48), "yolo": yolo_base, "extract": dict(entry.get("extract", {}))}
+    spec = {"name": _slug(name, 48), "yolo": yolo_base, "extract": dict(entry.get("extract", {}))}
+    if "fps_values" in entry:
+        spec["fps_values"] = list(entry.get("fps_values", []))
+    if "seq_len_seconds" in entry:
+        spec["seq_len_seconds"] = list(entry.get("seq_len_seconds", []))
+    return spec
 
 
 def _discover_raw_datasets(data_root: Path, required_stems: set[str], require_all: bool) -> List[Dict[str, Any]]:
@@ -874,7 +983,7 @@ def _resolve_sweep_overlap_seconds(
 
 
 def _load_training_checkpoint(checkpoint_path: Path, input_size: int, device_str: str) -> tuple[torch.nn.Module, torch.device]:
-    device = torch.device(device_str)
+    device = _resolve_requested_device(device_str)
     ckpt = torch.load(str(checkpoint_path), map_location=device)
     state_dict = ckpt.get("model_state_dict", ckpt)
     hidden_size = 128
@@ -905,6 +1014,18 @@ def _load_training_checkpoint(checkpoint_path: Path, input_size: int, device_str
     model.load_state_dict(state_dict)
     model.eval()
     return model, device
+
+
+def _resolve_requested_device(device_str: str) -> torch.device:
+    requested = str(device_str).lower()
+    if requested == "cuda":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if requested == "mps":
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        logger.warning("Requested device 'mps' is unavailable; falling back to CPU")
+        return torch.device("cpu")
+    return torch.device(device_str)
 
 
 def _parse_sweep_run_id(run_id: str, run_prefix: str) -> Optional[Dict[str, Any]]:
@@ -987,3 +1108,21 @@ def _stopped_by_early_stopping(run_dir: Path, records: List[Dict[str, Any]]) -> 
         if epochs_without_improvement >= patience:
             return True
     return False
+
+
+def _cleanup_completed_fold_dataset(data_root: Path, run_id: str) -> None:
+    dataset_dir = datasets_dir(data_root) / run_id
+    if not dataset_dir.exists():
+        return
+
+    run_dir = runs_dir(data_root) / run_id
+    scaler_src = dataset_dir / "scaler.joblib"
+    scaler_dst = run_dir / "scaler.joblib"
+    try:
+        if scaler_src.exists() and not scaler_dst.exists():
+            run_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(scaler_src, scaler_dst)
+        shutil.rmtree(dataset_dir)
+        logger.info("Cleaned completed dataset dir: %s", dataset_dir)
+    except Exception as exc:
+        logger.warning("Failed to clean dataset dir %s: %s", dataset_dir, exc)
