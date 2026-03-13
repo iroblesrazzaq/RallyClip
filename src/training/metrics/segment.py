@@ -159,6 +159,84 @@ def compute_time_segment_metrics(
     }
 
 
+def compute_time_point_classification_metrics(
+    y_true_bin: np.ndarray,
+    y_pred_bin: np.ndarray,
+    timestamps: np.ndarray,
+    *,
+    iou_threshold: float = 0.5,
+    well_coverage_threshold: float = 0.9,
+) -> Dict[str, Any]:
+    y_true_bin = np.asarray(y_true_bin).astype(int)
+    y_pred_bin = np.asarray(y_pred_bin).astype(int)
+    timestamps = np.asarray(timestamps, dtype=np.float64)
+    if y_true_bin.shape != y_pred_bin.shape or y_true_bin.shape != timestamps.shape:
+        raise ValueError("y_true_bin, y_pred_bin, and timestamps must have the same shape")
+
+    frame_intervals = _frame_intervals_from_timestamps(timestamps)
+    true_segments = _time_segments_from_binary(y_true_bin, frame_intervals)
+    pred_segments = _time_segments_from_binary(y_pred_bin, frame_intervals)
+
+    well_classified = 0
+    cut_off = 0
+    missed = 0
+
+    for true_seg in true_segments:
+        best_overlap = 0.0
+        best_iou = 0.0
+        best_gt_coverage = 0.0
+        for pred_seg in pred_segments:
+            overlap = _interval_overlap(true_seg, pred_seg)
+            if overlap <= 0:
+                continue
+            iou = _interval_iou(true_seg, pred_seg)
+            gt_coverage = overlap / max(1e-9, (true_seg[1] - true_seg[0]))
+            if overlap > best_overlap or (np.isclose(overlap, best_overlap) and iou > best_iou):
+                best_overlap = overlap
+                best_iou = iou
+                best_gt_coverage = gt_coverage
+
+        if best_iou >= iou_threshold and best_gt_coverage >= well_coverage_threshold:
+            well_classified += 1
+        elif best_overlap > 0.0:
+            cut_off += 1
+        else:
+            missed += 1
+
+    false_detected = 0
+    unmatched_predicted = 0
+    for pred_seg in pred_segments:
+        best_overlap = 0.0
+        best_iou = 0.0
+        for true_seg in true_segments:
+            overlap = _interval_overlap(true_seg, pred_seg)
+            if overlap <= 0:
+                continue
+            best_overlap = max(best_overlap, overlap)
+            best_iou = max(best_iou, _interval_iou(true_seg, pred_seg))
+        if best_overlap == 0.0:
+            false_detected += 1
+        if best_iou < iou_threshold:
+            unmatched_predicted += 1
+
+    total_true_points = len(true_segments)
+    total_pred_points = len(pred_segments)
+    return {
+        "total_true_points": total_true_points,
+        "total_pred_points": total_pred_points,
+        "well_classified_points": well_classified,
+        "cut_off_points": cut_off,
+        "missed_points": missed,
+        "false_detected_points": false_detected,
+        "unmatched_predicted_points": unmatched_predicted,
+        "well_classified_rate": (well_classified / total_true_points) if total_true_points else 0.0,
+        "cut_off_rate": (cut_off / total_true_points) if total_true_points else 0.0,
+        "missed_rate": (missed / total_true_points) if total_true_points else 0.0,
+        "false_detected_rate": (false_detected / total_pred_points) if total_pred_points else 0.0,
+        "unmatched_predicted_rate": (unmatched_predicted / total_pred_points) if total_pred_points else 0.0,
+    }
+
+
 def compute_weighted_segment_score(
     metrics: Dict[str, Any],
     *,
@@ -223,3 +301,9 @@ def _interval_iou(seg_a: Tuple[float, float], seg_b: Tuple[float, float]) -> flo
     inter = max(0.0, min(a1, b1) - max(a0, b0))
     union = (a1 - a0) + (b1 - b0) - inter
     return (inter / union) if union > 0 else 0.0
+
+
+def _interval_overlap(seg_a: Tuple[float, float], seg_b: Tuple[float, float]) -> float:
+    a0, a1 = seg_a
+    b0, b1 = seg_b
+    return max(0.0, min(a1, b1) - max(a0, b0))

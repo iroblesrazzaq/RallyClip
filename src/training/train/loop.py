@@ -172,6 +172,14 @@ def _save_checkpoint(path: Path, model: torch.nn.Module, optimizer: torch.optim.
 
 def _resolve_device(device: Optional[str]) -> torch.device:
     if device:
+        requested = str(device).lower()
+        if requested == "cuda":
+            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if requested == "mps":
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                return torch.device("mps")
+            logger.warning("Requested device 'mps' is unavailable; falling back to CPU")
+            return torch.device("cpu")
         return torch.device(device)
     if torch.cuda.is_available():
         return torch.device("cuda")

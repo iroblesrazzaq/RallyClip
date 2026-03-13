@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
+from uuid import uuid4
 
 import h5py
 import numpy as np
@@ -33,6 +34,11 @@ class DatasetBuilder:
 
         seq_len = max(1, int(round(self.cfg.seq_len_seconds * self.cfg.target_fps)))
         overlap = max(0, int(round(self.cfg.overlap_seconds * self.cfg.target_fps)))
+        if overlap >= seq_len:
+            raise ValueError(
+                "overlap_seconds must be smaller than seq_len_seconds "
+                f"(got overlap={self.cfg.overlap_seconds}, seq_len={self.cfg.seq_len_seconds})"
+            )
         split_strategy = self.cfg.split.strategy
         held_out_video = self._validate_loso_setup(video_list)
 
@@ -134,7 +140,7 @@ class DatasetBuilder:
 
         scaler.fit(train_features.reshape(-1, train_features.shape[-1]))
         scaler_path = output_dir / "scaler.joblib"
-        joblib.dump(scaler, scaler_path)
+        _atomic_joblib_dump(scaler, scaler_path)
 
         for split_name, datasets in all_splits.items():
             features_arr, targets_arr, video_ids, seq_frame_idx, seq_times, video_names = _merge_sequences(datasets)
@@ -145,7 +151,8 @@ class DatasetBuilder:
             scaled = scaler.transform(flat).reshape(features_arr.shape)
 
             out_path = output_dir / f"{split_name}.h5"
-            with h5py.File(out_path, "w") as out:
+            tmp_path = _tmp_path_for(out_path)
+            with h5py.File(tmp_path, "w") as out:
                 out.create_dataset("features", data=scaled, compression="gzip")
                 out.create_dataset("targets", data=targets_arr)
                 out.create_dataset("sequence_video_index", data=video_ids, dtype="i4")
@@ -155,6 +162,7 @@ class DatasetBuilder:
                     "video_index_to_name",
                     data=np.asarray(video_names, dtype=h5py.string_dtype(encoding="utf-8")),
                 )
+            tmp_path.replace(out_path)
             manifest["splits"][split_name] = sorted({v for _, _, _, _, v in datasets})
 
         manifest_path = output_dir / "dataset_manifest.json"
@@ -164,8 +172,10 @@ class DatasetBuilder:
             "target_fps": self.cfg.target_fps,
             "split": self.cfg.split.__dict__,
         }
-        with manifest_path.open("w", encoding="utf-8") as handle:
+        tmp_manifest_path = _tmp_path_for(manifest_path)
+        with tmp_manifest_path.open("w", encoding="utf-8") as handle:
             json.dump(manifest, handle, indent=2)
+        tmp_manifest_path.replace(manifest_path)
 
         logger.info("Dataset built at %s", output_dir)
         return output_dir
@@ -244,3 +254,13 @@ def _merge_sequences(split_data):
         np.asarray(all_times, dtype=np.float64),
         video_names,
     )
+
+
+def _tmp_path_for(path: Path) -> Path:
+    return path.with_name(f"{path.name}.tmp.{uuid4().hex}")
+
+
+def _atomic_joblib_dump(obj, out_path: Path) -> None:
+    tmp_path = _tmp_path_for(out_path)
+    joblib.dump(obj, tmp_path)
+    tmp_path.replace(out_path)

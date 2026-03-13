@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
@@ -8,6 +9,8 @@ import torch
 from training.dataset.hdf5_dataset import Hdf5SequenceDataset
 from training.eval.evaluator import SegmentEvalConfig, evaluate_model
 from training.models.lstm import TennisPointLSTM
+
+logger = logging.getLogger(__name__)
 
 
 def evaluate_checkpoint(
@@ -38,6 +41,14 @@ def evaluate_checkpoint(
 
 def _resolve_device(device: str | None) -> torch.device:
     if device:
+        requested = str(device).lower()
+        if requested == "cuda":
+            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if requested == "mps":
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                return torch.device("mps")
+            logger.warning("Requested device 'mps' is unavailable; falling back to CPU")
+            return torch.device("cpu")
         return torch.device(device)
     if torch.cuda.is_available():
         return torch.device("cuda")

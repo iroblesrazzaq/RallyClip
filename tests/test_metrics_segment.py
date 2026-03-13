@@ -5,6 +5,7 @@ import numpy as np
 from training.metrics.segment import (
     _segments_from_binary,
     compute_segment_metrics,
+    compute_time_point_classification_metrics,
     compute_time_segment_metrics,
     compute_weighted_segment_score,
 )
@@ -43,3 +44,28 @@ def test_time_segment_metrics_basic():
     assert metrics["segment_f1"] == 0.0
     assert metrics["coverage"] == 0.5
     assert metrics["specificity"] == 1.0
+
+
+def test_time_point_classification_metrics_basic():
+    timestamps = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], dtype=float)
+    y_true = np.array([0, 1, 1, 0, 1, 0], dtype=int)
+    y_pred = np.array([0, 1, 0, 0, 0, 1], dtype=int)
+    metrics = compute_time_point_classification_metrics(
+        y_true,
+        y_pred,
+        timestamps,
+        iou_threshold=0.5,
+        well_coverage_threshold=0.9,
+    )
+    assert metrics["total_true_points"] == 2
+    assert metrics["total_pred_points"] == 2
+    assert metrics["well_classified_points"] == 0
+    assert metrics["cut_off_points"] == 1
+    assert metrics["missed_points"] == 1
+    assert metrics["false_detected_points"] == 1
+    assert metrics["unmatched_predicted_points"] == 1
+    assert metrics["well_classified_rate"] == 0.0
+    assert metrics["cut_off_rate"] == 0.5
+    assert metrics["missed_rate"] == 0.5
+    assert metrics["false_detected_rate"] == 0.5
+    assert metrics["unmatched_predicted_rate"] == 0.5
