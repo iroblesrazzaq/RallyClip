@@ -16,18 +16,24 @@ yolo_model = "nano"
 # Optional device: cpu | cuda | mps (defaults to auto; set to "mps" for Apple Silicon)
 yolo_device = "mps" # get mps warning so switches to cpu if don't set this var
 
-# Optional overrides for assets:
-# model_path = "/path/to/lstm_300_v0.1.pth"
-# scaler_path = "/path/to/scaler_300_v0.1.joblib"
+# Primary inference artifact: manifest + ONNX + scaler JSON
+artifact_dir = "models/rallyclip_v0.3.0"
 
-# Pipeline parameters — defaults shown
-fps = 15.0
-seq_len = 300
-overlap = 150
-sigma = 1.5
-low = 0.45
-high = 0.8
-min_dur_sec = 0.5
+# Legacy compatibility only:
+# model_path = "/path/to/model.pth"
+# scaler_path = "/path/to/scaler.joblib"
+
+# Inference defaults now come from the artifact manifest.
+# Leave these unset unless you are intentionally overriding the artifact:
+# fps = 5.0
+# seq_len = 100
+# overlap = 50
+# sigma = 1.0
+# low = 0.45
+# high = 0.7
+# min_dur_sec = 1.0
+
+# Runtime extraction controls
 conf = 0.25
 start_time = 0
 duration = 999999

@@ -394,6 +394,8 @@ def test_build_run_config_prefers_artifact_over_legacy_paths(tmp_path):
 
 
 def test_build_run_config_legacy_paths_still_work(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[run]\n", encoding="utf-8")
     video_path = tmp_path / "input.mp4"
     video_path.write_bytes(b"")
     model_path = tmp_path / "model.pth"
@@ -403,6 +405,7 @@ def test_build_run_config_legacy_paths_still_work(tmp_path):
 
     cfg = build_run_config(
         _build_cli_args(
+            config=str(config_path),
             video=str(video_path),
             model_path=str(model_path),
             scaler_path=str(scaler_path),
@@ -535,6 +538,8 @@ def test_run_pipeline_uses_artifact_inference_path(tmp_path, monkeypatch):
 
 
 def test_run_pipeline_uses_legacy_pytorch_inference_path(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text("[run]\n", encoding="utf-8")
     video_path = tmp_path / "input.mp4"
     video_path.write_bytes(b"")
     model_path = tmp_path / "model.pth"
@@ -588,6 +593,7 @@ def test_run_pipeline_uses_legacy_pytorch_inference_path(tmp_path, monkeypatch):
 
     cfg = build_run_config(
         _build_cli_args(
+            config=str(config_path),
             video=str(video_path),
             model_path=str(model_path),
             scaler_path=str(scaler_path),
