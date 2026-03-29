@@ -1,5 +1,6 @@
 import os
 import csv
+import json
 from typing import Optional, List, Tuple, Callable
 
 import numpy as np
@@ -76,6 +77,91 @@ def load_model_from_checkpoint(
     return model, device
 
 
+def load_scaler_json(path: str) -> dict:
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def apply_standard_scaler_json(features: np.ndarray, scaler_state: dict, eps: float = 1e-8) -> np.ndarray:
+    feature_dim = int(scaler_state.get("feature_dim", 0) or 0)
+    if feature_dim <= 0:
+        raise ValueError("Scaler JSON must declare a positive feature_dim")
+    if features.ndim != 2:
+        raise ValueError("Features must be a 2D array")
+    if features.shape[1] != feature_dim:
+        raise ValueError(
+            f"Scaler feature dimension mismatch: expected {feature_dim}, got {features.shape[1]}"
+        )
+
+    mean = np.asarray(scaler_state.get("mean", []), dtype=np.float32)
+    scale = np.asarray(scaler_state.get("scale", []), dtype=np.float32)
+    if mean.shape != (feature_dim,) or scale.shape != (feature_dim,):
+        raise ValueError("Scaler JSON mean/scale length must match feature_dim")
+
+    safe_scale = np.where(np.abs(scale) < eps, 1.0, scale).astype(np.float32)
+    return ((features.astype(np.float32) - mean) / safe_scale).astype(np.float32)
+
+
+def create_onnx_session(model_path: str):
+    import onnxruntime as ort
+
+    return ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+
+
+def _normalize_onnx_window_output(output: np.ndarray, sequence_length: int) -> np.ndarray:
+    arr = np.asarray(output, dtype=np.float32)
+    arr = np.squeeze(arr)
+    if arr.ndim != 1:
+        raise ValueError(f"Unexpected ONNX output shape after squeeze: {arr.shape}")
+    if arr.shape[0] != sequence_length:
+        raise ValueError(
+            f"Unexpected ONNX output sequence length: expected {sequence_length}, got {arr.shape[0]}"
+        )
+    return arr.astype(np.float32)
+
+
+def run_windowed_inference_average_onnx(
+    session,
+    features: np.ndarray,
+    sequence_length: int,
+    overlap: int,
+    progress_callback: Optional[Callable[[float], None]] = None,
+) -> np.ndarray:
+    if features.ndim != 2:
+        raise ValueError("Features must be a 2D array")
+
+    input_meta = session.get_inputs()[0]
+    input_name = input_meta.name
+    input_shape = list(getattr(input_meta, "shape", []))
+    if len(input_shape) >= 1 and isinstance(input_shape[0], int) and input_shape[0] not in (1,):
+        raise ValueError(f"ONNX runtime only supports batch size 1, got model batch {input_shape[0]}")
+    if len(input_shape) >= 2 and isinstance(input_shape[1], int) and input_shape[1] != sequence_length:
+        raise ValueError(
+            f"ONNX sequence length mismatch: expected {input_shape[1]}, got {sequence_length}"
+        )
+    if len(input_shape) >= 3 and isinstance(input_shape[2], int) and input_shape[2] != features.shape[1]:
+        raise ValueError(
+            f"ONNX feature dimension mismatch: expected {input_shape[2]}, got {features.shape[1]}"
+        )
+
+    num_frames = features.shape[0]
+    start_indices = generate_start_indices(num_frames, sequence_length, overlap)
+    summed_probs = np.zeros(num_frames, dtype=np.float32)
+    counts = np.zeros(num_frames, dtype=np.int32)
+    for seq_idx, start in enumerate(start_indices):
+        seq_np = features[start:start + sequence_length, :].astype(np.float32)[None, :, :]
+        output = session.run(None, {input_name: seq_np})
+        output_sequence = _normalize_onnx_window_output(output[0], sequence_length)
+        summed_probs[start:start + sequence_length] += output_sequence
+        counts[start:start + sequence_length] += 1
+        if progress_callback is not None:
+            try:
+                progress_callback((seq_idx + 1) / float(len(start_indices)))
+            except Exception:
+                pass
+    return np.divide(summed_probs, np.maximum(counts, 1), dtype=np.float32)
+
+
 def hysteresis_threshold(values: np.ndarray, low: float = 0.3, high: float = 0.7, min_duration: int = 0) -> np.ndarray:
     assert 0.0 <= low < high <= 1.0
     n = len(values)
@@ -100,6 +186,20 @@ def hysteresis_threshold(values: np.ndarray, low: float = 0.3, high: float = 0.7
         if (end_idx - start_idx) >= max(0, min_duration):
             pred[start_idx:end_idx] = 1
     return pred.astype(np.int32)
+
+
+def apply_postprocess(values: np.ndarray, method: str, params: dict, fps: float) -> np.ndarray:
+    if method != "hysteresis":
+        raise ValueError(f"Unknown postprocess method: {method}")
+    sigma = float(params.get("sigma", 1.5))
+    smoothed = gaussian_filter1d(values.astype(np.float32), sigma=sigma)
+    min_duration_frames = int(round(max(0.0, float(params.get("min_dur_sec", 0.0))) * float(fps)))
+    return hysteresis_threshold(
+        smoothed,
+        low=float(params.get("low", 0.45)),
+        high=float(params.get("high", 0.8)),
+        min_duration=min_duration_frames,
+    )
 
 
 def generate_start_indices(num_frames: int, sequence_length: int, overlap: int) -> List[int]:
@@ -181,5 +281,4 @@ def write_segments_csv(segments: List[Tuple[int, int]], output_csv_path: str, fp
             start_t = start_idx / fps
             end_t = end_idx / fps
             writer.writerow([f"{start_t:.3f}", f"{end_t:.3f}"])
-
 

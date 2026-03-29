@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import tempfile
@@ -14,10 +15,13 @@ import numpy as np
 from extraction.pose_extractor import PoseExtractor
 from features.feature_engineer import FeatureEngineer
 from infer import (
+    apply_postprocess,
+    apply_standard_scaler_json,
+    create_onnx_session,
     extract_segments_from_binary,
-    gaussian_filter1d,
-    hysteresis_threshold,
+    load_scaler_json,
     load_model_from_checkpoint,
+    run_windowed_inference_average_onnx,
     run_windowed_inference_average,
     write_segments_csv,
 )
@@ -48,7 +52,13 @@ class RunConfig:
     yolo_weights: str
     yolo_device: Optional[str]
     model_path: Path
-    scaler_path: Path
+    scaler_path: Optional[Path]
+    inference_backend: str = "pytorch"
+    manifest_path: Optional[Path] = None
+    scaler_json_path: Optional[Path] = None
+    feature_set: Optional[str] = None
+    feature_dim: Optional[int] = None
+    postprocess_method: str = "hysteresis"
     fps: float = 15.0
     seq_len: int = 300
     overlap: int = 150
@@ -105,6 +115,42 @@ def _resolve_asset(explicit: Optional[str], env_var: str, relatives: list[str], 
     )
 
 
+def _load_manifest_from_inputs(
+    artifact_dir: Optional[str],
+    manifest_path: Optional[str],
+) -> tuple[Path, dict]:
+    if artifact_dir:
+        manifest_file = Path(artifact_dir).expanduser().resolve() / "manifest.json"
+        if not manifest_file.exists():
+            raise FileNotFoundError(f"Artifact manifest.json not found at '{manifest_file}'")
+    elif manifest_path:
+        manifest_file = Path(manifest_path).expanduser().resolve()
+        if not manifest_file.exists():
+            raise FileNotFoundError(f"Artifact manifest.json not found at '{manifest_file}'")
+    else:
+        raise ValueError("artifact_dir or manifest_path is required")
+
+    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    manifest_version = int(manifest.get("manifest_version", 0) or 0)
+    if manifest_version != 1:
+        raise ValueError(f"Unsupported manifest_version: {manifest_version}")
+    artifact_root = manifest_file.parent
+    files = manifest.get("files") or {}
+    model_file = files.get("model_file")
+    scaler_file = files.get("scaler_file")
+    if not model_file:
+        raise ValueError("Artifact manifest is missing files.model_file")
+    if not scaler_file:
+        raise ValueError("Artifact manifest is missing files.scaler_file")
+    model_path = artifact_root / model_file
+    scaler_path = artifact_root / scaler_file
+    if not model_path.exists():
+        raise FileNotFoundError(f"Artifact model file not found at '{model_path}'")
+    if not scaler_path.exists():
+        raise FileNotFoundError(f"Artifact scaler file not found at '{scaler_path}'")
+    return manifest_file, manifest
+
+
 def _load_config_dict(path: Optional[str]) -> Dict[str, Any]:
     if path:
         cfg_path = Path(path).expanduser()
@@ -154,24 +200,54 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
     write_csv = _pick_bool(args.write_csv, cfg("write_csv"), False)
     segment_video_flag = _pick_bool(args.segment_video, cfg("segment_video"), True)
 
-    model_path = _resolve_asset(
-        args.model_path or cfg("model_path"),
-        env_var="DEEPMATCH_MODEL_PATH",
-        relatives=[
-            "models/lstm_300_v0.1.pth",
-            "checkpoints/seq_len300/best_model.pth",
-        ],
-        description="LSTM checkpoint (seq_len=300)",
-    )
-    scaler_path = _resolve_asset(
-        args.scaler_path or cfg("scaler_path"),
-        env_var="DEEPMATCH_SCALER_PATH",
-        relatives=[
-            "models/scaler_300_v0.1.joblib",
-            "data/seq_len_300/scaler.joblib",
-        ],
-        description="StandardScaler for seq_len=300",
-    )
+    artifact_dir = args.artifact_dir or cfg("artifact_dir")
+    manifest_path = args.manifest_path or cfg("manifest_path")
+    manifest: Dict[str, Any] = {}
+    resolved_manifest_path: Optional[Path] = None
+    inference_backend = "pytorch"
+    scaler_json_path: Optional[Path] = None
+    feature_set: Optional[str] = None
+    feature_dim: Optional[int] = None
+    postprocess_method = "hysteresis"
+
+    if artifact_dir or manifest_path:
+        resolved_manifest_path, manifest = _load_manifest_from_inputs(
+            artifact_dir=str(artifact_dir) if artifact_dir else None,
+            manifest_path=str(manifest_path) if manifest_path else None,
+        )
+        inference_backend = "onnx"
+        model_path = (resolved_manifest_path.parent / str((manifest.get("files") or {}).get("model_file"))).resolve()
+        scaler_json_path = (resolved_manifest_path.parent / str((manifest.get("files") or {}).get("scaler_file"))).resolve()
+        scaler_path = None
+        feature_cfg = manifest.get("feature_pipeline") or {}
+        feature_set = feature_cfg.get("feature_set")
+        feature_dim_val = feature_cfg.get("feature_dim")
+        feature_dim = int(feature_dim_val) if feature_dim_val is not None else None
+        postprocess_cfg = manifest.get("postprocess") or {}
+        postprocess_method = str(postprocess_cfg.get("method", "hysteresis"))
+        inference_cfg = manifest.get("inference") or {}
+        postprocess_params = postprocess_cfg.get("params") or {}
+    else:
+        model_path = _resolve_asset(
+            args.model_path or cfg("model_path"),
+            env_var="DEEPMATCH_MODEL_PATH",
+            relatives=[
+                "models/lstm_300_v0.1.pth",
+                "checkpoints/seq_len300/best_model.pth",
+            ],
+            description="LSTM checkpoint (seq_len=300)",
+        )
+        scaler_path = _resolve_asset(
+            args.scaler_path or cfg("scaler_path"),
+            env_var="DEEPMATCH_SCALER_PATH",
+            relatives=[
+                "models/scaler_300_v0.1.joblib",
+                "data/seq_len_300/scaler.joblib",
+            ],
+            description="StandardScaler for seq_len=300",
+        )
+        inference_cfg = {}
+        postprocess_params = {}
 
     return RunConfig(
         video_path=Path(video_path).expanduser().resolve(),
@@ -184,13 +260,19 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         yolo_device=yolo_device,
         model_path=model_path,
         scaler_path=scaler_path,
-        fps=float(args.fps if args.fps is not None else cfg("fps", 15.0)),
-        seq_len=int(args.seq_len if args.seq_len is not None else cfg("seq_len", 300)),
-        overlap=int(args.overlap if args.overlap is not None else cfg("overlap", 150)),
-        sigma=float(args.sigma if args.sigma is not None else cfg("sigma", 1.5)),
-        low=float(args.low if args.low is not None else cfg("low", 0.45)),
-        high=float(args.high if args.high is not None else cfg("high", 0.8)),
-        min_dur_sec=float(args.min_dur_sec if args.min_dur_sec is not None else cfg("min_dur_sec", 0.5)),
+        inference_backend=inference_backend,
+        manifest_path=resolved_manifest_path,
+        scaler_json_path=scaler_json_path,
+        feature_set=feature_set,
+        feature_dim=feature_dim,
+        postprocess_method=postprocess_method,
+        fps=float(args.fps if args.fps is not None else inference_cfg.get("fps", cfg("fps", 15.0))),
+        seq_len=int(args.seq_len if args.seq_len is not None else inference_cfg.get("seq_len_frames", cfg("seq_len", 300))),
+        overlap=int(args.overlap if args.overlap is not None else inference_cfg.get("overlap_frames", cfg("overlap", 150))),
+        sigma=float(args.sigma if args.sigma is not None else postprocess_params.get("sigma", cfg("sigma", 1.5))),
+        low=float(args.low if args.low is not None else postprocess_params.get("low", cfg("low", 0.45))),
+        high=float(args.high if args.high is not None else postprocess_params.get("high", cfg("high", 0.8))),
+        min_dur_sec=float(args.min_dur_sec if args.min_dur_sec is not None else postprocess_params.get("min_dur_sec", cfg("min_dur_sec", 0.5))),
         conf=float(args.conf if args.conf is not None else cfg("conf", 0.25)),
         start_time=int(args.start_time if args.start_time is not None else cfg("start_time", 0)),
         duration=int(args.duration if args.duration is not None else cfg("duration", 999999)),
@@ -231,17 +313,34 @@ def run_pipeline(cfg: RunConfig) -> int:
 
         data = np.load(str(features_npz))
         features = data["features"]
-        scaler = joblib.load(str(cfg.scaler_path))
-        features = scaler.transform(features)
-
-        model, device = load_model_from_checkpoint(str(cfg.model_path), return_logits=False)
-        avg_probs = run_windowed_inference_average(
-            model, device, features, sequence_length=int(cfg.seq_len), overlap=int(cfg.overlap)
-        )
-        smoothed_probs = gaussian_filter1d(avg_probs.astype(np.float32), sigma=float(cfg.sigma))
-        min_duration_frames = int(round(max(0.0, float(cfg.min_dur_sec)) * float(cfg.fps)))
-        binary_pred = hysteresis_threshold(
-            smoothed_probs, low=float(cfg.low), high=float(cfg.high), min_duration=min_duration_frames
+        if cfg.inference_backend == "onnx":
+            if cfg.scaler_json_path is None:
+                raise ValueError("ONNX inference requires scaler_json_path")
+            scaler_state = load_scaler_json(str(cfg.scaler_json_path))
+            features = apply_standard_scaler_json(features, scaler_state)
+            session = create_onnx_session(str(cfg.model_path))
+            avg_probs = run_windowed_inference_average_onnx(
+                session, features, sequence_length=int(cfg.seq_len), overlap=int(cfg.overlap)
+            )
+        else:
+            if cfg.scaler_path is None:
+                raise ValueError("PyTorch inference requires scaler_path")
+            scaler = joblib.load(str(cfg.scaler_path))
+            features = scaler.transform(features)
+            model, device = load_model_from_checkpoint(str(cfg.model_path), return_logits=False)
+            avg_probs = run_windowed_inference_average(
+                model, device, features, sequence_length=int(cfg.seq_len), overlap=int(cfg.overlap)
+            )
+        binary_pred = apply_postprocess(
+            avg_probs,
+            method=cfg.postprocess_method,
+            params={
+                "sigma": float(cfg.sigma),
+                "low": float(cfg.low),
+                "high": float(cfg.high),
+                "min_dur_sec": float(cfg.min_dur_sec),
+            },
+            fps=float(cfg.fps),
         )
         segments = extract_segments_from_binary(binary_pred)
 
@@ -282,6 +381,8 @@ def main() -> int:
     p.add_argument("--output-dir", help="Directory to store outputs (defaults to ./output_videos)")
     p.add_argument("--output-name", help="Optional base name for outputs (without extension)")
     p.add_argument("--csv-output-dir", help="Optional directory for CSV output (defaults to video directory)")
+    p.add_argument("--artifact-dir", help="Path to artifact directory containing manifest.json, model.onnx, and scaler.json")
+    p.add_argument("--manifest-path", help="Path to model artifact manifest.json")
     p.add_argument("--model-path", help="Path to LSTM .pth (defaults to checkpoints/seq_len300/best_model.pth if present)")
     p.add_argument("--scaler-path", help="Path to StandardScaler .joblib (defaults to data/seq_len_300/scaler.joblib if present)")
     p.add_argument("--yolo-size", choices=list(YOLO_SIZE_MAP.keys()), help="YOLO pose model size (auto-downloads if needed)")
