@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from training.io.config import load_config  # noqa: E402
 from training.io.videos import create_flipped_videos, resolve_videos  # noqa: E402
 from training.paths import annotations_dir, raw_videos_dir, resolve_data_root  # noqa: E402
-from training.pipeline import run_pipeline, run_postprocess_sweep, run_sweep  # noqa: E402
+from training.pipeline import export_model_artifact, run_pipeline, run_postprocess_sweep, run_sweep  # noqa: E402
 
 
 def main() -> int:
@@ -36,6 +36,28 @@ def main() -> int:
         "--make-flipped-videos",
         action="store_true",
         help="Create horizontally flipped training-video variants under a separate raw-video root",
+    )
+    parser.add_argument(
+        "--export-artifact",
+        action="store_true",
+        help="Export a finished training run into a versioned deployment artifact directory",
+    )
+    parser.add_argument("--export-run-id", help="Run id to export when using --export-artifact")
+    parser.add_argument("--export-version", help="Versioned artifact directory name when using --export-artifact")
+    parser.add_argument(
+        "--export-checkpoint",
+        default="best",
+        choices=["best", "last"],
+        help="Checkpoint name to export when using --export-artifact",
+    )
+    parser.add_argument(
+        "--export-output-dir",
+        help="Optional output root for exported artifacts (default: ./models)",
+    )
+    parser.add_argument(
+        "--export-overwrite",
+        action="store_true",
+        help="Overwrite an existing exported artifact directory when using --export-artifact",
     )
     parser.add_argument(
         "--flip-mode",
@@ -68,9 +90,10 @@ def main() -> int:
         bool(args.sweep),
         bool(args.postprocess_sweep),
         bool(args.make_flipped_videos),
+        bool(args.export_artifact),
     ]
     if sum(1 for mode in selected_modes if mode) > 1:
-        raise SystemExit("--sweep, --postprocess-sweep, and --make-flipped-videos cannot be used together")
+        raise SystemExit("--sweep, --postprocess-sweep, --make-flipped-videos, and --export-artifact cannot be used together")
 
     if args.sweep:
         if steps_override is not None:
@@ -100,6 +123,25 @@ def main() -> int:
             overwrite=args.flip_overwrite,
         )
         logging.info("Prepared %d flipped videos under %s", len(created), output_dir)
+        return 0
+
+    if args.export_artifact:
+        if steps_override is not None:
+            raise SystemExit("--steps cannot be used with --export-artifact")
+        if not args.export_run_id:
+            raise SystemExit("--export-run-id is required with --export-artifact")
+        if not args.export_version:
+            raise SystemExit("--export-version is required with --export-artifact")
+        data_root = resolve_data_root(config)
+        artifact_dir = export_model_artifact(
+            data_root=data_root,
+            run_id=args.export_run_id,
+            version=args.export_version,
+            checkpoint_name=args.export_checkpoint,
+            output_root=args.export_output_dir,
+            overwrite=args.export_overwrite,
+        )
+        logging.info("Exported artifact to %s", artifact_dir)
         return 0
 
     run_pipeline(config, steps_override=steps_override)

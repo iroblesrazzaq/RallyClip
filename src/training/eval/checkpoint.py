@@ -29,10 +29,18 @@ def evaluate_checkpoint(
 
     dataset = Hdf5SequenceDataset(dataset_path)
     device = _resolve_device(device_str)
-    model = TennisPointLSTM(input_size=dataset.feature_dim, return_logits=True).to(device)
-
     ckpt = torch.load(str(checkpoint_path), map_location=device)
-    model.load_state_dict(ckpt.get("model_state_dict", ckpt))
+    state_dict = ckpt.get("model_state_dict", ckpt)
+    hidden_size, num_layers, bidirectional = _infer_lstm_shape(state_dict)
+    model = TennisPointLSTM(
+        input_size=dataset.feature_dim,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=0.2,
+        bidirectional=bidirectional,
+        return_logits=True,
+    ).to(device)
+    model.load_state_dict(state_dict)
 
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight], device=device))
     loader = torch.utils.data.DataLoader(dataset, batch_size=32, shuffle=False)
@@ -55,3 +63,14 @@ def _resolve_device(device: str | None) -> torch.device:
     if torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
+
+
+def _infer_lstm_shape(state_dict: Dict[str, Any]) -> Tuple[int, int, bool]:
+    weight_ih_keys = sorted(k for k in state_dict if k.startswith("lstm.weight_ih_l"))
+    if not weight_ih_keys:
+        raise ValueError("Checkpoint state_dict does not contain LSTM weights")
+
+    num_layers = max(int(key.split("l")[1].split(".")[0].replace("_reverse", "")) for key in weight_ih_keys) + 1
+    bidirectional = any("_reverse" in key for key in weight_ih_keys)
+    hidden_size = int(state_dict[weight_ih_keys[0]].shape[0] // 4)
+    return hidden_size, num_layers, bidirectional

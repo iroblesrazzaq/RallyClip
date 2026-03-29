@@ -1,5 +1,5 @@
 data_root: data
-run_id: null
+run_id: prod_yolon960_fps5_seq20_mirror_v1
 steps:
   - extract
   - preprocess
@@ -13,7 +13,7 @@ overwrite_all: false
 yolo:
   model: yolov8n-pose.pt
   conf: 0.25
-  imgsz: 1920
+  imgsz: 960
   model_dir: models
   device: null
   batch_size: null
@@ -23,13 +23,13 @@ extract:
   videos: []
   start_time: 0
   duration: null
-  sampling_mode: full_then_downsample  # or: downsample_then_extract
-  sample_fps: null
+  sampling_mode: downsample_then_extract  # or: full_then_downsample
+  sample_fps: 5
   overwrite: false
   resume: true
 
 preprocess:
-  target_fps: 15
+  target_fps: 5
   save_court_masks: true
   mode: annotated
   videos: []
@@ -46,15 +46,22 @@ features:
   videos: []
   overwrite: false
 
+augmentation:
+  enabled: true
+  mirror_train: true
+  flip_suffix: "__flip_h"
+  flip_video_root: data/raw_videos_flip_h
+  flip_annotation_root: data/annotations_flip_h
+
 dataset:
   seq_len_seconds: 20
   overlap_seconds: 10
   split:
-    strategy: hybrid  # options: hybrid, by_video, within_video, loso_temporal_val
+    strategy: within_video  # options: hybrid, by_video, within_video, loso_temporal_val
     seed: 67
     test_videos: []  # for loso_temporal_val: set exactly one held-out video per run
     val_ratio: 0.1
-    test_ratio: 0.1
+    test_ratio: 0.0
   mode: annotated
   videos: []
 
@@ -68,6 +75,10 @@ train:
   lr: 0.001
   weight_decay: 0.01
   pos_weight: 3.0
+  hidden_size: 128
+  num_layers: 2
+  dropout: 0.2
+  bidirectional: true
   device: mps
   threshold: 0.5
   early_stopping_patience: 5
@@ -75,9 +86,9 @@ train:
   save_every_n: 0
   segment_eval:
     low: 0.45
-    high: 0.8
-    sigma: 1.5
-    min_dur_sec: 0.5
+    high: 0.7
+    sigma: 1.0
+    min_dur_sec: 1.0
 
 wandb:
   enabled: false
@@ -87,23 +98,29 @@ wandb:
   tags: []
 
 postprocess_eval:
-  run_prefix: loso_nano_mps_e30
+  run_prefix: loso_nano_mirror_yolon960_fps5_seq10
   device: cpu
   iou_threshold: 0.5
+  point_well_coverage_threshold: 0.9
   datasets: []
   fps_values: []
-  seq_len_seconds: [10]
+  seq_len_seconds: [20]
   weights:
     coverage: 0.4
     segment_recall: 0.4
     specificity: 0.2
+  defaults:
+    low: 0.45
+    high: 0.7
+    sigma: 1.0
+    min_dur_sec: 1.0
 
 sweep:
   enabled: true
-  run_prefix: loso_nano_mps_e30
+  run_prefix: loso_nano_mirror_yolon960_fps5_seq20_hsweep
   resume: true
-  fps_values: [10, 5]
-  seq_len_seconds: [10]
+  fps_values: [5]
+  seq_len_seconds: [20]
   overlap_mode: half_seq_len
   overlap_seconds: null  # only used when overlap_mode: fixed
   steps_precompute: [preprocess, features]
@@ -118,18 +135,12 @@ sweep:
     require_all_videos: true
     entries:
       - name: yolon960
+        fps_values: [5]
+        seq_len_seconds: [20]
         yolo:
           model: yolov8n-pose.pt
           conf: 0.25
           imgsz: 960
         extract:
-          sampling_mode: full_then_downsample
-          sample_fps: null
-      - name: yolon1440
-        yolo:
-          model: yolov8n-pose.pt
-          conf: 0.25
-          imgsz: 1440
-        extract:
-          sampling_mode: full_then_downsample
-          sample_fps: null
+          sampling_mode: downsample_then_extract
+          sample_fps: 5

@@ -1,9 +1,11 @@
 from __future__ import annotations
 from copy import deepcopy
+import hashlib
 import json
 import logging
 import re
 import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -603,6 +605,8 @@ def _run_dataset(config: Dict[str, Any]) -> None:
             overlap_seconds=float(dataset_cfg.get("overlap_seconds", 10)),
             target_fps=fps,
             split=split_cfg,
+            mirror_train=bool((config.get("augmentation") or {}).get("enabled", False)),
+            flip_suffix=str((config.get("augmentation") or {}).get("flip_suffix", "__flip_h")),
         )
     )
 
@@ -620,8 +624,12 @@ def _run_dataset(config: Dict[str, Any]) -> None:
 def _run_train(config: Dict[str, Any]) -> None:
     data_root = Path(config["data_root"])
     train_cfg = dict(config.get("train", {}))
+    yolo_cfg = dict(config.get("yolo", {}))
+    extract_cfg = dict(config.get("extract", {}))
     preprocess_cfg = config.get("preprocess", {})
+    features_cfg = dict(config.get("features", {}))
     dataset_cfg = config.get("dataset", {})
+    augmentation_cfg = dict(config.get("augmentation", {}))
     run_dir = runs_dir(data_root) / config.get("run_id", "default")
     dataset_dir = datasets_dir(data_root) / config.get("run_id", "default")
 
@@ -635,12 +643,147 @@ def _run_train(config: Dict[str, Any]) -> None:
     train_cfg["fps"] = float(preprocess_cfg.get("target_fps", 15))
     train_cfg["run_id"] = config.get("run_id", "default")
     train_cfg["wandb"] = dict(config.get("wandb", {}))
+    train_cfg["yolo"] = yolo_cfg
+    train_cfg["extract"] = extract_cfg
+    train_cfg["preprocess"] = dict(preprocess_cfg)
+    train_cfg["features"] = features_cfg
+    train_cfg["augmentation"] = augmentation_cfg
     train_cfg["dataset"] = {
         "seq_len_seconds": dataset_cfg.get("seq_len_seconds"),
         "overlap_seconds": dataset_cfg.get("overlap_seconds"),
         "split": dict(dataset_cfg.get("split", {})),
     }
     train_loop(dataset_dir, run_dir, train_cfg)
+
+
+def export_model_artifact(
+    *,
+    data_root: Path | str,
+    run_id: str,
+    version: str,
+    checkpoint_name: str = "best",
+    output_root: Path | str | None = None,
+    overwrite: bool = False,
+) -> Path:
+    resolved_data_root = Path(data_root).expanduser().resolve()
+    run_dir = runs_dir(resolved_data_root) / run_id
+    dataset_dir = datasets_dir(resolved_data_root) / run_id
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run directory not found: {run_dir}")
+    if not dataset_dir.exists():
+        raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
+
+    checkpoint_path = run_dir / "checkpoints" / f"{checkpoint_name}.pth"
+    scaler_path = run_dir / "scaler.joblib"
+    config_path = run_dir / "config.json"
+    metrics_path = run_dir / "metrics.jsonl"
+    dataset_manifest_path = dataset_dir / "dataset_manifest.json"
+    for required in (checkpoint_path, scaler_path, config_path, metrics_path, dataset_manifest_path):
+        if not required.exists():
+            raise FileNotFoundError(f"Required export input not found: {required}")
+
+    artifact_root = Path(output_root).expanduser().resolve() if output_root is not None else Path("models").resolve()
+    artifact_dir = artifact_root / version
+    if artifact_dir.exists():
+        if not overwrite:
+            raise FileExistsError(f"Artifact directory already exists: {artifact_dir}")
+        shutil.rmtree(artifact_dir)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    run_cfg = _load_json(config_path)
+    dataset_manifest = _load_json(dataset_manifest_path)
+    metrics_rows = _load_metrics_rows(metrics_path)
+    checkpoint_obj = torch.load(str(checkpoint_path), map_location="cpu")
+    state_dict = checkpoint_obj.get("model_state_dict", checkpoint_obj)
+    selected_epoch = int(checkpoint_obj.get("epoch") or _checkpoint_epoch_from_metrics(checkpoint_obj, metrics_rows))
+    selected_metrics = _metrics_for_epoch(metrics_rows, selected_epoch) or dict(checkpoint_obj.get("metrics", {}))
+
+    model_spec = _infer_export_model_spec(state_dict)
+    scaler = joblib.load(scaler_path)
+    scaler_payload = _serialize_standard_scaler(scaler)
+    if int(scaler_payload["feature_dim"]) != int(model_spec["input_size"]):
+        raise ValueError(
+            "Scaler feature dimension does not match checkpoint feature dimension: "
+            f"{scaler_payload['feature_dim']} != {model_spec['input_size']}"
+        )
+
+    seq_len_seconds = float(
+        (run_cfg.get("dataset") or {}).get(
+            "seq_len_seconds",
+            (dataset_manifest.get("config") or {}).get("seq_len_seconds", 0.0),
+        )
+    )
+    overlap_seconds = float(
+        (run_cfg.get("dataset") or {}).get(
+            "overlap_seconds",
+            (dataset_manifest.get("config") or {}).get("overlap_seconds", 0.0),
+        )
+    )
+    fps = float(
+        run_cfg.get("fps")
+        or ((run_cfg.get("preprocess") or {}).get("target_fps"))
+        or ((dataset_manifest.get("config") or {}).get("target_fps"))
+        or _parse_float_from_run_id(run_id, "fps")
+        or 0.0
+    )
+    seq_len_frames = int(round(seq_len_seconds * fps)) if seq_len_seconds and fps else 0
+    overlap_frames = int(round(overlap_seconds * fps)) if overlap_seconds and fps else 0
+
+    model_out = artifact_dir / "model.onnx"
+    scaler_out = artifact_dir / "scaler.json"
+    dummy = torch.randn(1, max(1, seq_len_frames), model_spec["input_size"], dtype=torch.float32)
+    model = TennisPointLSTM(
+        input_size=model_spec["input_size"],
+        hidden_size=model_spec["hidden_size"],
+        num_layers=model_spec["num_layers"],
+        dropout=model_spec["dropout"],
+        bidirectional=model_spec["bidirectional"],
+        return_logits=True,
+    )
+    model.load_state_dict(state_dict)
+    model.eval()
+    torch.onnx.export(
+        model,
+        dummy,
+        str(model_out),
+        input_names=["features"],
+        output_names=["logits"],
+        opset_version=17,
+        dynamic_axes=None,
+    )
+    with scaler_out.open("w", encoding="utf-8") as handle:
+        json.dump(scaler_payload, handle, indent=2, sort_keys=True)
+
+    model_sha = _sha256_file(model_out)
+    scaler_sha = _sha256_file(scaler_out)
+    manifest = _build_artifact_manifest(
+        version=version,
+        run_id=run_id,
+        artifact_dir=artifact_dir,
+        checkpoint_name=checkpoint_name,
+        checkpoint_path=checkpoint_path,
+        scaler_path=scaler_path,
+        run_cfg=run_cfg,
+        dataset_manifest=dataset_manifest,
+        selected_epoch=selected_epoch,
+        selected_metrics=selected_metrics,
+        model_spec=model_spec,
+        scaler_payload=scaler_payload,
+        fps=fps,
+        seq_len_seconds=seq_len_seconds,
+        overlap_seconds=overlap_seconds,
+        seq_len_frames=seq_len_frames,
+        overlap_frames=overlap_frames,
+        model_sha=model_sha,
+        scaler_sha=scaler_sha,
+    )
+    manifest["artifact"]["artifact_id"] = _artifact_id(manifest)
+
+    manifest_out = artifact_dir / "manifest.json"
+    with manifest_out.open("w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2, sort_keys=True)
+
+    return artifact_dir
 
 
 def _run_eval(config: Dict[str, Any]) -> None:
@@ -675,6 +818,248 @@ def _run_eval(config: Dict[str, Any]) -> None:
         json.dump({"loss": float(loss), "metrics": metrics}, handle, indent=2)
     logger.info("Test loss: %.4f", loss)
     logger.info("Test metrics: %s", metrics)
+
+
+def _load_json(path: Path) -> Dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _load_metrics_rows(path: Path) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def _checkpoint_epoch_from_metrics(checkpoint_obj: Dict[str, Any], rows: List[Dict[str, Any]]) -> int:
+    metrics = checkpoint_obj.get("metrics", {})
+    checkpoint_bal_acc = metrics.get("balanced_accuracy")
+    checkpoint_val_loss = metrics.get("val_loss")
+    for row in rows:
+        if checkpoint_bal_acc is not None and float(row.get("balanced_accuracy", -1.0)) != float(checkpoint_bal_acc):
+            continue
+        if checkpoint_val_loss is not None and float(row.get("val_loss", -1.0)) != float(checkpoint_val_loss):
+            continue
+        return int(row.get("epoch", 0))
+    return int(rows[-1].get("epoch", 0)) if rows else 0
+
+
+def _metrics_for_epoch(rows: List[Dict[str, Any]], epoch: int) -> Optional[Dict[str, Any]]:
+    for row in rows:
+        if int(row.get("epoch", -1)) == int(epoch):
+            return row
+    return None
+
+
+def _infer_export_model_spec(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+    weight_ih_keys = sorted(k for k in state_dict if k.startswith("lstm.weight_ih_l"))
+    if not weight_ih_keys:
+        raise ValueError("Checkpoint state_dict does not contain LSTM weights")
+
+    layer_ids = []
+    for key in weight_ih_keys:
+        match = re.match(r"lstm\.weight_ih_l(?P<idx>\d+)(?:_reverse)?$", key)
+        if not match:
+            raise ValueError(f"Unexpected LSTM weight key: {key}")
+        layer_ids.append(int(match.group("idx")))
+    num_layers = max(layer_ids) + 1
+    bidirectional = any("_reverse" in key for key in weight_ih_keys)
+    hidden_size = int(state_dict[weight_ih_keys[0]].shape[0] // 4)
+    input_size = int(state_dict[weight_ih_keys[0]].shape[1])
+    output_size = int(state_dict["fc.weight"].shape[1])
+    dropout = 0.2
+    return {
+        "architecture": "TennisPointLSTM",
+        "input_size": input_size,
+        "hidden_size": hidden_size,
+        "num_layers": num_layers,
+        "bidirectional": bidirectional,
+        "dropout": dropout,
+        "output_size": output_size,
+    }
+
+
+def _serialize_standard_scaler(scaler: Any) -> Dict[str, Any]:
+    mean = getattr(scaler, "mean_", None)
+    scale = getattr(scaler, "scale_", None)
+    if mean is None or scale is None:
+        raise ValueError("Scaler does not expose mean_ and scale_")
+    mean_arr = np.asarray(mean, dtype=np.float64)
+    scale_arr = np.asarray(scale, dtype=np.float64)
+    return {
+        "type": "standard_scaler",
+        "feature_dim": int(mean_arr.shape[0]),
+        "mean": mean_arr.tolist(),
+        "scale": scale_arr.tolist(),
+    }
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _artifact_id(manifest: Dict[str, Any]) -> str:
+    manifest_copy = deepcopy(manifest)
+    manifest_copy.get("artifact", {}).pop("artifact_id", None)
+    encoded = json.dumps(manifest_copy, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _git_metadata(repo_root: Path) -> Dict[str, Any]:
+    metadata = {"commit": None, "branch": None, "dirty": None}
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        metadata = {"commit": commit or None, "branch": branch or None, "dirty": bool(dirty)}
+    except Exception:
+        pass
+    return metadata
+
+
+def _parse_float_from_run_id(run_id: str, key: str) -> Optional[float]:
+    match = re.search(rf"_{re.escape(key)}(?P<value>[0-9p]+)", run_id)
+    if not match:
+        return None
+    return float(match.group("value").replace("p", "."))
+
+
+def _build_artifact_manifest(
+    *,
+    version: str,
+    run_id: str,
+    artifact_dir: Path,
+    checkpoint_name: str,
+    checkpoint_path: Path,
+    scaler_path: Path,
+    run_cfg: Dict[str, Any],
+    dataset_manifest: Dict[str, Any],
+    selected_epoch: int,
+    selected_metrics: Dict[str, Any],
+    model_spec: Dict[str, Any],
+    scaler_payload: Dict[str, Any],
+    fps: float,
+    seq_len_seconds: float,
+    overlap_seconds: float,
+    seq_len_frames: int,
+    overlap_frames: int,
+    model_sha: str,
+    scaler_sha: str,
+) -> Dict[str, Any]:
+    now = datetime.utcnow()
+    postprocess_cfg = (run_cfg.get("train") or {}).get("segment_eval", {})
+    dataset_cfg = run_cfg.get("dataset", {})
+    split_cfg = dataset_cfg.get("split", {}) if isinstance(dataset_cfg, dict) else {}
+    git_meta = _git_metadata(Path(__file__).resolve().parents[2])
+    video_ids = sorted((dataset_manifest.get("videos") or {}).keys())
+    feature_set = (
+        (run_cfg.get("features") or {}).get("feature_set")
+        or dataset_manifest.get("feature_set")
+        or "unknown"
+    )
+
+    return {
+        "manifest_version": 1,
+        "artifact": {
+            "model_version": version,
+            "created_at_unix": int(now.timestamp()),
+            "created_at_iso": now.isoformat() + "Z",
+            "artifact_id": None,
+        },
+        "source_run": {
+            "run_id": run_id,
+            "checkpoint_path": str(checkpoint_path),
+            "scaler_path": str(scaler_path),
+            "selected_checkpoint": checkpoint_name,
+            "selected_epoch": int(selected_epoch),
+            "selection_reason": f"{checkpoint_name} checkpoint selected for export",
+            "git_commit": git_meta["commit"],
+            "git_branch": git_meta["branch"],
+            "git_dirty": git_meta["dirty"],
+        },
+        "files": {
+            "model_file": "model.onnx",
+            "scaler_file": "scaler.json",
+            "manifest_file": "manifest.json",
+            "model_sha256": model_sha,
+            "scaler_sha256": scaler_sha,
+        },
+        "data": {
+            "video_ids": video_ids,
+            "video_count": len(video_ids),
+            "splits": dataset_manifest.get("splits", {}),
+            "split_strategy": split_cfg.get("strategy"),
+            "val_ratio": split_cfg.get("val_ratio"),
+            "test_ratio": split_cfg.get("test_ratio"),
+            "mirror_train": bool((run_cfg.get("augmentation") or {}).get("enabled", False)),
+        },
+        "feature_pipeline": {
+            "feature_set": feature_set,
+            "feature_dim": int(scaler_payload["feature_dim"]),
+            "yolo_model": (run_cfg.get("yolo") or {}).get("model"),
+            "imgsz": (run_cfg.get("yolo") or {}).get("imgsz") or _parse_float_from_run_id(run_id, "yolon"),
+            "conf": (run_cfg.get("yolo") or {}).get("conf"),
+            "sampling_mode": (run_cfg.get("extract") or {}).get("sampling_mode"),
+            "sample_fps": (run_cfg.get("extract") or {}).get("sample_fps"),
+            "target_fps": fps,
+        },
+        "model": {
+            "architecture": model_spec["architecture"],
+            "hidden_size": model_spec["hidden_size"],
+            "num_layers": model_spec["num_layers"],
+            "dropout": model_spec["dropout"],
+            "bidirectional": model_spec["bidirectional"],
+        },
+        "inference": {
+            "seq_len_seconds": seq_len_seconds,
+            "overlap_seconds": overlap_seconds,
+            "seq_len_frames": seq_len_frames,
+            "overlap_frames": overlap_frames,
+            "threshold": (run_cfg.get("train") or {}).get("threshold"),
+            "input_name": "features",
+            "output_name": "logits",
+            "input_shape": [1, seq_len_frames, int(scaler_payload["feature_dim"])],
+            "onnx_opset": 17,
+        },
+        "postprocess": {
+            "method": "hysteresis",
+            "params": {
+                "low": postprocess_cfg.get("low"),
+                "high": postprocess_cfg.get("high"),
+                "sigma": postprocess_cfg.get("sigma"),
+                "min_dur_sec": postprocess_cfg.get("min_dur_sec"),
+            },
+        },
+        "metrics": {
+            "selected_epoch_metrics": selected_metrics,
+        },
+    }
 
 
 

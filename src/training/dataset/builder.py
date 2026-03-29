@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler
 import joblib
 
 from training.dataset.splits import SplitConfig, split_videos, temporal_split_indices
+from training.io.videos import flipped_video_name
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,8 @@ class DatasetConfig:
     overlap_seconds: float
     target_fps: float
     split: SplitConfig
+    mirror_train: bool = False
+    flip_suffix: str = "__flip_h"
 
 
 class DatasetBuilder:
@@ -55,82 +58,125 @@ class DatasetBuilder:
                 logger.warning("Missing features for %s", video_name)
                 continue
 
-            with h5py.File(feature_path, "r") as h5f:
-                features = h5f["features"][:]
-                targets = h5f["targets"][:]
-                frame_index = h5f["frame_index"][:] if "frame_index" in h5f else np.arange(features.shape[0], dtype=np.int64)
-                timestamps = (
-                    h5f["timestamps"][:]
-                    if "timestamps" in h5f
-                    else (np.arange(features.shape[0], dtype=np.float64) / max(1e-6, self.cfg.target_fps))
-                )
-                if features.shape[0] < seq_len:
-                    logger.warning("Skipping %s (frames < seq_len)", video_name)
-                    continue
+            loaded = _load_feature_arrays(feature_path, self.cfg.target_fps)
+            if loaded is None:
+                logger.warning("Missing features for %s", video_name)
+                continue
 
-                if split_strategy == "within_video":
-                    ranges = temporal_split_indices(features.shape[0], self.cfg.split.val_ratio, self.cfg.split.test_ratio)
-                    for split_name, (start, end) in ranges.items():
-                        seqs, labels, seq_frame_idx, seq_times = _make_sequences(
-                            features[start:end],
-                            targets[start:end],
-                            frame_index[start:end],
-                            timestamps[start:end],
-                            seq_len,
-                            overlap,
-                        )
-                        if seqs:
-                            all_splits[split_name].append((seqs, labels, seq_frame_idx, seq_times, video_name))
-                    manifest["videos"][video_name] = {"total_frames": int(features.shape[0])}
-                elif split_strategy == "loso_temporal_val":
-                    if video_name == held_out_video:
-                        seqs, labels, seq_frame_idx, seq_times = _make_sequences(
+            features, targets, frame_index, timestamps = loaded
+            if features.shape[0] < seq_len:
+                logger.warning("Skipping %s (frames < seq_len)", video_name)
+                continue
+
+            if split_strategy == "within_video":
+                ranges = temporal_split_indices(features.shape[0], self.cfg.split.val_ratio, self.cfg.split.test_ratio)
+                for split_name, (start, end) in ranges.items():
+                    _append_sequences(
+                        all_splits,
+                        split_name,
+                        video_name,
+                        features,
+                        targets,
+                        frame_index,
+                        timestamps,
+                        seq_len,
+                        overlap,
+                        start=start,
+                        end=end,
+                    )
+                manifest["videos"][video_name] = {"total_frames": int(features.shape[0])}
+                train_start, train_end = ranges["train"]
+                self._append_mirrored_train_variant(
+                    feature_root=feature_root,
+                    feature_set=feature_set,
+                    original_video_name=video_name,
+                    all_splits=all_splits,
+                    manifest=manifest,
+                    seq_len=seq_len,
+                    overlap=overlap,
+                    start=int(train_start),
+                    end=int(train_end),
+                )
+            elif split_strategy == "loso_temporal_val":
+                if video_name == held_out_video:
+                    _append_sequences(
+                        all_splits,
+                        "test",
+                        video_name,
+                        features,
+                        targets,
+                        frame_index,
+                        timestamps,
+                        seq_len,
+                        overlap,
+                    )
+                    manifest["videos"][video_name] = {
+                        "total_frames": int(features.shape[0]),
+                        "split": "test",
+                        "held_out": True,
+                    }
+                else:
+                    ranges = temporal_split_indices(features.shape[0], self.cfg.split.val_ratio, 0.0)
+                    for split_name in ("train", "val"):
+                        start, end = ranges[split_name]
+                        _append_sequences(
+                            all_splits,
+                            split_name,
+                            video_name,
                             features,
                             targets,
                             frame_index,
                             timestamps,
                             seq_len,
                             overlap,
+                            start=start,
+                            end=end,
                         )
-                        if seqs:
-                            all_splits["test"].append((seqs, labels, seq_frame_idx, seq_times, video_name))
-                        manifest["videos"][video_name] = {
-                            "total_frames": int(features.shape[0]),
-                            "split": "test",
-                            "held_out": True,
-                        }
-                    else:
-                        ranges = temporal_split_indices(features.shape[0], self.cfg.split.val_ratio, 0.0)
-                        for split_name in ("train", "val"):
-                            start, end = ranges[split_name]
-                            seqs, labels, seq_frame_idx, seq_times = _make_sequences(
-                                features[start:end],
-                                targets[start:end],
-                                frame_index[start:end],
-                                timestamps[start:end],
-                                seq_len,
-                                overlap,
-                            )
-                            if seqs:
-                                all_splits[split_name].append((seqs, labels, seq_frame_idx, seq_times, video_name))
-                        manifest["videos"][video_name] = {
-                            "total_frames": int(features.shape[0]),
-                            "split": "train_val_temporal",
-                            "train_end_frame_index": int(ranges["train"][1]),
-                            "val_start_frame_index": int(ranges["val"][0]),
-                        }
-                else:
-                    split_bucket = "train"
-                    if video_name in video_split.val:
-                        split_bucket = "val"
-                    if video_name in video_split.test:
-                        split_bucket = "test"
-                    seqs, labels, seq_frame_idx, seq_times = _make_sequences(
-                        features, targets, frame_index, timestamps, seq_len, overlap
+                    manifest["videos"][video_name] = {
+                        "total_frames": int(features.shape[0]),
+                        "split": "train_val_temporal",
+                        "train_end_frame_index": int(ranges["train"][1]),
+                        "val_start_frame_index": int(ranges["val"][0]),
+                    }
+                    self._append_mirrored_train_variant(
+                        feature_root=feature_root,
+                        feature_set=feature_set,
+                        original_video_name=video_name,
+                        all_splits=all_splits,
+                        manifest=manifest,
+                        seq_len=seq_len,
+                        overlap=overlap,
+                        start=int(ranges["train"][0]),
+                        end=int(ranges["train"][1]),
                     )
-                    if seqs:
-                        all_splits[split_bucket].append((seqs, labels, seq_frame_idx, seq_times, video_name))
-                    manifest["videos"][video_name] = {"total_frames": int(features.shape[0]), "split": split_bucket}
+            else:
+                split_bucket = "train"
+                if video_name in video_split.val:
+                    split_bucket = "val"
+                if video_name in video_split.test:
+                    split_bucket = "test"
+                _append_sequences(
+                    all_splits,
+                    split_bucket,
+                    video_name,
+                    features,
+                    targets,
+                    frame_index,
+                    timestamps,
+                    seq_len,
+                    overlap,
+                )
+                manifest["videos"][video_name] = {"total_frames": int(features.shape[0]), "split": split_bucket}
+                if split_bucket == "train":
+                    self._append_mirrored_train_variant(
+                        feature_root=feature_root,
+                        feature_set=feature_set,
+                        original_video_name=video_name,
+                        all_splits=all_splits,
+                        manifest=manifest,
+                        seq_len=seq_len,
+                        overlap=overlap,
+                    )
 
         scaler = StandardScaler()
         train_features = _concat_features(all_splits["train"])
@@ -193,6 +239,52 @@ class DatasetBuilder:
             raise ValueError("dataset.split.val_ratio must be in (0, 1) for loso_temporal_val")
         return held_out
 
+    def _append_mirrored_train_variant(
+        self,
+        *,
+        feature_root: Path,
+        feature_set: str,
+        original_video_name: str,
+        all_splits: Dict[str, List],
+        manifest: Dict[str, Dict],
+        seq_len: int,
+        overlap: int,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+    ) -> None:
+        if not self.cfg.mirror_train:
+            return
+
+        flipped_name = flipped_video_name(original_video_name, suffix=self.cfg.flip_suffix)
+        feature_path = feature_root / f"{Path(flipped_name).stem}__features__{feature_set}.h5"
+        loaded = _load_feature_arrays(feature_path, self.cfg.target_fps)
+        if loaded is None:
+            return
+
+        features, targets, frame_index, timestamps = loaded
+        if features.shape[0] < seq_len:
+            return
+
+        _append_sequences(
+            all_splits,
+            "train",
+            flipped_name,
+            features,
+            targets,
+            frame_index,
+            timestamps,
+            seq_len,
+            overlap,
+            start=start,
+            end=end,
+        )
+        manifest["videos"][flipped_name] = {
+            "total_frames": int(features.shape[0]),
+            "split": "train",
+            "variant": "flip_h",
+            "augmented_from": original_video_name,
+        }
+
 
 def _make_sequences(
     features: np.ndarray,
@@ -214,6 +306,49 @@ def _make_sequences(
         seq_frame_idx.append(frame_index[start:end])
         seq_times.append(timestamps[start:end])
     return sequences, labels, seq_frame_idx, seq_times
+
+
+def _append_sequences(
+    split_store,
+    split_name: str,
+    video_name: str,
+    features: np.ndarray,
+    targets: np.ndarray,
+    frame_index: np.ndarray,
+    timestamps: np.ndarray,
+    seq_len: int,
+    overlap: int,
+    *,
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+) -> None:
+    start = 0 if start is None else start
+    end = features.shape[0] if end is None else end
+    seqs, labels, seq_frame_idx, seq_times = _make_sequences(
+        features[start:end],
+        targets[start:end],
+        frame_index[start:end],
+        timestamps[start:end],
+        seq_len,
+        overlap,
+    )
+    if seqs:
+        split_store[split_name].append((seqs, labels, seq_frame_idx, seq_times, video_name))
+
+
+def _load_feature_arrays(feature_path: Path, target_fps: float):
+    if not feature_path.exists():
+        return None
+    with h5py.File(feature_path, "r") as h5f:
+        features = h5f["features"][:]
+        targets = h5f["targets"][:]
+        frame_index = h5f["frame_index"][:] if "frame_index" in h5f else np.arange(features.shape[0], dtype=np.int64)
+        timestamps = (
+            h5f["timestamps"][:]
+            if "timestamps" in h5f
+            else (np.arange(features.shape[0], dtype=np.float64) / max(1e-6, target_fps))
+        )
+    return features, targets, frame_index, timestamps
 
 
 def _concat_features(split_data):

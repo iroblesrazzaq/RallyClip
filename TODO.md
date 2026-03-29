@@ -19,6 +19,7 @@
 
 - improve postprocessing: train another model with IOU?
 - another LSTM?
+- add uncertainty/review scoring from the frame probability trace and aggregate to segment-level confidence so low-confidence predicted points can be flagged for manual review
 
 
 - try LSTM with attention, other architectures, hyperparams. 

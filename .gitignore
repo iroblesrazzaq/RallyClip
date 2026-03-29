@@ -107,6 +107,11 @@ src/*.egg-info/
 data/
 sanity_check_clips/
 sanity_check_output.mp4
+wandb/
+
+# Local scratch / generated app bundles
+debug.ipynb
+apps/gui/web/
 
 # include LSTM weights and scaler
 !lstm_300_v0.1.pth

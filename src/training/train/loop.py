@@ -35,7 +35,14 @@ def train(
     val_ds = Hdf5SequenceDataset(val_path)
 
     device = _resolve_device(config.get("device"))
-    model = TennisPointLSTM(input_size=train_ds.feature_dim, return_logits=True).to(device)
+    model = TennisPointLSTM(
+        input_size=train_ds.feature_dim,
+        hidden_size=int(config.get("hidden_size", 128)),
+        num_layers=int(config.get("num_layers", 2)),
+        dropout=float(config.get("dropout", 0.2)),
+        bidirectional=bool(config.get("bidirectional", True)),
+        return_logits=True,
+    ).to(device)
 
     pos_weight = torch.tensor([float(config.get("pos_weight", 3.0))], device=device)
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
