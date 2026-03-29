@@ -444,6 +444,29 @@ def test_build_run_config_rejects_missing_artifact_files(tmp_path):
         build_run_config(_build_cli_args(video=str(video_path), artifact_dir=str(artifact_dir)))
 
 
+def test_build_run_config_falls_back_when_manifest_defaults_are_null(tmp_path):
+    artifact_dir = _write_artifact_dir(
+        tmp_path,
+        manifest_overrides={
+            "inference": {"fps": None, "seq_len_frames": 100, "overlap_frames": 50},
+            "postprocess": {
+                "method": "hysteresis",
+                "params": {"low": None, "high": None, "sigma": None, "min_dur_sec": None},
+            },
+        },
+    )
+    video_path = tmp_path / "input.mp4"
+    video_path.write_bytes(b"")
+
+    cfg = build_run_config(_build_cli_args(video=str(video_path), artifact_dir=str(artifact_dir)))
+
+    assert cfg.fps == 15.0
+    assert cfg.low == 0.45
+    assert cfg.high == 0.8
+    assert cfg.sigma == 1.5
+    assert cfg.min_dur_sec == 0.5
+
+
 def test_run_pipeline_uses_artifact_inference_path(tmp_path, monkeypatch):
     artifact_dir = _write_artifact_dir(tmp_path)
     video_path = tmp_path / "input.mp4"

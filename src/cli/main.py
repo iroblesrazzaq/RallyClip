@@ -172,6 +172,13 @@ def _pick_bool(arg_val: Optional[bool], cfg_val: Optional[Any], default: bool) -
     return default
 
 
+def _pick_first_non_none(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def build_run_config(args: argparse.Namespace) -> RunConfig:
     cfg_path = args.config or ("config.toml" if Path("config.toml").exists() else None)
     cfg_dict = _load_config_dict(cfg_path) if (cfg_path and Path(cfg_path).exists()) else {}
@@ -266,13 +273,13 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         feature_set=feature_set,
         feature_dim=feature_dim,
         postprocess_method=postprocess_method,
-        fps=float(args.fps if args.fps is not None else inference_cfg.get("fps", cfg("fps", 15.0))),
-        seq_len=int(args.seq_len if args.seq_len is not None else inference_cfg.get("seq_len_frames", cfg("seq_len", 300))),
-        overlap=int(args.overlap if args.overlap is not None else inference_cfg.get("overlap_frames", cfg("overlap", 150))),
-        sigma=float(args.sigma if args.sigma is not None else postprocess_params.get("sigma", cfg("sigma", 1.5))),
-        low=float(args.low if args.low is not None else postprocess_params.get("low", cfg("low", 0.45))),
-        high=float(args.high if args.high is not None else postprocess_params.get("high", cfg("high", 0.8))),
-        min_dur_sec=float(args.min_dur_sec if args.min_dur_sec is not None else postprocess_params.get("min_dur_sec", cfg("min_dur_sec", 0.5))),
+        fps=float(_pick_first_non_none(args.fps, inference_cfg.get("fps"), cfg("fps"), 15.0)),
+        seq_len=int(_pick_first_non_none(args.seq_len, inference_cfg.get("seq_len_frames"), cfg("seq_len"), 300)),
+        overlap=int(_pick_first_non_none(args.overlap, inference_cfg.get("overlap_frames"), cfg("overlap"), 150)),
+        sigma=float(_pick_first_non_none(args.sigma, postprocess_params.get("sigma"), cfg("sigma"), 1.5)),
+        low=float(_pick_first_non_none(args.low, postprocess_params.get("low"), cfg("low"), 0.45)),
+        high=float(_pick_first_non_none(args.high, postprocess_params.get("high"), cfg("high"), 0.8)),
+        min_dur_sec=float(_pick_first_non_none(args.min_dur_sec, postprocess_params.get("min_dur_sec"), cfg("min_dur_sec"), 0.5)),
         conf=float(args.conf if args.conf is not None else cfg("conf", 0.25)),
         start_time=int(args.start_time if args.start_time is not None else cfg("start_time", 0)),
         duration=int(args.duration if args.duration is not None else cfg("duration", 999999)),
