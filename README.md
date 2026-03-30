@@ -1,6 +1,6 @@
 # RallyClip
 
-RallyClip is a CLI and GUI toolkit for tennis video segmentation. It extracts rally/point intervals from full match footage and outputs a segmented video plus optional CSV timestamps.
+RallyClip is a CLI toolkit for tennis video segmentation. It extracts rally/point intervals from full match footage and outputs a segmented video plus optional CSV timestamps.
 
 ## Prereqs
 - Python 3.10+
@@ -22,21 +22,7 @@ RallyClip model artifacts live under `models/rallyclip_v0.3.1/`:
 
 YOLO pose weights are downloaded automatically into `models/` when needed.
 
-## GUI (local Flask app)
-- Run: `rallyclip gui`
-- Verbose logs: `RALLYCLIP_GUI_VERBOSE=1 rallyclip gui`
-- Optional port override: `RALLYCLIP_GUI_PORT=5050 rallyclip gui`
-- Job outputs are stored under `~/RallyClipJobs/<job_id>` by default
-- Drag/drop an MP4 (recommended >=1080p, minimum 720p)
-
-## GUI (Next.js web app)
-A web GUI with Supabase auth lives in `apps/gui/web/`.
-
-```bash
-cd apps/gui/web
-npm install
-npm run dev
-```
+Hosted app: https://rallyclip.vercel.app
 
 ## Quick run (minimal CLI)
 Only the video path is required; segmented output defaults to `./output_videos`.
@@ -60,8 +46,8 @@ rallyclip --video "raw_videos/your_match.mp4"
 - `--write-csv / --no-csv` (default: off)
 - `--yolo-size {nano,small,medium,large}` (default: `small`)
 - `--yolo-device {cpu,cuda,mps}` (force pose model device)
-- Threshold/hyperparam flags: `--conf`, `--low`, `--high`, `--sigma`, `--seq-len`, `--overlap`, `--min-dur-sec`, `--fps`
-- Model overrides: `--model-path`, `--scaler-path`
+- Advanced overrides: `--conf`, `--low`, `--high`, `--sigma`, `--seq-len`, `--overlap`, `--min-dur-sec`, `--fps`
+- Artifact overrides: `--artifact-dir`, `--manifest-path`
 - Config file: `--config path/to/config.toml` (defaults to `./config.toml` if present)
 
 ## Config file (`config.toml`)
@@ -79,8 +65,7 @@ yolo_model = "nano"                        # nano | small | medium | large
 yolo_device = "mps"                        # cpu | cuda | mps
 
 # Optional artifact overrides:
-# model_path = "models/rallyclip_v0.3.1/model.onnx"
-# scaler_path = "models/rallyclip_v0.3.1/scaler.json"
+# artifact_dir = "models/rallyclip_v0.3.1"
 
 # Postprocessing / inference parameters
 low = 0.45
