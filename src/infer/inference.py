@@ -1,5 +1,6 @@
 import os
 import csv
+import json
 from typing import Optional, List, Tuple, Callable
 
 import numpy as np
@@ -7,6 +8,91 @@ import torch
 import joblib
 
 from .model import TennisPointLSTM
+
+try:
+    import onnxruntime as ort
+except Exception:  # pragma: no cover - optional runtime dependency
+    ort = None
+
+
+class JsonStandardScaler:
+    """Small scaler adapter for JSON-exported StandardScaler assets."""
+
+    def __init__(self, mean: np.ndarray, scale: np.ndarray) -> None:
+        self.mean_ = mean.astype(np.float32)
+        self.scale_ = scale.astype(np.float32)
+
+    def transform(self, values: np.ndarray) -> np.ndarray:
+        if values.shape[-1] != self.mean_.shape[0]:
+            raise ValueError(
+                f"Scaler feature mismatch: got {values.shape[-1]}, expected {self.mean_.shape[0]}"
+            )
+        return (values - self.mean_) / np.maximum(self.scale_, 1e-12)
+
+
+def load_scaler_asset(path: str):
+    suffix = os.path.splitext(path)[1].lower()
+    if suffix == ".json":
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        mean = np.asarray(payload.get("mean", []), dtype=np.float32)
+        scale = np.asarray(payload.get("scale", []), dtype=np.float32)
+        if mean.size == 0 or scale.size == 0:
+            raise ValueError(f"Invalid scaler JSON: '{path}'")
+        return JsonStandardScaler(mean=mean, scale=scale)
+    return joblib.load(path)
+
+
+def _sigmoid(x: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def run_windowed_inference_average_onnx(
+    model_path: str,
+    features: np.ndarray,
+    sequence_length: int,
+    overlap: int,
+    progress_callback: Optional[Callable[[float], None]] = None,
+) -> np.ndarray:
+    if ort is None:
+        raise RuntimeError(
+            "ONNX model requested but onnxruntime is not installed. "
+            "Install dependencies with `pip install .`."
+        )
+
+    providers = [p for p in ort.get_available_providers() if p in {"CPUExecutionProvider", "CUDAExecutionProvider"}]
+    if not providers:
+        providers = ["CPUExecutionProvider"]
+    session = ort.InferenceSession(model_path, providers=providers)
+    input_name = session.get_inputs()[0].name
+    output_name = session.get_outputs()[0].name
+
+    num_frames = features.shape[0]
+    start_indices = generate_start_indices(num_frames, sequence_length, overlap)
+    summed_probs = np.zeros(num_frames, dtype=np.float32)
+    counts = np.zeros(num_frames, dtype=np.int32)
+
+    for seq_idx, start in enumerate(start_indices):
+        seq_np = features[start:start + sequence_length, :].astype(np.float32)[None, ...]
+        output = session.run([output_name], {input_name: seq_np})[0]
+        seq_out = np.asarray(output, dtype=np.float32).squeeze()
+        if seq_out.ndim != 1:
+            seq_out = seq_out.reshape(-1)
+        probs = _sigmoid(seq_out)
+        if probs.shape[0] != sequence_length:
+            raise ValueError(
+                f"ONNX output length mismatch: got {probs.shape[0]}, expected {sequence_length}. "
+                "Check seq_len against model manifest."
+            )
+        summed_probs[start:start + sequence_length] += probs
+        counts[start:start + sequence_length] += 1
+        if progress_callback is not None:
+            try:
+                progress_callback((seq_idx + 1) / float(len(start_indices)))
+            except Exception:
+                pass
+
+    return np.divide(summed_probs, np.maximum(counts, 1), dtype=np.float32)
 
 
 def gaussian_filter1d(data: np.ndarray, sigma: float) -> np.ndarray:

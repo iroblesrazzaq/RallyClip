@@ -1,4 +1,4 @@
-class RallyVision {
+class RallyClip {
     constructor() {
         this.selectedFile = null;
         this.isProcessing = false;
@@ -279,7 +279,7 @@ class RallyVision {
         try {
             const jobId = await this.uploadFileAndStart();
             this.currentJobId = jobId;
-            try { localStorage.setItem('rallyvision_job_id', jobId); } catch (_) {}
+            try { localStorage.setItem('rallyclip_job_id', jobId); } catch (_) {}
             this.startProgressMonitoring();
         } catch (error) {
             console.error('Error starting analysis:', error);
@@ -333,7 +333,7 @@ class RallyVision {
 
     async restoreJobIfAny() {
         let storedId = null;
-        try { storedId = localStorage.getItem('rallyvision_job_id'); } catch (_) {}
+        try { storedId = localStorage.getItem('rallyclip_job_id'); } catch (_) {}
         if (!storedId) return;
 
         this.currentJobId = storedId;
@@ -477,14 +477,14 @@ class RallyVision {
         if (this.etaText) {
             this.etaText.textContent = 'Est. remaining: 0s';
         }
-        try { localStorage.removeItem('rallyvision_job_id'); } catch (_) {}
+        try { localStorage.removeItem('rallyclip_job_id'); } catch (_) {}
     }
 
     onAnalysisError(error) {
         this.stopProgressMonitoring();
         this.resetControls();
         this.showError(`Analysis failed: ${error}`);
-        try { localStorage.removeItem('rallyvision_job_id'); } catch (_) {}
+        try { localStorage.removeItem('rallyclip_job_id'); } catch (_) {}
     }
 
     onAnalysisCancelled() {
@@ -492,7 +492,7 @@ class RallyVision {
         this.resetControls();
         this.resetProgress();
         this.showInfo('Analysis cancelled');
-        try { localStorage.removeItem('rallyvision_job_id'); } catch (_) {}
+        try { localStorage.removeItem('rallyclip_job_id'); } catch (_) {}
     }
 
     stopProgressMonitoring() {
@@ -536,7 +536,7 @@ class RallyVision {
             const response = await fetch(`/api/download/video/${this.currentJobId}`);
             if (response.ok) {
                 const blob = await response.blob();
-                this.downloadBlob(blob, 'rallyvision_analysis_video.mp4');
+                this.downloadBlob(blob, 'rallyclip_analysis_video.mp4');
             } else {
                 throw new Error('Failed to download video');
             }
@@ -553,7 +553,7 @@ class RallyVision {
             const response = await fetch(`/api/download/csv/${this.currentJobId}`);
             if (response.ok) {
                 const blob = await response.blob();
-                this.downloadBlob(blob, 'rallyvision_analysis_data.csv');
+                this.downloadBlob(blob, 'rallyclip_analysis_data.csv');
             } else {
                 throw new Error('Failed to download CSV');
             }
@@ -615,5 +615,5 @@ class RallyVision {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    new RallyVision();
+    new RallyClip();
 });

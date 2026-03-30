@@ -216,7 +216,7 @@ class PoseExtractor:
             batch_indices = []
 
         gen = self.frame_iterator_pyav(video_path)
-        show_tqdm = os.environ.get("RALLYVISION_NO_TQDM", "").strip().lower() not in {"1", "true", "yes"}
+        show_tqdm = os.environ.get("RALLYCLIP_NO_TQDM", "").strip().lower() not in {"1", "true", "yes"}
         iterator = tqdm(gen, total=total_frames, desc="Processing frames", unit="frame") if show_tqdm else gen
         # simple progress proxy if tqdm not desired in GUI
         for frame, current_timestamp in iterator:

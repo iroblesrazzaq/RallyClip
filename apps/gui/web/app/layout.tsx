@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "RallyClip",
-  description: "Automatic badminton rally clip detection",
+  description: "Automatic tennis rally clip detection",
 };
 
 export default function RootLayout({
