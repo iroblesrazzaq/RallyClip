@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Suspense, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 export default function LoginPage() {
@@ -25,12 +25,14 @@ export default function LoginPage() {
 
 function LoginForm() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const supabase = createClient();
+  const mode = searchParams.get("mode");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [isSignUp, setIsSignUp] = useState(false);
+  const isSignUp = mode === "signup";
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -118,7 +120,16 @@ function LoginForm() {
           {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
           <button
             onClick={() => {
-              setIsSignUp(!isSignUp);
+              const params = new URLSearchParams(searchParams.toString());
+              if (isSignUp) {
+                params.delete("mode");
+              } else {
+                params.set("mode", "signup");
+              }
+              const nextUrl = params.toString()
+                ? `${pathname}?${params.toString()}`
+                : pathname;
+              router.replace(nextUrl);
               setError(null);
               setMessage(null);
             }}
