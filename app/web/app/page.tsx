@@ -84,42 +84,16 @@ export default async function Home({
           </div>
         ) : null}
 
-        <div className="w-full max-w-3xl rounded-2xl border border-zinc-200 bg-white p-8 text-left shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <p className="text-sm font-medium uppercase tracking-[0.2em] text-zinc-500">
-            Dashboard
-          </p>
-          <h2 className="mt-3 text-3xl font-semibold">
+        <div className="w-full max-w-2xl rounded-2xl border border-zinc-200 bg-white p-8 text-left shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <h2 className="text-2xl font-semibold">
             Rally segmentation for real match footage
           </h2>
-          <p className="mt-4 max-w-2xl text-zinc-500">
+          <p className="mt-4 text-zinc-500">
             RallyClip extracts only the points from a full tennis match video,
             removes the dead time between rallies, and returns a condensed video
-            plus optional CSV timestamps. The hosted analysis flow is still being
-            wired up, but your account and profile are live now.
+            plus optional CSV timestamps. Hosted analysis is coming — your
+            account and profile are live now.
           </p>
-          <div className="mt-6 grid gap-4 sm:grid-cols-3">
-            <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-              <h3 className="font-medium">Current product</h3>
-              <p className="mt-2 text-sm text-zinc-500">
-                Account management is live. Inference upload and analysis are the
-                next deployment step.
-              </p>
-            </div>
-            <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-              <h3 className="font-medium">Local path</h3>
-              <p className="mt-2 text-sm text-zinc-500">
-                The CLI already runs locally with the packaged ONNX artifact for
-                free, on-device segmentation.
-              </p>
-            </div>
-            <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-              <h3 className="font-medium">Model direction</h3>
-              <p className="mt-2 text-sm text-zinc-500">
-                The current deployed recipe uses YOLO pose extraction, temporal
-                inference, and tuned hysteresis postprocessing.
-              </p>
-            </div>
-          </div>
         </div>
       </main>
     </div>
@@ -131,7 +105,7 @@ function LandingPage() {
     <div className="min-h-screen bg-zinc-50 font-sans text-[var(--foreground)] dark:bg-black">
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
         <div>
-          <p className="text-sm text-zinc-500">Open-source tennis tooling</p>
+          <p className="text-sm text-zinc-500">Open-source rally segmentation</p>
           <h1 className="text-lg font-semibold">RallyClip</h1>
         </div>
         <div className="flex items-center gap-3">
@@ -154,15 +128,14 @@ function LandingPage() {
         <section className="grid gap-10 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
           <div>
             <p className="text-sm font-medium uppercase tracking-[0.25em] text-zinc-500">
-              Free local match segmentation
+              Free and open source
             </p>
             <h2 className="mt-4 text-5xl font-semibold leading-tight text-balance">
               Extract only the points from a full tennis match video.
             </h2>
             <p className="mt-6 max-w-2xl text-lg text-zinc-600 dark:text-zinc-400">
-              RallyClip removes the dead time between rallies and returns a
-              condensed video containing just the action, plus optional CSV
-              timestamps for each point.
+              Removes the dead time between rallies. Returns a condensed video
+              and optional CSV timestamps.
             </p>
             <div className="mt-8 flex flex-wrap gap-4">
               <Link
@@ -183,44 +156,20 @@ function LandingPage() {
           <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
             <div className="grid gap-4 sm:grid-cols-2">
               <StatCard label="What goes in" value="Full match video" />
-              <StatCard label="What comes out" value="Point-only cut" />
-              <StatCard label="Runtime model" value="Local ONNX artifact" />
-              <StatCard label="Output extras" value="Optional CSV" />
+              <StatCard
+                label="What comes out"
+                value="Point-only cut + optional CSV"
+              />
             </div>
           </div>
         </section>
 
-        <section className="grid gap-6 md:grid-cols-3">
-          <FeatureCard
-            title="Why it exists"
-            body="Only a small fraction of a recorded match is actually in-play. RallyClip is built to make match review fast without forcing a paid subscription just to extract points."
-          />
-          <FeatureCard
-            title="How it works"
-            body="Court filtering, YOLO pose extraction, feature engineering, temporal inference, and postprocessing are combined to predict frame-by-frame in-play segments."
-          />
-          <FeatureCard
-            title="What it should become"
-            body="A reliable free local tool first, with a clean hosted surface on top, so players can review their own footage without cloud lock-in."
-          />
-        </section>
-
-        <section className="rounded-3xl border border-zinc-200 bg-white p-8 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <h3 className="text-2xl font-semibold">Current product state</h3>
-          <div className="mt-6 grid gap-4 md:grid-cols-3">
-            <FeatureCard
-              title="Local CLI"
-              body="The local CLI is the current primary product and already runs with the packaged RallyClip model artifact."
-            />
-            <FeatureCard
-              title="Hosted app"
-              body="This hosted app currently handles auth, onboarding, and account flows while the analysis backend is being wired in."
-            />
-            <FeatureCard
-              title="Training"
-              body="The training pipeline keeps improving the segmentation model and export path behind the scenes."
-            />
-          </div>
+        <section className="mx-auto max-w-2xl">
+          <ul className="space-y-3 text-zinc-600 dark:text-zinc-400">
+            <li>Free match segmentation without a paid subscription.</li>
+            <li>Runs locally on your own machine. No upload required.</li>
+            <li>Open source — CLI, model, and training pipeline.</li>
+          </ul>
         </section>
       </main>
     </div>
@@ -236,13 +185,3 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function FeatureCard({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-      <h3 className="text-lg font-semibold">{title}</h3>
-      <p className="mt-3 text-sm leading-6 text-zinc-600 dark:text-zinc-400">
-        {body}
-      </p>
-    </div>
-  );
-}
