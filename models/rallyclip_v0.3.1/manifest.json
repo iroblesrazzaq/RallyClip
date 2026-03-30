@@ -1,0 +1,156 @@
+{
+  "artifact": {
+    "artifact_id": "8d73a487ded496cd44100e2ce41fcaecee9e2ae8ecc29570d0e6d677d842d03b",
+    "created_at_iso": "2026-03-29T23:16:14.584210Z",
+    "created_at_unix": 1774818974,
+    "model_version": "rallyclip_v0.3.1"
+  },
+  "data": {
+    "mirror_train": true,
+    "split_strategy": "within_video",
+    "splits": {
+      "test": [],
+      "train": [
+        "9\u29f85\u29f815 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN.mp4",
+        "9\u29f85\u29f815 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN__flip_h.mp4",
+        "Aditi Narayan \uff5c Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED.mp4",
+        "Aditi Narayan \uff5c Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED__flip_h.mp4",
+        "Brady Knackstedt (Blue Shirt\u29f8Black Shorts)(4.0 UTR) Unedited Match Play vs. opponent (5.54 UTR)_utr5_genM_courtH_IN_angleMED_zoomMED.mp4",
+        "Brady Knackstedt (Blue Shirt\u29f8Black Shorts)(4.0 UTR) Unedited Match Play vs. opponent (5.54 UTR)_utr5_genM_courtH_IN_angleMED_zoomMED__flip_h.mp4",
+        "Holly Schlatter \uff5c 2021 Australian Tennis Recruit  - Match Play Footage_utr7_genF_courtH_OUT_angleHIGH_zoomOUT.mp4",
+        "Holly Schlatter \uff5c 2021 Australian Tennis Recruit  - Match Play Footage_utr7_genF_courtH_OUT_angleHIGH_zoomOUT__flip_h.mp4",
+        "Monica Greene unedited tennis match play_utr7_genF_courtH_OUT_angleHIGH_zoomIN.mp4",
+        "Monica Greene unedited tennis match play_utr7_genF_courtH_OUT_angleHIGH_zoomIN__flip_h.mp4",
+        "Otto Friedlein - unedited matchplay_utr12_genM_courtH_IN_angleHIGH_zoomOUT.mp4",
+        "Otto Friedlein - unedited matchplay_utr12_genM_courtH_IN_angleHIGH_zoomOUT__flip_h.mp4",
+        "Ryan Parkins - Unedited matchplay_utr11_genM_courtH_IN_angleHIGH_zoomOUT.mp4",
+        "Ryan Parkins - Unedited matchplay_utr11_genM_courtH_IN_angleHIGH_zoomOUT__flip_h.mp4",
+        "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN.mp4",
+        "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN__flip_h.mp4",
+        "Set (2) Play Uncut Derek vs. Alex_utr5_genM_courtH_OUT_angleMED_zoomIN.mp4",
+        "Set (2) Play Uncut Derek vs. Alex_utr5_genM_courtH_OUT_angleMED_zoomIN__flip_h.mp4",
+        "Unedited Matchplay vs UTR 9.8_utr9_genF_courtH_OUT_angleHIGH_zoomMED.mp4",
+        "Unedited Matchplay vs UTR 9.8_utr9_genF_courtH_OUT_angleHIGH_zoomMED__flip_h.mp4",
+        "Verified UTR Match Play\uff1a Hai Pham 4.63 vs. Tuan Anh (Unrated)_utr4_genM_courtH_IN_angleHIGH_zoomMED.mp4",
+        "Verified UTR Match Play\uff1a Hai Pham 4.63 vs. Tuan Anh (Unrated)_utr4_genM_courtH_IN_angleHIGH_zoomMED__flip_h.mp4"
+      ],
+      "val": [
+        "9\u29f85\u29f815 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN.mp4",
+        "Aditi Narayan \uff5c Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED.mp4",
+        "Brady Knackstedt (Blue Shirt\u29f8Black Shorts)(4.0 UTR) Unedited Match Play vs. opponent (5.54 UTR)_utr5_genM_courtH_IN_angleMED_zoomMED.mp4",
+        "Holly Schlatter \uff5c 2021 Australian Tennis Recruit  - Match Play Footage_utr7_genF_courtH_OUT_angleHIGH_zoomOUT.mp4",
+        "Monica Greene unedited tennis match play_utr7_genF_courtH_OUT_angleHIGH_zoomIN.mp4",
+        "Otto Friedlein - unedited matchplay_utr12_genM_courtH_IN_angleHIGH_zoomOUT.mp4",
+        "Ryan Parkins - Unedited matchplay_utr11_genM_courtH_IN_angleHIGH_zoomOUT.mp4",
+        "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN.mp4",
+        "Set (2) Play Uncut Derek vs. Alex_utr5_genM_courtH_OUT_angleMED_zoomIN.mp4",
+        "Unedited Matchplay vs UTR 9.8_utr9_genF_courtH_OUT_angleHIGH_zoomMED.mp4",
+        "Verified UTR Match Play\uff1a Hai Pham 4.63 vs. Tuan Anh (Unrated)_utr4_genM_courtH_IN_angleHIGH_zoomMED.mp4"
+      ]
+    },
+    "test_ratio": 0.0,
+    "val_ratio": 0.1,
+    "video_count": 22,
+    "video_ids": [
+      "9\u29f85\u29f815 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN.mp4",
+      "9\u29f85\u29f815 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN__flip_h.mp4",
+      "Aditi Narayan \uff5c Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED.mp4",
+      "Aditi Narayan \uff5c Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED__flip_h.mp4",
+      "Brady Knackstedt (Blue Shirt\u29f8Black Shorts)(4.0 UTR) Unedited Match Play vs. opponent (5.54 UTR)_utr5_genM_courtH_IN_angleMED_zoomMED.mp4",
+      "Brady Knackstedt (Blue Shirt\u29f8Black Shorts)(4.0 UTR) Unedited Match Play vs. opponent (5.54 UTR)_utr5_genM_courtH_IN_angleMED_zoomMED__flip_h.mp4",
+      "Holly Schlatter \uff5c 2021 Australian Tennis Recruit  - Match Play Footage_utr7_genF_courtH_OUT_angleHIGH_zoomOUT.mp4",
+      "Holly Schlatter \uff5c 2021 Australian Tennis Recruit  - Match Play Footage_utr7_genF_courtH_OUT_angleHIGH_zoomOUT__flip_h.mp4",
+      "Monica Greene unedited tennis match play_utr7_genF_courtH_OUT_angleHIGH_zoomIN.mp4",
+      "Monica Greene unedited tennis match play_utr7_genF_courtH_OUT_angleHIGH_zoomIN__flip_h.mp4",
+      "Otto Friedlein - unedited matchplay_utr12_genM_courtH_IN_angleHIGH_zoomOUT.mp4",
+      "Otto Friedlein - unedited matchplay_utr12_genM_courtH_IN_angleHIGH_zoomOUT__flip_h.mp4",
+      "Ryan Parkins - Unedited matchplay_utr11_genM_courtH_IN_angleHIGH_zoomOUT.mp4",
+      "Ryan Parkins - Unedited matchplay_utr11_genM_courtH_IN_angleHIGH_zoomOUT__flip_h.mp4",
+      "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN.mp4",
+      "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN__flip_h.mp4",
+      "Set (2) Play Uncut Derek vs. Alex_utr5_genM_courtH_OUT_angleMED_zoomIN.mp4",
+      "Set (2) Play Uncut Derek vs. Alex_utr5_genM_courtH_OUT_angleMED_zoomIN__flip_h.mp4",
+      "Unedited Matchplay vs UTR 9.8_utr9_genF_courtH_OUT_angleHIGH_zoomMED.mp4",
+      "Unedited Matchplay vs UTR 9.8_utr9_genF_courtH_OUT_angleHIGH_zoomMED__flip_h.mp4",
+      "Verified UTR Match Play\uff1a Hai Pham 4.63 vs. Tuan Anh (Unrated)_utr4_genM_courtH_IN_angleHIGH_zoomMED.mp4",
+      "Verified UTR Match Play\uff1a Hai Pham 4.63 vs. Tuan Anh (Unrated)_utr4_genM_courtH_IN_angleHIGH_zoomMED__flip_h.mp4"
+    ]
+  },
+  "feature_pipeline": {
+    "conf": null,
+    "feature_dim": 362,
+    "feature_set": "v1",
+    "imgsz": 960.0,
+    "sample_fps": 5.0,
+    "sampling_mode": null,
+    "target_fps": 5.0,
+    "yolo_model": null
+  },
+  "files": {
+    "manifest_file": "manifest.json",
+    "model_file": "model.onnx",
+    "model_sha256": "071cfef82c7549c0a773b308e45e0d79bb8e9bf742bb71209d60b2ccf8e4ee0c",
+    "scaler_file": "scaler.json",
+    "scaler_sha256": "3b265e8aba6d4040e3cb9da0e18116166f87d3ca046a008b4e33755e82fb4b85"
+  },
+  "inference": {
+    "input_name": "features",
+    "input_shape": [
+      1,
+      100,
+      362
+    ],
+    "onnx_opset": 17,
+    "output_name": "logits",
+    "overlap_frames": 50,
+    "overlap_seconds": 10.0,
+    "seq_len_frames": 100,
+    "seq_len_seconds": 20.0,
+    "threshold": 0.5
+  },
+  "manifest_version": 1,
+  "metrics": {
+    "selected_epoch_metrics": {
+      "accuracy": 0.9579289940828403,
+      "auroc": 0.9918852039150114,
+      "balanced_accuracy": 0.9579276059229106,
+      "coverage": 0.6679055040343982,
+      "epoch": 6,
+      "f1": 0.9251500157911359,
+      "mean_iou": 0.6244561600834861,
+      "segment_f1": 0.6735700197238659,
+      "segment_precision": 0.6834319526627219,
+      "segment_recall": 0.6745562130177515,
+      "specificity": 0.9320094872062117,
+      "train_loss": 0.14053696836682333,
+      "val_loss": 0.17643688068809835
+    }
+  },
+  "model": {
+    "architecture": "TennisPointLSTM",
+    "bidirectional": true,
+    "dropout": 0.2,
+    "hidden_size": 128,
+    "num_layers": 2
+  },
+  "postprocess": {
+    "method": "hysteresis",
+    "params": {
+      "high": 0.7,
+      "low": 0.45,
+      "min_dur_sec": 1.0,
+      "sigma": 1.0
+    }
+  },
+  "source_run": {
+    "checkpoint_path": "/Users/ismaelrobles-razzaq/cs_projects/RallyClip/data/runs/prod_yolon960_fps5_seq20_mirror_v1/checkpoints/best.pth",
+    "git_branch": "training-pipeline",
+    "git_commit": "df433bcd79c1b1e865ca303727b3acfb3c8cd99b",
+    "git_dirty": true,
+    "run_id": "prod_yolon960_fps5_seq20_mirror_v1",
+    "scaler_path": "/Users/ismaelrobles-razzaq/cs_projects/RallyClip/data/runs/prod_yolon960_fps5_seq20_mirror_v1/scaler.joblib",
+    "selected_checkpoint": "best",
+    "selected_epoch": 6,
+    "selection_reason": "best checkpoint selected for export"
+  }
+}
