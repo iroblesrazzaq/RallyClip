@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { signOut } from "@/app/actions/auth";
@@ -104,9 +105,18 @@ function LandingPage() {
   return (
     <div className="min-h-screen bg-zinc-50 font-sans text-[var(--foreground)] dark:bg-black">
       <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
-        <div>
-          <p className="text-sm text-zinc-500">Open-source rally segmentation</p>
-          <h1 className="text-lg font-semibold">RallyClip</h1>
+        <div className="flex items-center gap-3">
+          <Image
+            src="/rallyclip-logo.png"
+            alt="RallyClip logo"
+            width={40}
+            height={24}
+            className="dark:invert"
+          />
+          <div>
+            <p className="text-sm text-zinc-500">Really cheap match segmentation</p>
+            <h1 className="text-lg font-semibold">RallyClip</h1>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <Link
@@ -128,7 +138,7 @@ function LandingPage() {
         <section className="grid gap-10 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
           <div>
             <p className="text-sm font-medium uppercase tracking-[0.25em] text-zinc-500">
-              Free and open source
+              Really cheap match segmentation
             </p>
             <h2 className="mt-4 text-5xl font-semibold leading-tight text-balance">
               Extract only the points from a full tennis match video.
@@ -165,11 +175,9 @@ function LandingPage() {
         </section>
 
         <section className="mx-auto max-w-2xl">
-          <ul className="space-y-3 text-zinc-600 dark:text-zinc-400">
-            <li>Free match segmentation without a paid subscription.</li>
-            <li>Runs locally on your own machine. No upload required.</li>
-            <li>Open source — CLI, model, and training pipeline.</li>
-          </ul>
+          <p className="text-lg text-zinc-600 dark:text-zinc-400">
+            SwingVision costs $15 a month. We cost a fraction of that.
+          </p>
         </section>
       </main>
     </div>
