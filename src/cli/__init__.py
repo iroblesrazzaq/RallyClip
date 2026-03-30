@@ -1,4 +1,4 @@
-"""Command-line interface entry points for DeepMatch."""
+"""Command-line interface entry points for RallyClip."""
 
 from .main import main
 

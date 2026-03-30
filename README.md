@@ -1,90 +1,109 @@
-# RallyVision Tennis Point Detector
+# RallyClip
 
-CLI and GUI tool that extracts points from full tennis match video and outputs a segmented video (and optional CSV).
+RallyClip is a CLI and GUI toolkit for tennis video segmentation. It extracts rally/point intervals from full match footage and outputs a segmented video plus optional CSV timestamps.
 
 ## Prereqs
 - Python 3.10+
-- A clean virtual environment is recommended (`python -m venv .venv && source .venv/bin/activate` or conda equivalent).
+- A clean virtual environment is recommended:
+  `python -m venv .venv && source .venv/bin/activate` (or conda equivalent)
 
 ## Install
 ```bash
-git clone https://github.com/iroblesrazzaq/RallyVision.git
-cd RallyVision
+git clone https://github.com/iroblesrazzaq/RallyClip.git
+cd RallyClip
 pip install .
 ```
 
-Models: ensure `models/` contains `lstm_300_v0.1.pth` and `scaler_300_v0.1.joblib` (see `models/README.md`). YOLO weights auto-download into `models/`.
+## Model assets
+RallyClip model artifacts live under `models/rallyclip_v0.3.1/`:
+- `model.onnx`
+- `scaler.json`
+- `manifest.json`
 
-## GUI (local)
-- Run: `rallyvision gui` (auto-picks a free localhost port, opens your browser). `Ctrl-C` to quit.
-- For request logs, use `RALLYVISION_GUI_VERBOSE=1 rallyvision gui`.
-- Drag/drop an MP4 (recommended ≥1080p, 720p minimum). Outputs live under `~/RallyVisionJobs/<job_id>` and are downloadable from the UI.
-- Advanced settings mirror `config.toml` (write CSV, thresholds, YOLO size/device, min duration, start/duration); defaults are pre-filled and should usually be left unchanged.
+YOLO pose weights are downloaded automatically into `models/` when needed.
 
-## Quick run (minimal)
-Only the video path is required; outputs default to `./output_videos` and CSV is off by default.
+## GUI (local Flask app)
+- Run: `rallyclip gui`
+- Verbose logs: `RALLYCLIP_GUI_VERBOSE=1 rallyclip gui`
+- Optional port override: `RALLYCLIP_GUI_PORT=5050 rallyclip gui`
+- Job outputs are stored under `~/RallyClipJobs/<job_id>` by default
+- Drag/drop an MP4 (recommended >=1080p, minimum 720p)
+
+## GUI (Next.js web app)
+A web GUI with Supabase auth lives in `apps/gui/web/`.
+
 ```bash
-rallyvision --video "raw_videos/your_match.mp4"
+cd apps/gui/web
+npm install
+npm run dev
 ```
+
+## Quick run (minimal CLI)
+Only the video path is required; segmented output defaults to `./output_videos`.
+
+```bash
+rallyclip --video "raw_videos/your_match.mp4"
+```
+
 - Segmented video: `output_videos/<video_stem>_segmented.mp4`
-- CSV (if enabled): `output_csvs/<video_stem>_segments.csv` or the video’s directory
+- CSV (if enabled): `output_csvs/<video_stem>_segments.csv` or the input video directory
 
 ## Input video quality
-- Recommended source resolution: at least 720p; 1080p works best and matches the pose model’s training data. Lower resolutions tend to degrade keypoint quality and downstream segmentation accuracy.
+- Recommended source resolution: at least 720p
+- 1080p works best and matches pose-model training assumptions
+- Lower resolutions can reduce keypoint quality and segmentation accuracy
 
 ## Common CLI flags
-- `--video PATH` (required unless in config)  
+- `--video PATH` (required unless supplied in config)
 - `--output-dir PATH` (default: `./output_videos`)
 - `--csv-output-dir PATH` (default: video directory; enable CSV with `--write-csv`)
 - `--write-csv / --no-csv` (default: off)
-- `--yolo-size {nano,small,medium,large}` (default: small)
+- `--yolo-size {nano,small,medium,large}` (default: `small`)
 - `--yolo-device {cpu,cuda,mps}` (force pose model device)
-- Thresholds/hyperparams: `--conf`, `--low`, `--high`, `--sigma`, `--seq-len`, `--overlap`, `--min-dur-sec`, `--fps`
+- Threshold/hyperparam flags: `--conf`, `--low`, `--high`, `--sigma`, `--seq-len`, `--overlap`, `--min-dur-sec`, `--fps`
 - Model overrides: `--model-path`, `--scaler-path`
 - Config file: `--config path/to/config.toml` (defaults to `./config.toml` if present)
 
-## Config file (config.toml)
-Use a TOML file instead of long CLI flags:
+## Config file (`config.toml`)
+Use TOML config instead of long CLI invocations:
+
 ```toml
 [run]
-video_path = "raw_videos/your_match.mp4"   # change this
-output_dir = "output_videos"               # change if desired
+video_path = "raw_videos/your_match.mp4"   # required
+output_dir = "output_videos"
 csv_output_dir = "output_csvs"             # optional; defaults to video directory
 
-write_csv = false                          # default is off
+write_csv = false
 segment_video = true
 yolo_model = "nano"                        # nano | small | medium | large
 yolo_device = "mps"                        # cpu | cuda | mps
 
-# Optional overrides (usually leave as-is):
-# model_path = "models/lstm_300_v0.1.pth"
-# scaler_path = "models/scaler_300_v0.1.joblib"
+# Optional artifact overrides:
+# model_path = "models/rallyclip_v0.3.1/model.onnx"
+# scaler_path = "models/rallyclip_v0.3.1/scaler.json"
 
-# Postprocessing parameters: 
-# to make the model more sensitive (i.e. detect more points from same signal)
-# decrease high, slightly decrease low; vice-versa.
+# Postprocessing / inference parameters
 low = 0.45
-high = 0.8
+high = 0.7
+sigma = 1.0
+min_dur_sec = 1.0
 
-
-
-# Other parameters: (usually leave as-is)
-sigma = 1.5 # for temporal signal gaussian smoothing, not super relevant
-fps = 15.0 # do not modify
-seq_len = 300 # do not modify
-overlap = 150 # probably don't modify
-min_dur_sec = 0.5
-conf = 0.25 # yolo pose confidence threshold, .25 is well tuned
+# Temporal settings for v0.3.1 defaults
+fps = 5.0
+seq_len = 100
+overlap = 50
+conf = 0.25
 start_time = 0
 duration = 999999
 ```
+
 Run with:
 ```bash
-rallyvision --config config.toml
+rallyclip --config config.toml
 ```
 
 ## Training pipeline (dev)
-Training uses a separate YAML config and step-based pipeline.
+Training uses a separate YAML config and a step-based pipeline.
 
 - Config: `configs/train/base.yaml`
 - Entry point: `python train.py --config configs/train/base.yaml`

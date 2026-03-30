@@ -1,8 +1,11 @@
-# Required Model Assets
+# RallyClip Model Artifacts
 
-This directory must contain the following trained assets for the MVP to function:
+Current exported inference artifacts live in:
 
-1.  **`lstm_300_v0.1.pth`**: The trained PyTorch LSTM model on sequence length of 300 (20 second windows).
-2.  **`scaler_300_v0.1.joblib`**: The fitted `StandardScaler` object used during training.
+`models/rallyclip_v0.3.1/`
 
+This directory contains:
 
+1. **`model.onnx`** - ONNX-exported bidirectional LSTM model.
+2. **`scaler.json`** - Serialized `StandardScaler` parameters in JSON format.
+3. **`manifest.json`** - Artifact provenance, metrics, postprocessing defaults, and source-run metadata.

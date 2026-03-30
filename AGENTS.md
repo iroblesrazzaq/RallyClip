@@ -12,8 +12,8 @@
 - `python -m venv .venv && source .venv/bin/activate` (or conda): create an isolated env.
 - `pip install .`: install the CLI package.
 - `pip install .[dev]`: install dev extras (pytest).
-- `rallyvision --video path/to/video.mp4`: run point extraction on a match.
-- `rallyvision gui`: launch the local GUI.
+- `rallyclip --video path/to/video.mp4`: run point extraction on a match.
+- `rallyclip gui`: launch the local GUI.
 - `pytest`: run the test suite.
 - `python train.py --config configs/train/base.yaml`: run the training pipeline.
 

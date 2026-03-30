@@ -19,10 +19,9 @@ try:
     from werkzeug.utils import secure_filename
 except ImportError as exc:  # pragma: no cover - handled at runtime
     raise SystemExit(
-        "rallyvision gui requires Flask. Reinstall with `pip install .`."
+        "rallyclip gui requires Flask. Reinstall with `pip install .`."
     ) from exc
 
-import joblib
 import numpy as np
 import av
 
@@ -33,7 +32,9 @@ from infer import (
     extract_segments_from_binary,
     gaussian_filter1d,
     hysteresis_threshold,
+    load_scaler_asset,
     load_model_from_checkpoint,
+    run_windowed_inference_average_onnx,
     run_windowed_inference_average,
     write_segments_csv,
 )
@@ -57,12 +58,12 @@ STATIC_DIR = _find_static_dir()
 
 
 def _default_jobs_dir() -> Path:
-    """Pick a jobs/output root inside the RallyVision install if possible; fallback to CWD."""
+    """Pick a jobs/output root inside the RallyClip install if possible; fallback to CWD."""
     for root in _candidate_roots():
         root_path = Path(root).resolve()
         if (root_path / "models").exists() or (root_path / "apps").exists():
-            return (root_path / "RallyVisionJobs").resolve()
-    return (Path.cwd() / "RallyVisionJobs").resolve()
+            return (root_path / "RallyClipJobs").resolve()
+    return (Path.cwd() / "RallyClipJobs").resolve()
 
 
 def _default_output_dir() -> Path:
@@ -82,7 +83,7 @@ def _default_csv_dir() -> Path:
 
 
 def _keep_jobs() -> bool:
-    return os.environ.get("RALLYVISION_KEEP_JOBS", "").strip().lower() in {"1", "true", "yes"}
+    return os.environ.get("RALLYCLIP_KEEP_JOBS", "").strip().lower() in {"1", "true", "yes"}
 
 
 def _sweep_old_jobs(max_age_hours: int = 24) -> None:
@@ -115,22 +116,22 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "csv_output_dir": str(DEFAULT_CSV_DIR),
     "model_path": None,
     "scaler_path": None,
-    "fps": 15.0,
-    "seq_len": 300,
-    "overlap": 150,
-    "sigma": 1.5,
+    "fps": 5.0,
+    "seq_len": 100,
+    "overlap": 50,
+    "sigma": 1.0,
     "low": 0.45,
-    "high": 0.8,
-    "min_dur_sec": 0.5,
+    "high": 0.7,
+    "min_dur_sec": 1.0,
     "conf": 0.25,
     "start_time": 0,
     "duration": 999999,
 }
 
 ADVANCED_WARNINGS = {
-    "fps": "Changing fps will break model expectations; keep at 15.0 unless you retrain.",
-    "seq_len": "Sequence length is tied to training; keep at 300.",
-    "overlap": "Overlap tunes throughput vs smoothness; default 150 is recommended.",
+    "fps": "Changing fps will break model expectations; keep at 5.0 unless you retrain.",
+    "seq_len": "Sequence length is tied to training; keep at 100.",
+    "overlap": "Overlap tunes throughput vs smoothness; default 50 is recommended.",
     "low": "Lowering thresholds increases sensitivity and false positives.",
     "high": "Raising thresholds decreases sensitivity but may miss points.",
     "min_dur_sec": "Shorter durations may create noisy/short segments.",
@@ -228,15 +229,23 @@ def _resolve_yolo_weights(cfg: Dict[str, Any]) -> str:
 def _resolve_model_paths(cfg: Dict[str, Any]) -> tuple[Path, Path]:
     model_path = _resolve_asset(
         cfg.get("model_path"),
-        env_var="DEEPMATCH_MODEL_PATH",
-        relatives=["models/lstm_300_v0.1.pth", "checkpoints/seq_len300/best_model.pth"],
-        description="LSTM checkpoint (seq_len=300)",
+        env_var="RALLYCLIP_MODEL_PATH",
+        relatives=[
+            "models/rallyclip_v0.3.1/model.onnx",
+            "models/lstm_300_v0.1.pth",
+            "checkpoints/seq_len300/best_model.pth",
+        ],
+        description="RallyClip model artifact (ONNX or PyTorch checkpoint)",
     )
     scaler_path = _resolve_asset(
         cfg.get("scaler_path"),
-        env_var="DEEPMATCH_SCALER_PATH",
-        relatives=["models/scaler_300_v0.1.joblib", "data/seq_len_300/scaler.joblib"],
-        description="StandardScaler for seq_len=300",
+        env_var="RALLYCLIP_SCALER_PATH",
+        relatives=[
+            "models/rallyclip_v0.3.1/scaler.json",
+            "models/scaler_300_v0.1.joblib",
+            "data/seq_len_300/scaler.joblib",
+        ],
+        description="RallyClip scaler artifact (JSON or joblib)",
     )
     return model_path, scaler_path
 
@@ -365,21 +374,29 @@ def _run_pipeline(job_id: str) -> None:
         _set_step(job, "inference", "in_progress", 5)
         data = np.load(features_npz)
         features = data["features"]
-        scaler = joblib.load(str(scaler_path))
+        scaler = load_scaler_asset(str(scaler_path))
         features = scaler.transform(features)
-        model, device = load_model_from_checkpoint(str(model_path), return_logits=False)
 
         def infer_progress(frac: float) -> None:
             _set_step(job, "inference", "in_progress", int(1 + max(0.0, min(1.0, frac)) * 94))
-
-        avg_probs = run_windowed_inference_average(
-            model,
-            device,
-            features,
-            sequence_length=int(cfg["seq_len"]),
-            overlap=int(cfg["overlap"]),
-            progress_callback=infer_progress,
-        )
+        if model_path.suffix.lower() == ".onnx":
+            avg_probs = run_windowed_inference_average_onnx(
+                str(model_path),
+                features,
+                sequence_length=int(cfg["seq_len"]),
+                overlap=int(cfg["overlap"]),
+                progress_callback=infer_progress,
+            )
+        else:
+            model, device = load_model_from_checkpoint(str(model_path), return_logits=False)
+            avg_probs = run_windowed_inference_average(
+                model,
+                device,
+                features,
+                sequence_length=int(cfg["seq_len"]),
+                overlap=int(cfg["overlap"]),
+                progress_callback=infer_progress,
+            )
         smoothed_probs = gaussian_filter1d(avg_probs.astype(np.float32), sigma=float(cfg["sigma"]))
         min_duration_frames = int(round(max(0.0, float(cfg["min_dur_sec"])) * float(cfg["fps"])))
         binary_pred = hysteresis_threshold(
@@ -584,7 +601,7 @@ def download_csv(job_id: str):
 
 
 def launch(port: Optional[int] = None) -> int:
-    verbose = os.environ.get("RALLYVISION_GUI_VERBOSE", "").strip().lower() in {"1", "true", "yes"}
+    verbose = os.environ.get("RALLYCLIP_GUI_VERBOSE", "").strip().lower() in {"1", "true", "yes"}
     log_level = logging.INFO if verbose else logging.ERROR
     logging.basicConfig(level=log_level, format="%(asctime)s [%(levelname)s] %(message)s")
     # Quiet Flask/werkzeug unless verbose
@@ -592,7 +609,7 @@ def launch(port: Optional[int] = None) -> int:
         logging.getLogger(name).setLevel(log_level)
     if not verbose:
         # Disable tqdm bars in GUI mode to keep the terminal clean
-        os.environ.setdefault("RALLYVISION_NO_TQDM", "1")
+        os.environ.setdefault("RALLYCLIP_NO_TQDM", "1")
         # Suppress the Flask devserver banner
         try:
             import flask.cli  # type: ignore
@@ -601,7 +618,7 @@ def launch(port: Optional[int] = None) -> int:
             pass
     _sweep_old_jobs()
     preferred_ports: list[int] = []
-    env_port = os.environ.get("RALLYVISION_GUI_PORT")
+    env_port = os.environ.get("RALLYCLIP_GUI_PORT")
     if port:
         preferred_ports.append(int(port))
     if env_port:
