@@ -120,16 +120,7 @@ function LoginForm() {
           {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
           <button
             onClick={() => {
-              const params = new URLSearchParams(searchParams.toString());
-              if (isSignUp) {
-                params.delete("mode");
-              } else {
-                params.set("mode", "signup");
-              }
-              const nextUrl = params.toString()
-                ? `${pathname}?${params.toString()}`
-                : pathname;
-              router.replace(nextUrl);
+              router.replace(isSignUp ? pathname : `${pathname}?mode=signup`);
               setError(null);
               setMessage(null);
             }}

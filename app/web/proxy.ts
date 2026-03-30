@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/proxy";
 
-const publicPaths = ["/login", "/auth/callback"];
+const publicPaths = ["/", "/login", "/auth/callback", "/forgot-password", "/reset-password"];
 
 export async function proxy(request: NextRequest) {
   const { supabase, response } = createClient(request);
@@ -10,7 +10,9 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
-  const isPublicPath = publicPaths.some((p) => pathname.startsWith(p));
+  const isPublicPath = publicPaths.some((p) =>
+    p === "/" ? pathname === "/" : pathname.startsWith(p),
+  );
 
   if (!user && !isPublicPath) {
     return NextResponse.redirect(new URL("/login", request.url));
