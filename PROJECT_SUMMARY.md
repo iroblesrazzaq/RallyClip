@@ -1,34 +1,25 @@
 # Project Summary
 
 ## What RallyClip Is
-RallyClip is a tennis match segmentation project with three main surfaces:
+RallyClip is the public open-source repo for:
 
-1. A local Python CLI for running point segmentation on full match videos.
-2. A hosted web app at `https://rallyclip.vercel.app`.
-3. A training pipeline for producing new model artifacts.
+1. the local `rallyclip` CLI
+2. the local inference/runtime package
+3. local GUI code
+4. the training pipeline code
 
-The primary user-facing product right now is the CLI.
+The hosted production product is not part of this repository. It now lives in the private `rallyclip-prod` repo.
 
-## What The Project Should Be
-RallyClip should be a free, open-source way to extract only the actual points from full tennis match recordings.
+## Product Goal
+RallyClip exists to extract only the actual points from full tennis match footage.
 
-The product goal is:
+The core workflow is:
 - take a full match video
 - remove the dead time between points
 - return a condensed video containing only the action
 - optionally return structured timestamps/CSV output
 
-The broader product direction from the older project docs is:
-- free match segmentation should be available without a paid subscription
-- the default experience should work locally on a user's own machine
-- the system should stay computationally efficient enough for laptop use
-- over time, the product can support both local use and a hosted/cloud option
-
-So the intended shape of the project is not just "a model repo." It is:
-- a usable local tool for real players reviewing their matches
-- a clean packaged inference artifact and CLI
-- a hosted frontend surface for account/product workflows
-- an evolving training pipeline that keeps improving the segmentation quality
+The public repo is meant to support that workflow locally on a user's own machine.
 
 ## Current Inference Stack
 Inference is artifact-driven rather than loose-checkpoint driven.
@@ -70,20 +61,6 @@ Key outputs:
 Main config file:
 - `config.toml`
 
-## Web App
-The current hosted app is:
-- `https://rallyclip.vercel.app`
-
-The active Next.js web app lives under:
-- `app/web/`
-
-Current web scope is mostly account/product shell work:
-- auth
-- onboarding/profile flows
-- account management
-
-It is not the primary documented runtime path for inference yet.
-
 ## Training Pipeline
 The training system is a separate step-based pipeline driven by:
 - `configs/train/base.yaml`
@@ -100,33 +77,19 @@ Main pipeline stages:
 Training docs:
 - `docs/training.md`
 
-Training artifacts are written under:
-- `data/datasets/<run_id>/`
-- `data/runs/<run_id>/`
-
-## Current Model Direction
-The currently locked classical recipe is:
-- YOLO pose features
-- sequence model over engineered features
-- mirrored training augmentation
-- tuned hysteresis postprocessing
-
-Recent deployment work standardized model export into versioned artifact directories containing:
-- `model.onnx`
-- `scaler.json`
-- `manifest.json`
+The training code is public. Training data, private evaluation sets, annotations, and any paid/private infrastructure are kept out of this repository.
 
 ## Repo Orientation
 Important paths:
 - `src/` — Python package code
 - `tests/` — pytest coverage
-- `app/web/` — hosted Next.js app
 - `models/` — packaged inference artifacts and weights
 - `configs/` — training/runtime config
-- `docs/` — training docs and older static docs assets
+- `docs/` — training docs
+- `gui/frontend/` — local GUI assets
 
 ## Near-Term Priorities
-1. Keep the CLI stable as the primary local product.
-2. Continue deploying the hosted web app separately on Vercel.
-3. Improve postprocessing and uncertainty/review scoring.
-4. Scale training data and continue model iteration.
+1. Keep the CLI stable as the primary public product.
+2. Improve local inference quality and postprocessing.
+3. Keep training code open while keeping training data private.
+4. Continue local GUI work without coupling this repo to hosted production infrastructure.
