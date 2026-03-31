@@ -1,6 +1,13 @@
 # RallyClip
 
-RallyClip is a CLI toolkit for tennis video segmentation. It extracts rally/point intervals from full match footage and outputs a segmented video plus optional CSV timestamps.
+RallyClip is an open-source CLI for tennis video segmentation. It extracts rally/point intervals from full match footage and outputs a segmented video plus optional CSV timestamps.
+
+This public repo is the local product:
+- CLI inference/runtime
+- local GUI code
+- open training pipeline code
+
+The hosted production app lives in the private `rallyclip-prod` repo. Training data and private evaluation assets are not part of this repository.
 
 ## Prereqs
 - Python 3.10+
@@ -21,8 +28,6 @@ RallyClip model artifacts live under `models/rallyclip_v0.3.1/`:
 - `manifest.json`
 
 YOLO pose weights are downloaded automatically into `models/` when needed.
-
-Hosted app: https://rallyclip.vercel.app
 
 ## Quick run (minimal CLI)
 Only the video path is required; segmented output defaults to `./output_videos`.
@@ -93,3 +98,5 @@ Training uses a separate YAML config and a step-based pipeline.
 - Config: `configs/train/base.yaml`
 - Entry point: `python train.py --config configs/train/base.yaml`
 - Docs: `docs/training.md`
+
+The training code is public. Datasets, private evaluation sets, and any training secrets or paid infrastructure remain private.
