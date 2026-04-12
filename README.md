@@ -91,12 +91,32 @@ Run with:
 ```bash
 rallyclip --config config.toml
 ```
+## Features coming soon (in rough order)
+- Deployed model to web (alpha coming soon!)
+- Scaling data -> better models
+- Rally segmentation
 
-## Training pipeline (dev)
-Training uses a separate YAML config and a step-based pipeline.
+## Features down the road
+In no particular order,
+- Doubles support (need to label + train on doubles data)
+- Open dataset (once deployed, opt-in for publicly available dataset for open-source community to use)
+- Match scoring
+- Mobile app (once I can scale data more to push down model size by expanding the repertoire of architectures I can use, particularly in training more complex deep learning models from scratch)
 
-- Config: `configs/train/base.yaml`
-- Entry point: `python train.py --config configs/train/base.yaml`
-- Docs: `docs/training.md`
-
-The training code is public. Datasets, private evaluation sets, and any training secrets or paid infrastructure remain private.
+## Optimizations/things I'm thinking about
+These aren't necessarily features per se, but things I want to try implementing for better + more efficient models
+- Training postprocessing model (thinking a 1d-CNN for now on the LSTM outputs)
+- Adding some lower-dimensional visual representation of the court to the postprocessing model
+  - maybe some trained/fine-tuned vision conv net to extract features missed in the pose model
+- Training frame-probability objective and post-process objective simultaneously
+  - The way I envision this is either:
+    1. Just one loss term of a combo of IoU over frames + weighted MSE distance of endpoints biased towards longer points rather than underestimating lengths, as well as losses for false positives or false negatives
+    2. Two loss terms, one being the frame-level probability objective used before, and the other is the loss term described above, the frame level loss would only impact LSTM backbone, the segment loss would backprop over entire net
+- Low confidence moments for manual review (idea right now is to train the model on an additional loss term for confidence, likely both in LSTM frame backbone and output postprocess
+- Fine tune YOLO? One option is to fine-tune YOLO nano on YOLO Large outputs for all match footage. Or some other less naive approach with the models in mind, potentially including YOLO outputs in backprop (attaching YOLO directly to LSTM model as a CNN input transformation, then doing LoRA or last 2 layers adaptation only)
+- exploring different model architectures - maybe LSTM with attention
+- Fine-tune YOLO models to only capture 1 of: near player, far player, or the ball itself.
+- Adding audio modality (is clear, helpful signal sometimes, very unhelpful other times)
+  - would need different models if audio doesn't exist, as well as audio preprocessing pipeline. Need to train to be robust to noise.
+- More data augmentaion - currently only doing mirror video
+- Feature engineering - experiment more. 
