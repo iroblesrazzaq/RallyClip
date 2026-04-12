@@ -7,8 +7,6 @@ This public repo is the local product:
 - local GUI code
 - open training pipeline code
 
-The hosted production app lives in the private `rallyclip-prod` repo. Training data and private evaluation assets are not part of this repository.
-
 ## Prereqs
 - Python 3.10+
 - A clean virtual environment is recommended:
@@ -98,6 +96,7 @@ rallyclip --config config.toml
 
 ## Features down the road
 In no particular order,
+- port to TS, npm for easier runtime, install with npm, no dealing with python deps
 - Doubles support (need to label + train on doubles data)
 - Open dataset (once deployed, opt-in for publicly available dataset for open-source community to use)
 - Match scoring
