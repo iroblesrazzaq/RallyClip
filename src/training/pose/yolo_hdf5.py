@@ -357,8 +357,8 @@ class YoloHdf5Extractor:
         model_path: str,
         conf: float,
         imgsz: int,
-        sampling_mode: str,
-        sample_fps: Optional[float],
+        sampling_mode: str = "full_rate",
+        sample_fps: Optional[float] = None,
     ) -> None:
         expected = {
             "video_path": str(video_path),
