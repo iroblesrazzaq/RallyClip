@@ -2,12 +2,20 @@ import os
 import logging
 import numpy as np
 
+from training.features.v1 import FeatureSetV1
+
 
 class FeatureEngineer:
-    def __init__(self, screen_width: int = 1280, screen_height: int = 720, feature_vector_size: int = 288) -> None:
+    def __init__(self, screen_width: int = 1280, screen_height: int = 720, feature_vector_size: int | None = None, target_fps: float = 5.0) -> None:
         self.screen_width = screen_width
         self.screen_height = screen_height
-        self.feature_vector_size = feature_vector_size
+        self.feature_set = FeatureSetV1(screen_width=screen_width, screen_height=screen_height)
+        expected_dim = self.feature_set.feature_dim()
+        if feature_vector_size is not None and feature_vector_size != expected_dim:
+            logging.warning("Ignoring legacy runtime feature size %s; v1 requires %s", feature_vector_size, expected_dim)
+        self.feature_vector_size = expected_dim
+        self.target_fps = float(target_fps)
+        self.dt = 1.0 / self.target_fps if self.target_fps > 0 else 1.0
         self.screen_center_x = screen_width / 2
 
     def _calculate_centroid(self, box):
@@ -34,6 +42,49 @@ class FeatureEngineer:
             return np.zeros((17, 2))
         return (current_keypoints - previous_keypoints) / dt
 
+    def _pack_player(self, player_data, num_keypoints: int = 17):
+        if player_data is None:
+            return {
+                "exists": False,
+                "box": np.full((4,), -1.0, dtype=np.float32),
+                "keypoints": np.full((num_keypoints, 2), -1.0, dtype=np.float32),
+                "conf": np.full((num_keypoints,), -1.0, dtype=np.float32),
+                "box_conf": -1.0,
+            }
+        return {
+            "exists": True,
+            "box": np.asarray(player_data["box"], dtype=np.float32),
+            "keypoints": np.asarray(player_data["keypoints"], dtype=np.float32),
+            "conf": np.asarray(player_data["conf"], dtype=np.float32),
+            "box_conf": float(player_data.get("box_conf", -1.0)),
+        }
+
+    def _normalize_prev_motion(self, previous_velocities):
+        if not previous_velocities:
+            return None
+        if "near" in previous_velocities or "far" in previous_velocities:
+            return previous_velocities
+        return {
+            "near": previous_velocities.get("near_player"),
+            "far": previous_velocities.get("far_player"),
+        }
+
+    def _player_velocity(self, player_data, previous_player_data):
+        if player_data is None or previous_player_data is None:
+            return None
+        centroid = self._calculate_centroid(player_data["box"])
+        prev_centroid = self._calculate_centroid(previous_player_data["box"])
+        return self._calculate_velocity(centroid, prev_centroid, self.dt)
+
+    def _player_keypoint_velocity(self, player_data, previous_player_data):
+        if player_data is None or previous_player_data is None:
+            return None
+        return self._calculate_keypoint_velocity(
+            np.asarray(player_data["keypoints"], dtype=np.float32),
+            np.asarray(previous_player_data["keypoints"], dtype=np.float32),
+            self.dt,
+        )
+
     def _calculate_limb_lengths(self, keypoints):
         if keypoints is None:
             return np.full(14, -1.0)
@@ -51,92 +102,20 @@ class FeatureEngineer:
         return np.array(limb_lengths)
 
     def create_feature_vector(self, assigned_players, previous_assigned_players=None, previous_velocities=None, num_keypoints: int = 17):
-        features_per_player = 1 + 4 + 2 + 2 + 2 + 1 + 1 + (num_keypoints * 3) + (num_keypoints * 2) + (num_keypoints * 2) + num_keypoints + num_keypoints + 14
-        vector = np.full(features_per_player * 2, -1.0)
-
-        if assigned_players['near_player']:
-            player_data = assigned_players['near_player']
-            vector[0] = 1.0
-            centroid = self._calculate_centroid(player_data['box'])
-            velocity = (0.0, 0.0)
-            acceleration = (0.0, 0.0)
-            speed = -1.0
-            acceleration_magnitude = -1.0
-            kp_velocities = np.zeros((num_keypoints, 2))
-            kp_accelerations = np.zeros((num_keypoints, 2))
-            kp_speeds = np.full(num_keypoints, -1.0)
-            kp_acceleration_magnitudes = np.full(num_keypoints, -1.0)
-            limb_lengths = np.full(14, -1.0)
-            if (previous_assigned_players and previous_assigned_players['near_player']):
-                prev_centroid = self._calculate_centroid(previous_assigned_players['near_player']['box'])
-                velocity = self._calculate_velocity(centroid, prev_centroid)
-                speed = np.sqrt(velocity[0]**2 + velocity[1]**2)
-                if previous_velocities and previous_velocities['near_player']:
-                    acceleration = self._calculate_acceleration(velocity, previous_velocities['near_player'])
-                    acceleration_magnitude = np.sqrt(acceleration[0]**2 + acceleration[1]**2)
-                current_kps = player_data['keypoints']
-                prev_kps = previous_assigned_players['near_player']['keypoints']
-                kp_velocities = self._calculate_keypoint_velocity(current_kps, prev_kps)
-                kp_speeds = np.sqrt(kp_velocities[:, 0]**2 + kp_velocities[:, 1]**2)
-                kp_acceleration_magnitudes = np.sqrt(kp_accelerations[:, 0]**2 + kp_accelerations[:, 1]**2)
-                limb_lengths = self._calculate_limb_lengths(player_data['keypoints'])
-            flat_features = np.concatenate([
-                player_data['box'], centroid, velocity, acceleration, [speed, acceleration_magnitude],
-                player_data['keypoints'].flatten(), player_data['conf'], kp_velocities.flatten(), kp_accelerations.flatten(),
-                kp_speeds, kp_acceleration_magnitudes, limb_lengths
-            ])
-            vector[1:features_per_player] = flat_features
-        else:
-            offset = 1 + 4 + 2
-            vector[offset:offset+4] = [0.0, 0.0, 0.0, 0.0]
-            vector[offset+4:offset+6] = [-1.0, -1.0]
-            kp_offset = offset + 6 + (num_keypoints * 3)
-            vector[kp_offset:kp_offset+(num_keypoints * 4)] = 0.0
-            mag_offset = kp_offset + (num_keypoints * 4)
-            vector[mag_offset:mag_offset+(num_keypoints * 2)] = -1.0
-
-        offset = features_per_player
-        if assigned_players['far_player']:
-            player_data = assigned_players['far_player']
-            vector[offset] = 1.0
-            centroid = self._calculate_centroid(player_data['box'])
-            velocity = (0.0, 0.0)
-            acceleration = (0.0, 0.0)
-            speed = -1.0
-            acceleration_magnitude = -1.0
-            kp_velocities = np.zeros((num_keypoints, 2))
-            kp_accelerations = np.zeros((num_keypoints, 2))
-            kp_speeds = np.full(num_keypoints, -1.0)
-            kp_acceleration_magnitudes = np.full(num_keypoints, -1.0)
-            limb_lengths = np.full(14, -1.0)
-            if (previous_assigned_players and previous_assigned_players['far_player']):
-                prev_centroid = self._calculate_centroid(previous_assigned_players['far_player']['box'])
-                velocity = self._calculate_velocity(centroid, prev_centroid)
-                speed = np.sqrt(velocity[0]**2 + velocity[1]**2)
-                if previous_velocities and previous_velocities['far_player']:
-                    acceleration = self._calculate_acceleration(velocity, previous_velocities['far_player'])
-                    acceleration_magnitude = np.sqrt(acceleration[0]**2 + acceleration[1]**2)
-                current_kps = player_data['keypoints']
-                prev_kps = previous_assigned_players['far_player']['keypoints']
-                kp_velocities = self._calculate_keypoint_velocity(current_kps, prev_kps)
-                kp_speeds = np.sqrt(kp_velocities[:, 0]**2 + kp_velocities[:, 1]**2)
-                kp_acceleration_magnitudes = np.sqrt(kp_accelerations[:, 0]**2 + kp_accelerations[:, 1]**2)
-                limb_lengths = self._calculate_limb_lengths(player_data['keypoints'])
-            flat_features = np.concatenate([
-                player_data['box'], centroid, velocity, acceleration, [speed, acceleration_magnitude],
-                player_data['keypoints'].flatten(), player_data['conf'], kp_velocities.flatten(), kp_accelerations.flatten(),
-                kp_speeds, kp_acceleration_magnitudes, limb_lengths
-            ])
-            vector[offset+1 : offset+self.feature_vector_size] = flat_features
-        else:
-            pos_offset = offset + 1 + 4 + 2
-            vector[pos_offset:pos_offset+4] = [0.0, 0.0, 0.0, 0.0]
-            vector[pos_offset+4:pos_offset+6] = [-1.0, -1.0]
-            kp_offset = pos_offset + 6 + (num_keypoints * 3)
-            vector[kp_offset:kp_offset+(num_keypoints * 4)] = 0.0
-            mag_offset = kp_offset + (num_keypoints * 4)
-            vector[mag_offset:mag_offset+(num_keypoints * 2)] = -1.0
-        return vector
+        previous_assigned_players = previous_assigned_players or {}
+        near = self._pack_player(assigned_players.get('near_player'), num_keypoints)
+        far = self._pack_player(assigned_players.get('far_player'), num_keypoints)
+        prev_near = self._pack_player(previous_assigned_players.get('near_player'), num_keypoints) if previous_assigned_players else None
+        prev_far = self._pack_player(previous_assigned_players.get('far_player'), num_keypoints) if previous_assigned_players else None
+        return self.feature_set.build_feature_vector(
+            near,
+            far,
+            prev_near,
+            prev_far,
+            self._normalize_prev_motion(previous_velocities),
+            self.dt,
+            num_keypoints=num_keypoints,
+        )
 
     def create_features_from_preprocessed(self, input_npz_path: str, output_file: str, overwrite: bool = False) -> bool:
         try:
@@ -144,36 +123,51 @@ class FeatureEngineer:
                 logging.info("Features skip (exists): %s", os.path.basename(output_file))
                 return True
             logging.info("Loading preprocessed data from: %s", input_npz_path)
-            data = np.load(input_npz_path, allow_pickle=True)
-            frames = data['frames']
-            targets = data['targets']
-            near_players = data['near_players']
-            far_players = data['far_players']
+            with np.load(input_npz_path, allow_pickle=True) as data:
+                targets = data['targets'].copy()
+                near_players = data['near_players'].copy()
+                far_players = data['far_players'].copy()
             annotated_indices = np.where(targets >= 0)[0]
             feature_vectors, feature_targets = [], []
             previous_players = None
-            previous_velocities = {'near_player': None, 'far_player': None}
+            previous_velocities = {
+                'near': {'centroid': None, 'keypoints': None},
+                'far': {'centroid': None, 'keypoints': None},
+            }
             for idx in annotated_indices:
                 assigned_players = {'near_player': near_players[idx], 'far_player': far_players[idx]}
                 feature_vector = self.create_feature_vector(assigned_players, previous_players, previous_velocities)
                 feature_vectors.append(feature_vector)
                 feature_targets.append(targets[idx])
-                current_velocities = {'near_player': None, 'far_player': None}
-                if (assigned_players['near_player'] and previous_players and previous_players['near_player']):
-                    current_centroid = self._calculate_centroid(assigned_players['near_player']['box'])
-                    prev_centroid = self._calculate_centroid(previous_players['near_player']['box'])
-                    current_velocities['near_player'] = self._calculate_velocity(current_centroid, prev_centroid)
-                if (assigned_players['far_player'] and previous_players and previous_players['far_player']):
-                    current_centroid = self._calculate_centroid(assigned_players['far_player']['box'])
-                    prev_centroid = self._calculate_centroid(previous_players['far_player']['box'])
-                    current_velocities['far_player'] = self._calculate_velocity(current_centroid, prev_centroid)
+                current_velocities = {
+                    'near': {
+                        'centroid': self._player_velocity(
+                            assigned_players['near_player'],
+                            previous_players['near_player'] if previous_players else None,
+                        ),
+                        'keypoints': self._player_keypoint_velocity(
+                            assigned_players['near_player'],
+                            previous_players['near_player'] if previous_players else None,
+                        ),
+                    },
+                    'far': {
+                        'centroid': self._player_velocity(
+                            assigned_players['far_player'],
+                            previous_players['far_player'] if previous_players else None,
+                        ),
+                        'keypoints': self._player_keypoint_velocity(
+                            assigned_players['far_player'],
+                            previous_players['far_player'] if previous_players else None,
+                        ),
+                    },
+                }
                 previous_players = assigned_players
                 previous_velocities = current_velocities
             if feature_vectors:
-                feature_array = np.array(feature_vectors)
+                feature_array = np.array(feature_vectors, dtype=np.float32)
                 target_array = np.array(feature_targets)
             else:
-                feature_array = np.empty((0, self.feature_vector_size))
+                feature_array = np.empty((0, self.feature_vector_size), dtype=np.float32)
                 target_array = np.empty((0,))
             os.makedirs(os.path.dirname(output_file), exist_ok=True)
             np.savez_compressed(output_file, features=feature_array, targets=target_array)

@@ -22,10 +22,11 @@ class PoseExtractor:
     and saves compressed npz artifacts. Designed for reuse by CLI and GUI.
     """
 
-    def __init__(self, model_dir: Optional[str] = None, model_path: str = "yolov8s-pose.pt") -> None:
+    def __init__(self, model_dir: Optional[str] = None, model_path: str = "yolov8s-pose.pt", imgsz: int = 1920) -> None:
         # Set early so downstream checks can use it
         self.model_path = model_path
         self.model_dir = model_dir
+        self.imgsz = int(imgsz)
 
         profile = os.environ.get("PIPELINE_PROFILE", "").strip().lower()
         if not profile:
@@ -118,10 +119,12 @@ class PoseExtractor:
         start_time_seconds: int = 0,
         duration_seconds: int = 60,
         target_fps: int = 15,
+        imgsz: Optional[int] = None,
         annotations_csv: Optional[str] = None,
         progress_callback: Optional[Callable[[float], None]] = None,
     ) -> str:
         import csv
+        predict_imgsz = int(self.imgsz if imgsz is None else imgsz)
 
         annotations = None
         if annotations_csv and annotations_csv != "None" and os.path.exists(annotations_csv):
@@ -181,7 +184,7 @@ class PoseExtractor:
                     verbose=False,
                     device=self.device,
                     conf=confidence_threshold,
-                    imgsz=1920,
+                    imgsz=predict_imgsz,
                     batch=self.batch_size,
                 )
             except TypeError:
@@ -190,26 +193,29 @@ class PoseExtractor:
                     verbose=False,
                     device=self.device,
                     conf=confidence_threshold,
-                    imgsz=1920,
+                    imgsz=predict_imgsz,
                 )
             for i, res in enumerate(results):
                 idx = batch_indices[i]
                 frame_data = {}
                 if res is not None and getattr(res, "boxes", None) is not None:
                     try:
-                        frame_data["boxes"] = res.boxes.xyxy.detach().cpu().numpy()
+                        frame_data["boxes"] = res.boxes.xyxy.detach().cpu().numpy().astype(np.float32)
+                        frame_data["box_conf"] = res.boxes.conf.detach().cpu().numpy().astype(np.float32)
                     except Exception:
-                        frame_data["boxes"] = np.array([])
+                        frame_data["boxes"] = np.empty((0, 4), dtype=np.float32)
+                        frame_data["box_conf"] = np.empty((0,), dtype=np.float32)
                     try:
-                        frame_data["keypoints"] = res.keypoints.xy.detach().cpu().numpy()
-                        frame_data["conf"] = res.keypoints.conf.detach().cpu().numpy()
+                        frame_data["keypoints"] = res.keypoints.xy.detach().cpu().numpy().astype(np.float32)
+                        frame_data["conf"] = res.keypoints.conf.detach().cpu().numpy().astype(np.float32)
                     except Exception:
-                        frame_data["keypoints"] = np.array([])
-                        frame_data["conf"] = np.array([])
+                        frame_data["keypoints"] = np.empty((0, 17, 2), dtype=np.float32)
+                        frame_data["conf"] = np.empty((0, 17), dtype=np.float32)
                 else:
-                    frame_data["boxes"] = np.array([])
-                    frame_data["keypoints"] = np.array([])
-                    frame_data["conf"] = np.array([])
+                    frame_data["boxes"] = np.empty((0, 4), dtype=np.float32)
+                    frame_data["box_conf"] = np.empty((0,), dtype=np.float32)
+                    frame_data["keypoints"] = np.empty((0, 17, 2), dtype=np.float32)
+                    frame_data["conf"] = np.empty((0, 17), dtype=np.float32)
                 frame_data["annotation_status"] = all_frames_data[idx].get("annotation_status", 0)
                 all_frames_data[idx] = frame_data
             batch_frames = []
@@ -236,9 +242,10 @@ class PoseExtractor:
                     if (starts[annotation_index] - EPS) <= current_timestamp <= (ends[annotation_index] + EPS):
                         annotation_status_current = 1
                 all_frames_data.append({
-                    "boxes": np.array([]),
-                    "keypoints": np.array([]),
-                    "conf": np.array([]),
+                    "boxes": np.empty((0, 4), dtype=np.float32),
+                    "box_conf": np.empty((0,), dtype=np.float32),
+                    "keypoints": np.empty((0, 17, 2), dtype=np.float32),
+                    "conf": np.empty((0, 17), dtype=np.float32),
                     "annotation_status": annotation_status_current,
                 })
                 batch_frames.append(frame)
@@ -275,7 +282,13 @@ class PoseExtractor:
                         pass
                     last_report_time = now
             else:
-                frame_data = {"boxes": np.array([]), "keypoints": np.array([]), "conf": np.array([]), "annotation_status": -1}
+                frame_data = {
+                    "boxes": np.empty((0, 4), dtype=np.float32),
+                    "box_conf": np.empty((0,), dtype=np.float32),
+                    "keypoints": np.empty((0, 17, 2), dtype=np.float32),
+                    "conf": np.empty((0, 17), dtype=np.float32),
+                    "annotation_status": -1,
+                }
             if not appended:
                 all_frames_data.append(frame_data)
 

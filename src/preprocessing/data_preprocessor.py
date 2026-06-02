@@ -27,10 +27,19 @@ class DataPreprocessor:
         union_area = box1_area + box2_area - inter_area
         return inter_area / union_area if union_area > 0 else 0
 
-    def _conditional_merge_boxes(self, boxes, keypoints, confs):
+    def _conditional_merge_boxes(self, boxes, keypoints, confs, box_conf):
         if len(boxes) <= 1:
-            return boxes, keypoints, confs
-        detections = [{'box': boxes[i], 'keypoints': keypoints[i], 'conf': confs[i], 'clump_id': -1} for i in range(len(boxes))]
+            return boxes, keypoints, confs, box_conf
+        detections = [
+            {
+                'box': boxes[i],
+                'keypoints': keypoints[i],
+                'conf': confs[i],
+                'box_conf': box_conf[i],
+                'clump_id': -1,
+            }
+            for i in range(len(boxes))
+        ]
         clump_count = 0
         for i in range(len(detections)):
             if detections[i]['clump_id'] == -1:
@@ -40,14 +49,15 @@ class DataPreprocessor:
                         detections[j]['clump_id'] = clump_count
                 clump_count += 1
         if clump_count == len(detections):
-            return boxes, keypoints, confs
-        final_boxes, final_keypoints, final_confs = [], [], []
+            return boxes, keypoints, confs, box_conf
+        final_boxes, final_keypoints, final_confs, final_box_conf = [], [], [], []
         for clump_id in range(clump_count):
             clump = [d for d in detections if d['clump_id'] == clump_id]
             if len(clump) == 1:
                 final_boxes.append(clump[0]['box'])
                 final_keypoints.append(clump[0]['keypoints'])
                 final_confs.append(clump[0]['conf'])
+                final_box_conf.append(clump[0]['box_conf'])
                 continue
             min_x1 = min(d['box'][0] for d in clump)
             min_y1 = min(d['box'][1] for d in clump)
@@ -65,22 +75,35 @@ class DataPreprocessor:
                 final_boxes.append(merged_box)
                 final_keypoints.append(best_detection['keypoints'])
                 final_confs.append(best_detection['conf'])
+                final_box_conf.append(best_detection['box_conf'])
             else:
                 for d in clump:
                     final_boxes.append(d['box'])
                     final_keypoints.append(d['keypoints'])
                     final_confs.append(d['conf'])
-        return np.array(final_boxes), np.array(final_keypoints), np.array(final_confs)
+                    final_box_conf.append(d['box_conf'])
+        return np.array(final_boxes), np.array(final_keypoints), np.array(final_confs), np.array(final_box_conf)
 
     def assign_players(self, frame_data):
-        boxes = frame_data.get('boxes', np.array([]))
-        keypoints = frame_data.get('keypoints', np.array([]))
-        confs = frame_data.get('conf', np.array([]))
-        clean_boxes, clean_keypoints, clean_confs = self._conditional_merge_boxes(boxes, keypoints, confs)
+        boxes = np.asarray(frame_data.get('boxes', np.empty((0, 4), dtype=np.float32)), dtype=np.float32)
+        keypoints = np.asarray(frame_data.get('keypoints', np.empty((0, 17, 2), dtype=np.float32)), dtype=np.float32)
+        confs = np.asarray(frame_data.get('conf', np.empty((0, 17), dtype=np.float32)), dtype=np.float32)
+        box_conf = np.asarray(frame_data.get('box_conf', np.full((len(boxes),), -1.0, dtype=np.float32)), dtype=np.float32)
+        if box_conf.shape[0] != len(boxes):
+            box_conf = np.full((len(boxes),), -1.0, dtype=np.float32)
+        clean_boxes, clean_keypoints, clean_confs, clean_box_conf = self._conditional_merge_boxes(boxes, keypoints, confs, box_conf)
         assigned_players = {'near_player': None, 'far_player': None}
         if len(clean_boxes) == 0:
             return assigned_players
-        candidates = [{'box': clean_boxes[i], 'keypoints': clean_keypoints[i], 'conf': clean_confs[i]} for i in range(len(clean_boxes))]
+        candidates = [
+            {
+                'box': clean_boxes[i],
+                'keypoints': clean_keypoints[i],
+                'conf': clean_confs[i],
+                'box_conf': clean_box_conf[i],
+            }
+            for i in range(len(clean_boxes))
+        ]
         near_player_idx = max(range(len(candidates)), key=lambda i: candidates[i]['box'][3])
         near_player = candidates[near_player_idx]
         assigned_players['near_player'] = near_player
@@ -101,20 +124,36 @@ class DataPreprocessor:
             return None
 
     def filter_frame_by_court(self, frame_data, mask):
+        boxes = np.asarray(frame_data.get('boxes', np.empty((0, 4), dtype=np.float32)), dtype=np.float32)
+        keypoints = np.asarray(frame_data.get('keypoints', np.empty((0, 17, 2), dtype=np.float32)), dtype=np.float32)
+        conf = np.asarray(frame_data.get('conf', np.empty((0, 17), dtype=np.float32)), dtype=np.float32)
+        box_conf = frame_data.get('box_conf', np.full((len(boxes),), -1.0, dtype=np.float32))
+        box_conf = np.asarray(box_conf, dtype=np.float32)
+        if box_conf.shape[0] != len(boxes):
+            box_conf = np.full((len(boxes),), -1.0, dtype=np.float32)
+        normalized = {
+            'boxes': boxes.reshape((-1, 4)),
+            'box_conf': box_conf,
+            'keypoints': keypoints.reshape((-1, 17, 2)),
+            'conf': conf.reshape((-1, 17)),
+        }
         if mask is None:
-            return frame_data
-        boxes = frame_data['boxes']
-        keypoints = frame_data['keypoints']
-        conf = frame_data['conf']
-        kept_boxes, kept_keypoints, kept_conf = [], [], []
-        for i, box in enumerate(boxes):
+            return normalized
+        kept_boxes, kept_box_conf, kept_keypoints, kept_conf = [], [], [], []
+        for i, box in enumerate(normalized['boxes']):
             center_x = (box[0] + box[2]) / 2
             center_y = (box[1] + box[3]) / 2
             if (0 <= center_y < mask.shape[0] and 0 <= center_x < mask.shape[1] and mask[int(center_y), int(center_x)] == 0):
                 kept_boxes.append(box)
-                kept_keypoints.append(keypoints[i])
-                kept_conf.append(conf[i])
-        return { 'boxes': np.array(kept_boxes), 'keypoints': np.array(kept_keypoints), 'conf': np.array(kept_conf) }
+                kept_box_conf.append(normalized['box_conf'][i])
+                kept_keypoints.append(normalized['keypoints'][i])
+                kept_conf.append(normalized['conf'][i])
+        return {
+            'boxes': np.asarray(kept_boxes, dtype=np.float32).reshape((-1, 4)),
+            'box_conf': np.asarray(kept_box_conf, dtype=np.float32),
+            'keypoints': np.asarray(kept_keypoints, dtype=np.float32).reshape((-1, 17, 2)),
+            'conf': np.asarray(kept_conf, dtype=np.float32).reshape((-1, 17)),
+        }
 
     def preprocess_single_video(self, input_npz_path: str, video_path: str, output_npz_path: str, overwrite: bool = False) -> bool:
         try:
@@ -122,7 +161,8 @@ class DataPreprocessor:
                 logging.info("Preprocess skip (exists): %s", os.path.basename(output_npz_path))
                 return True
             logging.info("Loading pose data from: %s", input_npz_path)
-            pose_data = np.load(input_npz_path, allow_pickle=True)['frames']
+            with np.load(input_npz_path, allow_pickle=True) as data:
+                pose_data = data['frames'].copy()
             logging.info("Loaded %s frames", len(pose_data))
             logging.info("Generating court mask from: %s", video_path)
             mask = self.generate_court_mask(video_path)
@@ -135,7 +175,12 @@ class DataPreprocessor:
                 annotation_status = frame_data.get('annotation_status', 0)
                 all_targets.append(annotation_status)
                 if annotation_status == -1:
-                    all_frame_data.append({'boxes': np.array([]), 'keypoints': np.array([]), 'conf': np.array([])})
+                    all_frame_data.append({
+                        'boxes': np.empty((0, 4), dtype=np.float32),
+                        'box_conf': np.empty((0,), dtype=np.float32),
+                        'keypoints': np.empty((0, 17, 2), dtype=np.float32),
+                        'conf': np.empty((0, 17), dtype=np.float32),
+                    })
                     all_near_players.append(None)
                     all_far_players.append(None)
                     continue

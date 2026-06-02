@@ -124,6 +124,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "high": 0.7,
     "min_dur_sec": 1.0,
     "conf": 0.25,
+    "imgsz": 960,
     "start_time": 0,
     "duration": 999999,
 }
@@ -135,6 +136,7 @@ ADVANCED_WARNINGS = {
     "low": "Lowering thresholds increases sensitivity and false positives.",
     "high": "Raising thresholds decreases sensitivity but may miss points.",
     "min_dur_sec": "Shorter durations may create noisy/short segments.",
+    "imgsz": "YOLO image size affects pose recall and runtime; v0.3.1 was exported with 960.",
 }
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/")
@@ -344,6 +346,7 @@ def _run_pipeline(job_id: str) -> None:
             start_time_seconds=int(cfg["start_time"]),
             duration_seconds=int(cfg["duration"]),
             target_fps=int(cfg["fps"]),
+            imgsz=int(cfg.get("imgsz", 1920)),
             annotations_csv=None,
             progress_callback=pose_progress,
         )
@@ -362,7 +365,7 @@ def _run_pipeline(job_id: str) -> None:
 
         _check_cancel(job)
         _set_step(job, "feature", "in_progress", 5)
-        fe = FeatureEngineer()
+        fe = FeatureEngineer(target_fps=float(cfg["fps"]))
         features_npz = str(job_dir / "features.npz")
         success_fe = fe.create_features_from_preprocessed(preprocessed_npz, features_npz, overwrite=True)
         if not success_fe or not Path(features_npz).exists():
@@ -372,8 +375,8 @@ def _run_pipeline(job_id: str) -> None:
 
         _check_cancel(job)
         _set_step(job, "inference", "in_progress", 5)
-        data = np.load(features_npz)
-        features = data["features"]
+        with np.load(features_npz) as data:
+            features = data["features"].copy()
         scaler = load_scaler_asset(str(scaler_path))
         features = scaler.transform(features)
 
