@@ -33,9 +33,11 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
             return str(tmp_path / "raw_pose.npz")
 
     class FakePreprocessor:
-        def __init__(self, save_court_masks):
+        def __init__(self, save_court_masks, screen_width=None, screen_height=None, **_kwargs):
             calls.append("preprocess:init")
             assert save_court_masks is False
+            assert screen_width == 1280
+            assert screen_height == 720
 
         def preprocess_single_video(self, raw_npz, video, output_npz, overwrite):
             calls.append("preprocess:run")
@@ -143,6 +145,9 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
         min_dur_sec=1.0,
         conf=0.25,
         imgsz=960,
+        feature_set="v1",
+        screen_width=1280,
+        screen_height=720,
         start_time=0,
         duration=999999,
     )
