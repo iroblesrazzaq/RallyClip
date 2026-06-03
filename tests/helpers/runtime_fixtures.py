@@ -326,6 +326,11 @@ def write_manifest_model_dir(path: Path) -> Path:
             "target_fps": FPS,
             "sample_fps": FPS,
             "imgsz": 960,
+            "conf": 0.25,
+            "num_keypoints": 17,
+            "screen_width": 1280,
+            "screen_height": 720,
+            "yolo_model": "yolov8n-pose.pt",
         },
         "inference": {
             "input_name": "features",
