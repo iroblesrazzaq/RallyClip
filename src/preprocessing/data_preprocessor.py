@@ -6,12 +6,15 @@ from preprocessing.court_detector import CourtDetector
 
 
 class DataPreprocessor:
-    def __init__(self, screen_width: int = 1280, screen_height: int = 720, merge_iou_thresh: float = 0.6, save_court_masks: bool = False) -> None:
+    def __init__(self, screen_width: int = 1280, screen_height: int = 720, merge_iou_thresh: float = 0.6, save_court_masks: bool = False, yolo_model_path: str = "yolov8s-pose.pt") -> None:
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.screen_center_x = screen_width / 2
         self.merge_iou_thresh = merge_iou_thresh
         self.save_court_masks = save_court_masks
+        # Court detection uses the SAME YOLO model as pose extraction (the one pinned in the
+        # model manifest) so there is one model in play and one auto-download, not two.
+        self.yolo_model_path = yolo_model_path
         self.left_zone_x = screen_width * 0.10
         self.right_zone_x = screen_width * 0.90
         self.bottom_zone_y = screen_height * 0.80
@@ -116,7 +119,7 @@ class DataPreprocessor:
 
     def generate_court_mask(self, video_path: str):
         try:
-            detector = CourtDetector(yolo_model_path='models/yolov8s-pose.pt')
+            detector = CourtDetector(yolo_model_path=self.yolo_model_path)
             mask, clean_frame, metadata = detector.process_video(video_path, target_time=60)
             return mask
         except Exception as e:

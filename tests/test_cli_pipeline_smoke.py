@@ -33,11 +33,13 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
             return str(tmp_path / "raw_pose.npz")
 
     class FakePreprocessor:
-        def __init__(self, save_court_masks, screen_width=None, screen_height=None, **_kwargs):
+        def __init__(self, save_court_masks, screen_width=None, screen_height=None, yolo_model_path=None, **_kwargs):
             calls.append("preprocess:init")
             assert save_court_masks is False
             assert screen_width == 1280
             assert screen_height == 720
+            # court detection uses the same manifest-pinned model as pose extraction
+            assert yolo_model_path == "yolov8n-pose.pt"
 
         def preprocess_single_video(self, raw_npz, video, output_npz, overwrite):
             calls.append("preprocess:run")
