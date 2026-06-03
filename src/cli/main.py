@@ -59,6 +59,7 @@ class RunConfig:
     high: float = 0.8
     min_dur_sec: float = 0.5
     conf: float = 0.25
+    imgsz: int = 960
     start_time: int = 0
     duration: int = 999999
 
@@ -128,10 +129,10 @@ def _pick_bool(arg_val: Optional[bool], cfg_val: Optional[Any], default: bool) -
     return default
 
 
-def _manifest_defaults_for_model(model_path: Path) -> Dict[str, Any]:
-    if model_path.suffix.lower() != ".onnx":
+def _manifest_defaults_for_model(model_path: Path, manifest_path: Optional[Path] = None) -> Dict[str, Any]:
+    if manifest_path is None and model_path.suffix.lower() != ".onnx":
         return {}
-    manifest_path = model_path.parent / "manifest.json"
+    manifest_path = manifest_path or (model_path.parent / "manifest.json")
     if not manifest_path.exists():
         return {}
     try:
@@ -148,6 +149,8 @@ def _manifest_defaults_for_model(model_path: Path) -> Dict[str, Any]:
         defaults["overlap"] = int(inference["overlap_frames"])
     if "target_fps" in feature_pipeline:
         defaults["fps"] = float(feature_pipeline["target_fps"])
+    if "imgsz" in feature_pipeline:
+        defaults["imgsz"] = int(float(feature_pipeline["imgsz"]))
     if "sigma" in postprocess:
         defaults["sigma"] = float(postprocess["sigma"])
     if "low" in postprocess:
@@ -160,35 +163,48 @@ def _manifest_defaults_for_model(model_path: Path) -> Dict[str, Any]:
 
 
 def build_run_config(args: argparse.Namespace) -> RunConfig:
-    cfg_path = args.config or ("config.toml" if Path("config.toml").exists() else None)
-    cfg_dict = _load_config_dict(cfg_path) if (cfg_path and Path(cfg_path).exists()) else {}
+    def arg(key: str, default=None):
+        return getattr(args, key, default)
+
+    cfg_path = arg("config") or (None if arg("video") else ("config.toml" if Path("config.toml").exists() else None))
+    cfg_dict = _load_config_dict(cfg_path) if cfg_path else {}
     cfg_section = cfg_dict.get("run", cfg_dict) if isinstance(cfg_dict, dict) else {}
 
     def cfg(key: str, default=None):
         return cfg_section.get(key, default) if isinstance(cfg_section, dict) else default
 
-    video_path = args.video or cfg("video_path")
-    output_dir = args.output_dir or cfg("output_dir") or str(Path.cwd() / "output_videos")
+    video_path = arg("video") or cfg("video_path")
+    output_dir = arg("output_dir") or cfg("output_dir") or str(Path.cwd() / "output_videos")
     if not video_path:
         raise SystemExit("Please provide a video via CLI flag or config [run] section.")
 
-    output_name = args.output_name or cfg("output_name")
-    csv_output_dir_raw = args.csv_output_dir or cfg("csv_output_dir")
+    output_name = arg("output_name") or cfg("output_name")
+    csv_output_dir_raw = arg("csv_output_dir") or cfg("csv_output_dir")
 
-    yolo_choice = args.yolo_size or cfg("yolo_model")
+    yolo_choice = arg("yolo_size") or cfg("yolo_model")
     if yolo_choice and yolo_choice in YOLO_SIZE_MAP:
         yolo_weights = YOLO_SIZE_MAP[yolo_choice]
     elif yolo_choice:
         yolo_weights = str(yolo_choice)
     else:
         yolo_weights = YOLO_SIZE_MAP["small"]
-    yolo_device = args.yolo_device or cfg("yolo_device")
+    yolo_device = arg("yolo_device") or cfg("yolo_device")
 
-    write_csv = _pick_bool(args.write_csv, cfg("write_csv"), False)
-    segment_video_flag = _pick_bool(args.segment_video, cfg("segment_video"), True)
+    write_csv = _pick_bool(arg("write_csv"), cfg("write_csv"), False)
+    segment_video_flag = _pick_bool(arg("segment_video"), cfg("segment_video"), True)
+
+    artifact_dir_raw = arg("artifact_dir") or cfg("artifact_dir")
+    artifact_dir = Path(artifact_dir_raw).expanduser().resolve() if artifact_dir_raw else None
+    model_path_raw = arg("model_path") or cfg("model_path")
+    scaler_path_raw = arg("scaler_path") or cfg("scaler_path")
+    manifest_path_raw = arg("manifest_path") or cfg("manifest_path")
+    if artifact_dir is not None:
+        model_path_raw = model_path_raw or str(artifact_dir / "model.onnx")
+        scaler_path_raw = scaler_path_raw or str(artifact_dir / "scaler.json")
+        manifest_path_raw = manifest_path_raw or str(artifact_dir / "manifest.json")
 
     model_path = _resolve_asset(
-        args.model_path or cfg("model_path"),
+        model_path_raw,
         env_var="RALLYCLIP_MODEL_PATH",
         relatives=[
             "models/rallyclip_v0.3.1/model.onnx",
@@ -198,7 +214,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         description="RallyClip model artifact (ONNX or PyTorch checkpoint)",
     )
     scaler_path = _resolve_asset(
-        args.scaler_path or cfg("scaler_path"),
+        scaler_path_raw,
         env_var="RALLYCLIP_SCALER_PATH",
         relatives=[
             "models/rallyclip_v0.3.1/scaler.json",
@@ -207,7 +223,8 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         ],
         description="RallyClip scaler artifact (JSON or joblib)",
     )
-    manifest_defaults = _manifest_defaults_for_model(model_path)
+    manifest_path = Path(manifest_path_raw).expanduser().resolve() if manifest_path_raw else None
+    manifest_defaults = _manifest_defaults_for_model(model_path, manifest_path)
 
     return RunConfig(
         video_path=Path(video_path).expanduser().resolve(),
@@ -220,16 +237,17 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         yolo_device=yolo_device,
         model_path=model_path,
         scaler_path=scaler_path,
-        fps=float(args.fps if args.fps is not None else cfg("fps", manifest_defaults.get("fps", 15.0))),
-        seq_len=int(args.seq_len if args.seq_len is not None else cfg("seq_len", manifest_defaults.get("seq_len", 300))),
-        overlap=int(args.overlap if args.overlap is not None else cfg("overlap", manifest_defaults.get("overlap", 150))),
-        sigma=float(args.sigma if args.sigma is not None else cfg("sigma", manifest_defaults.get("sigma", 1.5))),
-        low=float(args.low if args.low is not None else cfg("low", manifest_defaults.get("low", 0.45))),
-        high=float(args.high if args.high is not None else cfg("high", manifest_defaults.get("high", 0.8))),
-        min_dur_sec=float(args.min_dur_sec if args.min_dur_sec is not None else cfg("min_dur_sec", manifest_defaults.get("min_dur_sec", 0.5))),
-        conf=float(args.conf if args.conf is not None else cfg("conf", 0.25)),
-        start_time=int(args.start_time if args.start_time is not None else cfg("start_time", 0)),
-        duration=int(args.duration if args.duration is not None else cfg("duration", 999999)),
+        fps=float(arg("fps") if arg("fps") is not None else cfg("fps", manifest_defaults.get("fps", 15.0))),
+        seq_len=int(arg("seq_len") if arg("seq_len") is not None else cfg("seq_len", manifest_defaults.get("seq_len", 300))),
+        overlap=int(arg("overlap") if arg("overlap") is not None else cfg("overlap", manifest_defaults.get("overlap", 150))),
+        sigma=float(arg("sigma") if arg("sigma") is not None else cfg("sigma", manifest_defaults.get("sigma", 1.5))),
+        low=float(arg("low") if arg("low") is not None else cfg("low", manifest_defaults.get("low", 0.45))),
+        high=float(arg("high") if arg("high") is not None else cfg("high", manifest_defaults.get("high", 0.8))),
+        min_dur_sec=float(arg("min_dur_sec") if arg("min_dur_sec") is not None else cfg("min_dur_sec", manifest_defaults.get("min_dur_sec", 0.5))),
+        conf=float(arg("conf") if arg("conf") is not None else cfg("conf", 0.25)),
+        imgsz=int(arg("imgsz") if arg("imgsz") is not None else cfg("imgsz", manifest_defaults.get("imgsz", 960))),
+        start_time=int(arg("start_time") if arg("start_time") is not None else cfg("start_time", 0)),
+        duration=int(arg("duration") if arg("duration") is not None else cfg("duration", 999999)),
     )
 
 
@@ -251,6 +269,7 @@ def run_pipeline(cfg: RunConfig) -> int:
         start_time_seconds=int(cfg.start_time),
         duration_seconds=int(cfg.duration),
         target_fps=int(cfg.fps),
+        imgsz=int(cfg.imgsz),
         annotations_csv=None,
     )
 
@@ -262,11 +281,11 @@ def run_pipeline(cfg: RunConfig) -> int:
         pre = DataPreprocessor(save_court_masks=False)
         pre.preprocess_single_video(raw_npz, str(cfg.video_path), str(preprocessed_npz), overwrite=True)
 
-        fe = FeatureEngineer()
+        fe = FeatureEngineer(target_fps=float(cfg.fps))
         fe.create_features_from_preprocessed(str(preprocessed_npz), str(features_npz), overwrite=True)
 
-        data = np.load(str(features_npz))
-        features = data["features"]
+        with np.load(str(features_npz)) as data:
+            features = data["features"].copy()
         scaler = load_scaler_asset(str(cfg.scaler_path))
         features = scaler.transform(features)
         if cfg.model_path.suffix.lower() == ".onnx":
@@ -327,6 +346,8 @@ def main() -> int:
     p.add_argument("--csv-output-dir", help="Optional directory for CSV output (defaults to video directory)")
     p.add_argument("--model-path", help="Path to model artifact (.onnx preferred, legacy .pth supported)")
     p.add_argument("--scaler-path", help="Path to scaler artifact (.json preferred, legacy .joblib supported)")
+    p.add_argument("--artifact-dir", help="Directory containing model.onnx, scaler.json, and manifest.json")
+    p.add_argument("--manifest-path", help="Path to model manifest.json for runtime defaults")
     p.add_argument("--yolo-size", choices=list(YOLO_SIZE_MAP.keys()), help="YOLO pose model size (auto-downloads if needed)")
     p.add_argument("--yolo-device", choices=["cpu", "cuda", "mps"], help="Force YOLO device (overrides POSE_DEVICE env)")
 
@@ -338,6 +359,7 @@ def main() -> int:
     p.add_argument("--high", type=float, help="Hysteresis high threshold")
     p.add_argument("--min-dur-sec", type=float, help="Minimum segment duration in seconds")
     p.add_argument("--conf", type=float, help="Pose model confidence threshold")
+    p.add_argument("--imgsz", type=int, help="YOLO inference image size")
     p.add_argument("--start-time", type=int, help="Start time offset (seconds)")
     p.add_argument("--duration", type=int, help="Max duration to process (seconds)")
 
