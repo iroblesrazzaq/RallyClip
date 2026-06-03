@@ -28,6 +28,7 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
         def extract_pose_data(self, **kwargs):
             calls.append("pose:extract")
             assert kwargs["target_fps"] == 5
+            assert kwargs["imgsz"] == 960
             assert kwargs["confidence_threshold"] == 0.25
             return str(tmp_path / "raw_pose.npz")
 
@@ -43,9 +44,12 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
             assert overwrite is True
             return True
 
+    feature_engineer_fps: list[float] = []
+
     class FakeFeatureEngineer:
-        def __init__(self):
+        def __init__(self, target_fps=None, **_kwargs):
             calls.append("features:init")
+            feature_engineer_fps.append(float(target_fps))
 
         def create_features_from_preprocessed(self, input_npz_path, output_file, overwrite):
             calls.append("features:run")
@@ -138,11 +142,13 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
         high=0.7,
         min_dur_sec=1.0,
         conf=0.25,
+        imgsz=960,
         start_time=0,
         duration=999999,
     )
 
     assert cli_main.run_pipeline(cfg) == 0
+    assert feature_engineer_fps == [5.0]
 
     assert calls == [
         "pose:init",
