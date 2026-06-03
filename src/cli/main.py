@@ -59,7 +59,7 @@ class RunConfig:
     high: float = 0.8
     min_dur_sec: float = 0.5
     conf: float = 0.25
-    imgsz: int = 1920
+    imgsz: int = 960
     start_time: int = 0
     duration: int = 999999
 
@@ -245,7 +245,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         high=float(arg("high") if arg("high") is not None else cfg("high", manifest_defaults.get("high", 0.8))),
         min_dur_sec=float(arg("min_dur_sec") if arg("min_dur_sec") is not None else cfg("min_dur_sec", manifest_defaults.get("min_dur_sec", 0.5))),
         conf=float(arg("conf") if arg("conf") is not None else cfg("conf", 0.25)),
-        imgsz=int(arg("imgsz") if arg("imgsz") is not None else cfg("imgsz", manifest_defaults.get("imgsz", 1920))),
+        imgsz=int(arg("imgsz") if arg("imgsz") is not None else cfg("imgsz", manifest_defaults.get("imgsz", 960))),
         start_time=int(arg("start_time") if arg("start_time") is not None else cfg("start_time", 0)),
         duration=int(arg("duration") if arg("duration") is not None else cfg("duration", 999999)),
     )
@@ -281,10 +281,7 @@ def run_pipeline(cfg: RunConfig) -> int:
         pre = DataPreprocessor(save_court_masks=False)
         pre.preprocess_single_video(raw_npz, str(cfg.video_path), str(preprocessed_npz), overwrite=True)
 
-        try:
-            fe = FeatureEngineer(target_fps=float(cfg.fps))
-        except TypeError:
-            fe = FeatureEngineer()
+        fe = FeatureEngineer(target_fps=float(cfg.fps))
         fe.create_features_from_preprocessed(str(preprocessed_npz), str(features_npz), overwrite=True)
 
         with np.load(str(features_npz)) as data:

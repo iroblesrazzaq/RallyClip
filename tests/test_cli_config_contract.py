@@ -60,6 +60,7 @@ def test_quick_run_uses_manifest_defaults_for_bundled_onnx(tmp_path, monkeypatch
     assert cfg.low == 0.45
     assert cfg.sigma == 1.0
     assert cfg.min_dur_sec == 1.0
+    assert cfg.imgsz == 960
 
 
 def test_explicit_config_can_override_manifest_defaults(tmp_path, monkeypatch):
