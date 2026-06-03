@@ -372,6 +372,7 @@ def run_pipeline(cfg: RunConfig) -> int:
             screen_height=int(cfg.screen_height),
             save_court_masks=False,
             yolo_model_path=cfg.yolo_weights,
+            conf=float(cfg.conf),
         )
         pre.preprocess_single_video(raw_npz, str(cfg.video_path), str(preprocessed_npz), overwrite=True)
 
