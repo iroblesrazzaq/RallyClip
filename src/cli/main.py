@@ -365,6 +365,19 @@ def run_pipeline(cfg: RunConfig) -> int:
     if cfg.yolo_device:
         os.environ["POSE_DEVICE"] = cfg.yolo_device
     models_dir = str(Path.cwd() / "models")
+
+    pre = DataPreprocessor(
+        screen_width=int(cfg.screen_width),
+        screen_height=int(cfg.screen_height),
+        save_court_masks=False,
+        yolo_model_path=cfg.yolo_weights,
+        conf=float(cfg.conf),
+    )
+    # Court detection runs UP FRONT (multi-sample), before the expensive pose pass. If it
+    # fails on every sampled frame we fall back to the empirical default court mask rather
+    # than silently skipping court filtering. compute_court_mask logs which source it used.
+    court_mask, _ = pre.compute_court_mask(str(cfg.video_path))
+
     pose_extractor = PoseExtractor(model_path=cfg.yolo_weights, model_dir=models_dir)
     raw_npz = pose_extractor.extract_pose_data(
         video_path=str(cfg.video_path),
@@ -381,14 +394,9 @@ def run_pipeline(cfg: RunConfig) -> int:
         preprocessed_npz = tmp_dir / "preprocessed.npz"
         features_npz = tmp_dir / "features.npz"
 
-        pre = DataPreprocessor(
-            screen_width=int(cfg.screen_width),
-            screen_height=int(cfg.screen_height),
-            save_court_masks=False,
-            yolo_model_path=cfg.yolo_weights,
-            conf=float(cfg.conf),
+        pre.preprocess_single_video(
+            raw_npz, str(cfg.video_path), str(preprocessed_npz), overwrite=True, court_mask=court_mask
         )
-        pre.preprocess_single_video(raw_npz, str(cfg.video_path), str(preprocessed_npz), overwrite=True)
 
         fe = FeatureEngineer(
             screen_width=int(cfg.screen_width),

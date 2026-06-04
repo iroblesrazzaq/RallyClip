@@ -119,3 +119,46 @@ def test_court_detector_default_yolo_model_is_nano():
     cdi = importlib.import_module("preprocessing.court_detector_impl")
     default = inspect.signature(cdi.CourtDetector.__init__).parameters["yolo_model_path"].default
     assert default.endswith("yolov8n-pose.pt"), default
+
+
+def test_compute_court_mask_uses_detection_when_available(tmp_path, monkeypatch):
+    module = import_data_preprocessor_with_stubs(monkeypatch)
+    detected = np.zeros((720, 1280), dtype=np.uint8)
+    detected[:120, :] = 255  # a plausible non-empty 'out' mask
+
+    class OkDetector:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def process_video(self, video_path, target_time=60):
+            return detected, np.zeros((720, 1280, 3), dtype=np.uint8), {"court_detection_success": True}
+
+    monkeypatch.setattr(module, "CourtDetector", OkDetector)
+    pre = module.DataPreprocessor(save_court_masks=False)
+    mask, meta = pre.compute_court_mask(str(tmp_path / "v.mp4"))
+
+    assert meta["detected"] is True and meta["source"] == "detected"
+    assert np.array_equal(mask, detected)
+
+
+def test_compute_court_mask_falls_back_to_default(tmp_path, monkeypatch):
+    # StubCourtDetector.process_video returns (None, None, {}) -> detection fails everywhere.
+    pytest.importorskip("cv2")
+    module = import_data_preprocessor_with_stubs(monkeypatch)
+    pre = module.DataPreprocessor(save_court_masks=False)
+    mask, meta = pre.compute_court_mask(str(tmp_path / "missing.mp4"))
+
+    assert meta["detected"] is False and meta["source"] == "default"
+    assert mask is not None and mask.shape == (720, 1280)
+    assert set(np.unique(mask)).issubset({0, 255})
+    assert np.any(mask) and not np.all(mask)  # a real court envelope, not all-in / all-out
+
+
+def test_default_court_mask_resizes_to_frame(monkeypatch):
+    pytest.importorskip("cv2")
+    module = import_data_preprocessor_with_stubs(monkeypatch)
+    pre = module.DataPreprocessor(save_court_masks=False)
+    resized = pre._load_default_court_mask((360, 640, 3))
+
+    assert resized.shape == (360, 640)
+    assert set(np.unique(resized)).issubset({0, 255})
