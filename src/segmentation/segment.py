@@ -54,13 +54,19 @@ def segment_video(input_video: str, intervals: List[Tuple[float, float]], output
     starts = [s for s, _ in intervals]
 
     in_container = av.open(input_video)
-    out_container = av.open(output_path, 'w')
     try:
         in_v = next((s for s in in_container.streams if s.type == 'video'), None)
         if in_v is None:
             raise RuntimeError(f"No video stream found in {input_video}")
         in_a = next((s for s in in_container.streams if s.type == 'audio'), None)
+        # Open the output only after validating the input, so a no-video input doesn't
+        # leave a zero-byte file behind and a failed open doesn't leak in_container.
+        out_container = av.open(output_path, 'w')
+    except Exception:
+        in_container.close()
+        raise
 
+    try:
         rate = in_v.average_rate or Fraction(30, 1)
         video_tb = Fraction(1, 1) / rate  # 1/fps; kept frames get sequential pts in this base
         out_v = out_container.add_stream('libx264', rate=rate)
