@@ -20,15 +20,17 @@ class CourtDetector:
     A class for detecting tennis court boundaries and estimating playable areas from video frames.
     """
     
-    def __init__(self, yolo_model_path: str = 'models/yolov8s-pose.pt'):
+    def __init__(self, yolo_model_path: str = 'models/yolov8n-pose.pt', conf: float = 0.25):
         """
         Initialize the CourtDetector.
-        
+
         Args:
             yolo_model_path: Path to the YOLO model file
+            conf: Person-detection confidence threshold (unified with the pose pipeline conf).
         """
         self.MIN_BASELINE_LEN = 500
         self.yolo_model_path = yolo_model_path
+        self.conf = float(conf)
         self.yolo_model = None
         
         # Initialize YOLO model if available
@@ -86,7 +88,7 @@ class CourtDetector:
                     cls_id = int(box.cls.item())
                     if cls_id == 0:  # person class
                         conf = float(box.conf.item())
-                        if conf > 0.5:  # confidence threshold
+                        if conf > self.conf:
                             xyxy = box.xyxy.cpu().numpy().reshape(-1)
                             x0, y0, x1, y1 = [int(v) for v in xyxy]
                             player_bboxes.append((x0, y0, x1-x0, y1-y0))
@@ -119,7 +121,7 @@ class CourtDetector:
                         cls_id = int(box.cls.item())
                         if cls_id == 0:  # person class
                             conf = float(box.conf.item())
-                            if conf > 0.5:
+                            if conf > self.conf:
                                 xyxy = box.xyxy.cpu().numpy().reshape(-1)
                                 x0, y0, x1, y1 = [int(v) for v in xyxy]
                                 candidate_bboxes.append((x0, y0, x1-x0, y1-y0))

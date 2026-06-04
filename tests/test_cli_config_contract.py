@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+
+import pytest
 
 from helpers.module_stubs import import_cli_main_with_stubs
 from helpers.runtime_fixtures import FPS, write_manifest_model_dir
@@ -16,6 +19,8 @@ def _args(**overrides):
         "csv_output_dir": None,
         "model_path": None,
         "scaler_path": None,
+        "artifact_dir": None,
+        "manifest_path": None,
         "yolo_size": None,
         "yolo_device": None,
         "fps": None,
@@ -26,6 +31,7 @@ def _args(**overrides):
         "high": None,
         "min_dur_sec": None,
         "conf": None,
+        "imgsz": None,
         "start_time": None,
         "duration": None,
         "write_csv": None,
@@ -47,50 +53,63 @@ def _asset_args(tmp_path, **overrides):
     )
 
 
-def test_quick_run_uses_manifest_defaults_for_bundled_onnx(tmp_path, monkeypatch):
+def test_quick_run_uses_manifest_contract_for_bundled_onnx(tmp_path, monkeypatch):
     cli_main = import_cli_main_with_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
 
     cfg = cli_main.build_run_config(_asset_args(tmp_path))
 
+    # contract (immutable) comes from the manifest
     assert cfg.fps == FPS
     assert cfg.seq_len == 100
+    assert cfg.imgsz == 960
+    assert cfg.conf == 0.25
+    assert cfg.feature_set == "v1"
+    assert cfg.screen_width == 1280
+    assert cfg.screen_height == 720
+    assert cfg.yolo_weights == "yolov8n-pose.pt"
+    # postprocess (mutable) defaults from the manifest
     assert cfg.overlap == 50
     assert cfg.high == 0.7
     assert cfg.low == 0.45
     assert cfg.sigma == 1.0
     assert cfg.min_dur_sec == 1.0
-    assert cfg.imgsz == 960
 
 
-def test_explicit_config_can_override_manifest_defaults(tmp_path, monkeypatch):
+def test_config_overrides_mutable_but_never_contract(tmp_path, monkeypatch):
     cli_main = import_cli_main_with_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "custom.toml"
     config_path.write_text(
         """
 [run]
+# mutable postprocess — should win
+sigma = 1.5
+high = 0.8
+min_dur_sec = 0.5
+overlap = 150
+# contract — must be ignored (manifest is authoritative)
 fps = 15.0
 seq_len = 300
-overlap = 150
-high = 0.8
-sigma = 1.5
-min_dur_sec = 0.5
+imgsz = 1920
 """,
         encoding="utf-8",
     )
 
     cfg = cli_main.build_run_config(_asset_args(tmp_path, config=str(config_path)))
 
-    assert cfg.fps == 15.0
-    assert cfg.seq_len == 300
-    assert cfg.overlap == 150
-    assert cfg.high == 0.8
+    # mutable overrides applied
     assert cfg.sigma == 1.5
+    assert cfg.high == 0.8
     assert cfg.min_dur_sec == 0.5
+    assert cfg.overlap == 150
+    # contract stays pinned to the manifest despite config trying to override
+    assert cfg.fps == FPS
+    assert cfg.seq_len == 100
+    assert cfg.imgsz == 960
 
 
-def test_incidental_repo_config_toml_does_not_break_quick_run(tmp_path, monkeypatch):
+def test_incidental_repo_config_toml_cannot_corrupt_contract(tmp_path, monkeypatch):
     cli_main = import_cli_main_with_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config.toml").write_text(
@@ -99,10 +118,8 @@ def test_incidental_repo_config_toml_does_not_break_quick_run(tmp_path, monkeypa
 video_path = "stale.mp4"
 fps = 15.0
 seq_len = 300
-overlap = 150
-high = 0.8
-sigma = 1.5
-min_dur_sec = 0.5
+imgsz = 1920
+conf = 0.5
 """,
         encoding="utf-8",
     )
@@ -111,10 +128,58 @@ min_dur_sec = 0.5
 
     assert cfg.fps == FPS
     assert cfg.seq_len == 100
-    assert cfg.overlap == 50
-    assert cfg.high == 0.7
-    assert cfg.sigma == 1.0
-    assert cfg.min_dur_sec == 1.0
+    assert cfg.imgsz == 960
+    assert cfg.conf == 0.25
+
+
+def test_cli_flag_overrides_contract_with_warning(tmp_path, monkeypatch, caplog):
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    with caplog.at_level("WARNING"):
+        cfg = cli_main.build_run_config(_asset_args(tmp_path, fps=15.0))
+
+    assert cfg.fps == 15.0  # explicit CLI override wins
+    assert any("contract field 'fps'" in r.message for r in caplog.records)
+
+
+def test_write_csv_from_config_honored_even_with_video(tmp_path, monkeypatch):
+    # Regression: --video used to skip config.toml entirely, silently dropping write_csv.
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.toml").write_text(
+        """
+[run]
+write_csv = true
+csv_output_dir = "from_config"
+""",
+        encoding="utf-8",
+    )
+
+    cfg = cli_main.build_run_config(_asset_args(tmp_path))
+
+    assert cfg.write_csv is True
+    assert cfg.csv_output_dir.name == "from_config"
+
+
+def test_missing_manifest_crashes_no_phantom_defaults(tmp_path, monkeypatch):
+    # A model artifact without a manifest must fail loudly, not fall back to stale literals.
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    model_dir = tmp_path / "models" / "bare"
+    model_dir.mkdir(parents=True)
+    (model_dir / "model.onnx").write_bytes(b"fake onnx")
+    (model_dir / "scaler.json").write_text("{}", encoding="utf-8")
+    video_path = tmp_path / "match.mp4"
+    video_path.write_bytes(b"fake video")
+    args = _args(
+        video=str(video_path),
+        model_path=str(model_dir / "model.onnx"),
+        scaler_path=str(model_dir / "scaler.json"),
+    )
+
+    with pytest.raises(SystemExit):
+        cli_main.build_run_config(args)
 
 
 def test_readme_documented_artifact_flags_are_supported_by_argparse(monkeypatch, tmp_path):
@@ -137,3 +202,87 @@ def test_readme_documented_artifact_flags_are_supported_by_argparse(monkeypatch,
     monkeypatch.setattr(cli_main, "run_pipeline", lambda cfg: 0)
 
     assert cli_main.main() == 0
+
+
+def _complete_manifest():
+    return {
+        "feature_pipeline": {
+            "target_fps": 5.0, "imgsz": 960, "conf": 0.25, "feature_set": "v1",
+            "screen_width": 1280, "screen_height": 720, "yolo_model": "yolov8n-pose.pt",
+        },
+        "inference": {"seq_len_frames": 100, "overlap_frames": 50},
+        "postprocess": {"params": {"high": 0.7, "low": 0.45, "sigma": 1.0, "min_dur_sec": 1.0}},
+    }
+
+
+def _model_dir_with_manifest(tmp_path, payload, *, name="custom"):
+    """Write a model artifact dir whose manifest is `payload` (dict -> JSON, or raw str if malformed)."""
+    model_dir = tmp_path / "models" / name
+    model_dir.mkdir(parents=True)
+    (model_dir / "model.onnx").write_bytes(b"fake onnx")
+    (model_dir / "scaler.json").write_text("{}", encoding="utf-8")
+    text = payload if isinstance(payload, str) else json.dumps(payload)
+    (model_dir / "manifest.json").write_text(text, encoding="utf-8")
+    return model_dir
+
+
+def _build_from_model_dir(cli_main, tmp_path, model_dir):
+    video_path = tmp_path / "match.mp4"
+    video_path.write_bytes(b"fake video")
+    return cli_main.build_run_config(_args(
+        video=str(video_path),
+        model_path=str(model_dir / "model.onnx"),
+        scaler_path=str(model_dir / "scaler.json"),
+    ))
+
+
+def test_missing_contract_field_without_flag_omits_flag_advice(tmp_path, monkeypatch):
+    # screen_width is manifest-only (no CLI flag); the error must not advertise --screen-width.
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    payload = _complete_manifest()
+    del payload["feature_pipeline"]["screen_width"]
+
+    with pytest.raises(SystemExit) as ei:
+        _build_from_model_dir(cli_main, tmp_path, _model_dir_with_manifest(tmp_path, payload))
+    msg = str(ei.value)
+    assert "screen_width" in msg
+    assert "--screen-width" not in msg
+    assert "manifest.json" in msg
+
+
+def test_missing_contract_field_with_flag_suggests_real_flag(tmp_path, monkeypatch):
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    payload = _complete_manifest()
+    del payload["feature_pipeline"]["target_fps"]
+
+    with pytest.raises(SystemExit) as ei:
+        _build_from_model_dir(cli_main, tmp_path, _model_dir_with_manifest(tmp_path, payload))
+    assert "--fps" in str(ei.value)
+
+
+def test_missing_yolo_model_suggests_yolo_size_flag(tmp_path, monkeypatch):
+    # yolo_model is overridden by --yolo-size, not a (nonexistent) --yolo-model.
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    payload = _complete_manifest()
+    del payload["feature_pipeline"]["yolo_model"]
+
+    with pytest.raises(SystemExit) as ei:
+        _build_from_model_dir(cli_main, tmp_path, _model_dir_with_manifest(tmp_path, payload))
+    msg = str(ei.value)
+    assert "--yolo-size" in msg
+    assert "--yolo-model" not in msg
+
+
+def test_malformed_manifest_warns_and_falls_back(tmp_path, monkeypatch, caplog):
+    # A present-but-corrupt manifest must warn, not silently masquerade as "missing field".
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    model_dir = _model_dir_with_manifest(tmp_path, "{ not valid json", name="broken")
+
+    with caplog.at_level("WARNING"):
+        values = cli_main._manifest_values(model_dir / "model.onnx", model_dir / "manifest.json")
+
+    assert values == {}
+    assert any("manifest" in r.getMessage().lower() for r in caplog.records)
