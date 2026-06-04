@@ -15,10 +15,9 @@ import numpy as np
 
 FIX_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "court"
 
-# Default machine locations for the source videos / YOLO weights. Override via env
-# so the e2e flight can run on other machines / CI; it skips if these are absent.
-_DEFAULT_VIDEO_DIR = "/Users/ismaelrobles-razzaq/cs_projects/RallyClip/data/raw_videos"
-_DEFAULT_WEIGHTS = "/Users/ismaelrobles-razzaq/cs_projects/RallyClip/models/yolov8s-pose.pt"
+# The e2e flight's source videos / weights are machine-specific and live outside the repo,
+# so they come only from env. When unset the resolvers return None and the flight skips with
+# a self-explanatory "set RALLYCLIP_..." reason (no personal paths committed to the repo).
 
 
 def load_manifest() -> list[dict]:
@@ -43,10 +42,12 @@ def iou(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def resolve_video_dir() -> Path | None:
-    p = Path(os.environ.get("RALLYCLIP_COURT_VIDEO_DIR", _DEFAULT_VIDEO_DIR))
-    return p if p.is_dir() else None
+    raw = os.environ.get("RALLYCLIP_COURT_VIDEO_DIR")
+    p = Path(raw) if raw else None
+    return p if p and p.is_dir() else None
 
 
 def resolve_yolo_weights() -> Path | None:
-    p = Path(os.environ.get("RALLYCLIP_YOLO_WEIGHTS", _DEFAULT_WEIGHTS))
-    return p if p.is_file() else None
+    raw = os.environ.get("RALLYCLIP_YOLO_WEIGHTS")
+    p = Path(raw) if raw else None
+    return p if p and p.is_file() else None
