@@ -1,0 +1,134 @@
+[
+  {
+    "id": "9515_singles_uncut",
+    "video": "9\u29f85\u29f815 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN.mp4",
+    "detected": true,
+    "timestamp_s": 30,
+    "frame_shape": [
+      720,
+      1280,
+      3
+    ],
+    "baseline_width": 1279
+  },
+  {
+    "id": "aditi_narayan_matchplay",
+    "video": "Aditi Narayan \uff5c Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED.mp4",
+    "detected": true,
+    "timestamp_s": 60,
+    "frame_shape": [
+      720,
+      1280,
+      3
+    ],
+    "baseline_width": 1172
+  },
+  {
+    "id": "brady_knackstedt_blue_shirtblack_shorts_4_0_utr_unedited_match_play_vs_opponent_5_54_utr",
+    "video": "Brady Knackstedt (Blue Shirt\u29f8Black Shorts)(4.0 UTR) Unedited Match Play vs. opponent (5.54 UTR)_utr5_genM_courtH_IN_angleMED_zoomMED.mp4",
+    "detected": true,
+    "timestamp_s": 60,
+    "frame_shape": [
+      720,
+      1280,
+      3
+    ],
+    "baseline_width": 1065
+  },
+  {
+    "id": "holly_schlatter_2021_australian_tennis_recruit_match_play_footage",
+    "video": "Holly Schlatter \uff5c 2021 Australian Tennis Recruit  - Match Play Footage_utr7_genF_courtH_OUT_angleHIGH_zoomOUT.mp4",
+    "detected": true,
+    "timestamp_s": 60,
+    "frame_shape": [
+      720,
+      1280,
+      3
+    ],
+    "baseline_width": 896
+  },
+  {
+    "id": "monica_greene_unedited_tennis_match_play",
+    "video": "Monica Greene unedited tennis match play_utr7_genF_courtH_OUT_angleHIGH_zoomIN.mp4",
+    "detected": true,
+    "timestamp_s": 60,
+    "frame_shape": [
+      720,
+      1280,
+      3
+    ],
+    "baseline_width": 1211
+  },
+  {
+    "id": "otto_friedlein_unedited_matchplay",
+    "video": "Otto Friedlein - unedited matchplay_utr12_genM_courtH_IN_angleHIGH_zoomOUT.mp4",
+    "detected": true,
+    "timestamp_s": 60,
+    "frame_shape": [
+      720,
+      1280,
+      3
+    ],
+    "baseline_width": 840
+  },
+  {
+    "id": "ryan_parkins_unedited_matchplay",
+    "video": "Ryan Parkins - Unedited matchplay_utr11_genM_courtH_IN_angleHIGH_zoomOUT.mp4",
+    "detected": true,
+    "timestamp_s": 60,
+    "frame_shape": [
+      720,
+      1280,
+      3
+    ],
+    "baseline_width": 915
+  },
+  {
+    "id": "satoru_nakajima_11_75_utr_match_video_unedited_vs_dylan_chou_11_14_utr_november_5_2023",
+    "video": "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN.mp4",
+    "detected": true,
+    "timestamp_s": 60,
+    "frame_shape": [
+      720,
+      1280,
+      3
+    ],
+    "baseline_width": 1279
+  },
+  {
+    "id": "set_2_play_uncut_derek_vs_alex",
+    "video": "Set (2) Play Uncut Derek vs. Alex_utr5_genM_courtH_OUT_angleMED_zoomIN.mp4",
+    "detected": true,
+    "timestamp_s": 60,
+    "frame_shape": [
+      720,
+      1280,
+      3
+    ],
+    "baseline_width": 1279
+  },
+  {
+    "id": "unedited_matchplay_vs_utr_9_8",
+    "video": "Unedited Matchplay vs UTR 9.8_utr9_genF_courtH_OUT_angleHIGH_zoomMED.mp4",
+    "detected": true,
+    "timestamp_s": 60,
+    "frame_shape": [
+      720,
+      1280,
+      3
+    ],
+    "baseline_width": 955
+  },
+  {
+    "id": "verified_utr_match_play_hai_pham_4_63_vs_tuan_anh_unrated",
+    "video": "Verified UTR Match Play\uff1a Hai Pham 4.63 vs. Tuan Anh (Unrated)_utr4_genM_courtH_IN_angleHIGH_zoomMED.mp4",
+    "detected": true,
+    "timestamp_s": 60,
+    "frame_shape": [
+      720,
+      1280,
+      3
+    ],
+    "baseline_width": 1197
+  }
+]
