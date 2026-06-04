@@ -35,6 +35,12 @@ dev = [
 [project.scripts]
 rallyclip = "cli:main"
 
+[tool.pytest.ini_options]
+markers = [
+  "slow: long-running tests (heavy I/O or model loads)",
+  "e2e: end-to-end tests needing source videos / model weights",
+]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
