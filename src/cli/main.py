@@ -375,12 +375,8 @@ def run_pipeline(cfg: RunConfig) -> int:
     )
     # Court detection runs UP FRONT (multi-sample), before the expensive pose pass. If it
     # fails on every sampled frame we fall back to the empirical default court mask rather
-    # than silently skipping court filtering.
-    court_mask, court_meta = pre.compute_court_mask(str(cfg.video_path))
-    if court_meta["detected"]:
-        logging.info("Court detected at t=%ss", court_meta["timestamp_s"])
-    else:
-        logging.warning("Court detection failed on all samples; using the default court mask")
+    # than silently skipping court filtering. compute_court_mask logs which source it used.
+    court_mask, _ = pre.compute_court_mask(str(cfg.video_path))
 
     pose_extractor = PoseExtractor(model_path=cfg.yolo_weights, model_dir=models_dir)
     raw_npz = pose_extractor.extract_pose_data(
