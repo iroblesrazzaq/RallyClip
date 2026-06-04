@@ -46,3 +46,7 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# Ship the empirical default court mask used as the detection fallback.
+preprocessing = ["*.png"]
