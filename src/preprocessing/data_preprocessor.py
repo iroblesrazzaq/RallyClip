@@ -136,9 +136,11 @@ class DataPreprocessor:
         try:
             import cv2
             cap = cv2.VideoCapture(video_path)
-            fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
-            frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
-            cap.release()
+            try:
+                fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+                frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+            finally:
+                cap.release()
             if fps > 0:
                 duration = frames / fps
         except Exception:
