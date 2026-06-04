@@ -1,5 +1,11 @@
 [run]
-# Required paths  - can also set with CLI args:
+# config.toml is your control panel: output/IO prefs + postprocess tuning knobs.
+# The MODEL CONTRACT (fps, seq_len, imgsz, conf, yolo_model, feature_set, screen size)
+# lives in the model's manifest.json and is the single source of truth for those.
+# Contract values set here are IGNORED (with a warning) — the manifest wins. To
+# intentionally diverge for an experiment, pass the matching CLI flag (e.g. --fps).
+
+# Required paths - can also set with CLI args:
 # video_path = "raw_videos/your_match.mp4"
 output_dir = "output_videos"
 
@@ -11,24 +17,29 @@ write_csv = true
 segment_video = true
 csv_output_dir = "output_csvs" # defaults to input video directory
 
-# YOLO pose model choice: nano | small | medium | large
-yolo_model = "small"
 # Optional device: cpu | cuda | mps (defaults to auto; set to "mps" for Apple Silicon)
 # yolo_device = "mps"
 
-# Optional overrides for assets:
-# model_path = "/path/to/lstm_300_v0.1.pth"
-# scaler_path = "/path/to/scaler_300_v0.1.joblib"
+# Optional overrides for assets (otherwise the bundled v0.3.1 artifact is used):
+# artifact_dir = "/path/to/model_dir"   # dir with model.onnx, scaler.json, manifest.json
+# model_path = "/path/to/model.onnx"
+# scaler_path = "/path/to/scaler.json"
+# manifest_path = "/path/to/manifest.json"
 
-# Pipeline parameters — v0.3.1 model defaults shown
-fps = 5.0
-seq_len = 100
+# Postprocess tuning (mutable — these operate on model output, not the model itself).
+# Defaults shown are the manifest's recommended params; tune freely.
 overlap = 50
 sigma = 1.0
 low = 0.45
 high = 0.7
 min_dur_sec = 1.0
-conf = 0.25
-imgsz = 960
+
+# Runtime window
 start_time = 0
 duration = 999999
+
+# --- Advanced: model-contract overrides (normally leave to the manifest) ---
+# These change the model's INPUTS and will skew inference if they don't match how the
+# model was trained. Use the CLI flags (--fps, --seq-len, --imgsz, --conf, --yolo-size)
+# for deliberate experiments; setting them here is ignored.
+# v0.3.1 contract, for reference: fps=5.0 seq_len=100 imgsz=960 conf=0.25 yolo=nano
