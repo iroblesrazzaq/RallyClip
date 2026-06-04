@@ -43,11 +43,17 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
             assert yolo_model_path == "yolov8n-pose.pt"
             assert conf == 0.25
 
-        def preprocess_single_video(self, raw_npz, video, output_npz, overwrite):
+        def compute_court_mask(self, vp):
+            calls.append("court:detect")
+            assert vp == str(video_path)
+            return "COURT_MASK", {"source": "detected", "detected": True, "timestamp_s": 60}
+
+        def preprocess_single_video(self, raw_npz, video, output_npz, overwrite, court_mask=None):
             calls.append("preprocess:run")
             assert raw_npz.endswith("raw_pose.npz")
             assert video == str(video_path)
             assert overwrite is True
+            assert court_mask == "COURT_MASK"  # mask computed up front and passed in
             return True
 
     feature_engineer_fps: list[float] = []
@@ -160,9 +166,10 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
     assert feature_engineer_fps == [5.0]
 
     assert calls == [
+        "preprocess:init",
+        "court:detect",
         "pose:init",
         "pose:extract",
-        "preprocess:init",
         "preprocess:run",
         "features:init",
         "features:run",

@@ -1,5 +1,7 @@
 import os
 import logging
+from pathlib import Path
+
 import numpy as np
 
 from preprocessing.court_detector import CourtDetector
@@ -19,6 +21,7 @@ class DataPreprocessor:
         self.left_zone_x = screen_width * 0.10
         self.right_zone_x = screen_width * 0.90
         self.bottom_zone_y = screen_height * 0.80
+        self._default_court_mask_cache = None
 
     def _calculate_iou(self, box1, box2):
         x1_inter = max(box1[0], box2[0])
@@ -127,6 +130,65 @@ class DataPreprocessor:
             logging.warning("Court detection failed: %s", e)
             return None
 
+    def _court_sample_times(self, video_path: str) -> list:
+        """Timestamps (seconds) to try for court detection, spread across the video."""
+        duration = 0.0
+        try:
+            import cv2
+            cap = cv2.VideoCapture(video_path)
+            try:
+                fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+                frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+            finally:
+                cap.release()
+            if fps > 0:
+                duration = frames / fps
+        except Exception:
+            duration = 0.0
+        if duration > 10:
+            return sorted({max(1, int(duration * f)) for f in (0.2, 0.35, 0.5, 0.65, 0.8)})
+        return [60, 90, 45, 120, 30]
+
+    def _load_default_court_mask(self, frame_shape) -> np.ndarray:
+        """Load the empirical default 'out' mask, resized to the given (H, W, ...) frame shape."""
+        import cv2
+        if self._default_court_mask_cache is None:
+            path = Path(__file__).resolve().parent / "default_court_mask.png"
+            base = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+            if base is None:
+                raise FileNotFoundError(f"Default court mask not found at {path}")
+            self._default_court_mask_cache = base
+        base = self._default_court_mask_cache
+        h, w = int(frame_shape[0]), int(frame_shape[1])
+        if base.shape[:2] != (h, w):
+            base = cv2.resize(base, (w, h), interpolation=cv2.INTER_NEAREST)
+        return (base > 127).astype(np.uint8) * 255
+
+    def compute_court_mask(self, video_path: str):
+        """Front-loaded court detection with a default-mask fallback.
+
+        Runs the detector at several timestamps and returns the first plausible 'out'
+        mask. If detection fails at every sample, returns the empirical default mask
+        (resized to the frame) so frames are still filtered rather than passed through
+        unmasked. Always returns (mask, metadata) with a usable mask (never None).
+        """
+        detector = CourtDetector(yolo_model_path=self.yolo_model_path, conf=self.conf)
+        frame_shape = (self.screen_height, self.screen_width)
+        for t in self._court_sample_times(video_path):
+            try:
+                mask, clean_frame, _meta = detector.process_video(video_path, target_time=t)
+            except Exception as e:
+                logging.warning("Court detection error at t=%ss: %s", t, e)
+                continue
+            if getattr(clean_frame, "shape", None) is not None:
+                frame_shape = clean_frame.shape
+            if mask is not None and np.any(mask):
+                logging.info("Court detected at t=%ss", t)
+                return mask, {"source": "detected", "detected": True, "timestamp_s": t}
+        logging.warning("Court detection failed at all sampled timestamps; using default court mask")
+        default = self._load_default_court_mask(frame_shape)
+        return default, {"source": "default", "detected": False, "timestamp_s": None}
+
     def filter_frame_by_court(self, frame_data, mask):
         boxes = np.asarray(frame_data.get('boxes', np.empty((0, 4), dtype=np.float32)), dtype=np.float32)
         keypoints = np.asarray(frame_data.get('keypoints', np.empty((0, 17, 2), dtype=np.float32)), dtype=np.float32)
@@ -159,7 +221,7 @@ class DataPreprocessor:
             'conf': np.asarray(kept_conf, dtype=np.float32).reshape((-1, 17)),
         }
 
-    def preprocess_single_video(self, input_npz_path: str, video_path: str, output_npz_path: str, overwrite: bool = False) -> bool:
+    def preprocess_single_video(self, input_npz_path: str, video_path: str, output_npz_path: str, overwrite: bool = False, court_mask=None) -> bool:
         try:
             if os.path.exists(output_npz_path) and not overwrite:
                 logging.info("Preprocess skip (exists): %s", os.path.basename(output_npz_path))
@@ -168,10 +230,13 @@ class DataPreprocessor:
             with np.load(input_npz_path, allow_pickle=True) as data:
                 pose_data = data['frames'].copy()
             logging.info("Loaded %s frames", len(pose_data))
-            logging.info("Generating court mask from: %s", video_path)
-            mask = self.generate_court_mask(video_path)
+            if court_mask is None:
+                logging.info("Generating court mask from: %s", video_path)
+                mask = self.generate_court_mask(video_path)
+            else:
+                mask = court_mask
             if mask is not None:
-                logging.info("Generated mask: %s", getattr(mask, 'shape', None))
+                logging.info("Court mask: %s", getattr(mask, 'shape', None))
             else:
                 logging.info("No court mask available - processing without filtering")
             all_frame_data, all_targets, all_near_players, all_far_players = [], [], [], []
