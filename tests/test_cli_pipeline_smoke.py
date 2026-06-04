@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from helpers.module_stubs import import_cli_main_with_stubs
 from helpers.runtime_fixtures import FEATURE_DIM
@@ -173,3 +174,59 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
     ]
     assert opened_npz
     assert all(npz.closed for npz in opened_npz)
+
+
+def test_unsupported_feature_set_fails_before_pose_extraction(tmp_path, monkeypatch):
+    # A v0 (or any non-v1) manifest must fail fast, before the expensive pose extraction runs.
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    video_path = tmp_path / "match.mp4"
+    model_path = tmp_path / "model.onnx"
+    scaler_path = tmp_path / "scaler.json"
+    video_path.write_bytes(b"fake video")
+    model_path.write_bytes(b"fake onnx")
+    scaler_path.write_text("{}", encoding="utf-8")
+
+    calls: list[str] = []
+
+    class ExplodingPoseExtractor:
+        def __init__(self, *args, **kwargs):
+            calls.append("pose:init")
+
+        def extract_pose_data(self, *args, **kwargs):
+            calls.append("pose:extract")
+            raise AssertionError("pose extraction must not run for an unsupported feature_set")
+
+    monkeypatch.setattr(cli_main, "PoseExtractor", ExplodingPoseExtractor)
+
+    cfg = cli_main.RunConfig(
+        video_path=video_path,
+        output_dir=tmp_path / "output_videos",
+        output_name=None,
+        csv_output_dir=tmp_path / "output_csvs",
+        write_csv=False,
+        segment_video=False,
+        yolo_weights="yolov8n-pose.pt",
+        yolo_device=None,
+        model_path=model_path,
+        scaler_path=scaler_path,
+        fps=5.0,
+        seq_len=100,
+        overlap=50,
+        sigma=1.0,
+        low=0.45,
+        high=0.7,
+        min_dur_sec=1.0,
+        conf=0.25,
+        imgsz=960,
+        feature_set="v0",
+        screen_width=1280,
+        screen_height=720,
+        start_time=0,
+        duration=999999,
+    )
+
+    with pytest.raises(SystemExit) as ei:
+        cli_main.run_pipeline(cfg)
+
+    assert "feature_set='v0'" in str(ei.value)
+    assert calls == []  # never reached pose extraction

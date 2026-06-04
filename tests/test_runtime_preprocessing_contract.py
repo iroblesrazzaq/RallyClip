@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import importlib
+import inspect
+
 import numpy as np
+import pytest
 
 from helpers.module_stubs import import_data_preprocessor_with_stubs
 from helpers.runtime_fixtures import fake_yolo_result, write_raw_pose_npz
@@ -101,3 +105,17 @@ def test_runtime_preprocessor_closes_npz_file_handles(tmp_path, monkeypatch):
 
     assert opened
     assert all(npz.closed for npz in opened)
+
+
+def test_data_preprocessor_default_yolo_model_is_nano(monkeypatch):
+    # Direct instantiation must not silently fall back to the old "small" model (train/serve skew).
+    DataPreprocessor = import_data_preprocessor_with_stubs(monkeypatch).DataPreprocessor
+    default = inspect.signature(DataPreprocessor.__init__).parameters["yolo_model_path"].default
+    assert default.endswith("yolov8n-pose.pt"), default
+
+
+def test_court_detector_default_yolo_model_is_nano():
+    pytest.importorskip("cv2")
+    cdi = importlib.import_module("preprocessing.court_detector_impl")
+    default = inspect.signature(cdi.CourtDetector.__init__).parameters["yolo_model_path"].default
+    assert default.endswith("yolov8n-pose.pt"), default
