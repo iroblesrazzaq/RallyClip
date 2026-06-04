@@ -29,6 +29,9 @@ class CourtDetector:
             conf: Person-detection confidence threshold (unified with the pose pipeline conf).
         """
         self.MIN_BASELINE_LEN = 500
+        # A baseline candidate must reach this fraction of the widest candidate's width to
+        # count as court-spanning (filters out short floor/carpet edges). Only new tunable.
+        self.BASELINE_WIDTH_RATIO = 0.6
         self.yolo_model_path = yolo_model_path
         self.conf = float(conf)
         self.yolo_model = None
@@ -368,22 +371,31 @@ class CourtDetector:
     def find_baseline(self, horizontal_lines: List) -> Optional[List]:
         """
         Find the baseline from horizontal lines.
-        
+
+        Among the lines long enough to be a baseline, restrict to the genuinely
+        court-spanning ones (>= BASELINE_WIDTH_RATIO of the widest candidate) before
+        taking the lowest. This stops a short floor/carpet edge near the bottom of the
+        frame from beating the real, wider baseline that sits slightly higher.
+
         Args:
             horizontal_lines: List of horizontal lines
-            
+
         Returns:
             The baseline line or None if not found
         """
-        baseline = None
-        for line in horizontal_lines:
-            x1, y1, x2, y2 = line[0]
-            if abs(x2-x1) >= self.MIN_BASELINE_LEN:  # long enough for baseline
-                if baseline is None:
-                    baseline = line
-                elif (y1+y2)/2 > (baseline[0][1]+baseline[0][3])/2:  # mean y of current line is greater
-                    baseline = line
-        return baseline
+        candidates = [
+            line for line in horizontal_lines
+            if abs(line[0][2] - line[0][0]) >= self.MIN_BASELINE_LEN  # long enough for baseline
+        ]
+        if not candidates:
+            return None
+        max_width = max(abs(line[0][2] - line[0][0]) for line in candidates)
+        court_spanning = [
+            line for line in candidates
+            if abs(line[0][2] - line[0][0]) >= self.BASELINE_WIDTH_RATIO * max_width
+        ]
+        # Lowest (greatest mean-y) of the court-spanning lines: prefers the front baseline.
+        return max(court_spanning, key=lambda line: (line[0][1] + line[0][3]) / 2)
     
     def process_side_decision_tree(self, diagonal_lines: List, baseline: List, 
                                  image_width: int, side: str) -> Optional[List]:
