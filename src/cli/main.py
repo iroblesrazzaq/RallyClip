@@ -156,7 +156,8 @@ def _manifest_values(model_path: Path, manifest_path: Optional[Path] = None) -> 
         return {}
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as e:
+        logging.warning("Found manifest at %s but could not parse it (%s); ignoring it.", manifest_path, e)
         return {}
 
     inference = payload.get("inference", {}) or {}
@@ -203,8 +204,13 @@ def _num_differs(a: Any, b: Any) -> bool:
         return str(a) != str(b)
 
 
-def _resolve_contract(name: str, cli_val: Any, manifest_val: Any) -> Any:
-    """Immutable field: manifest is authoritative; explicit CLI override warns; crash if unresolved."""
+def _resolve_contract(name: str, cli_val: Any, manifest_val: Any, cli_flag: Optional[str] = None) -> Any:
+    """Immutable field: manifest is authoritative; explicit CLI override warns; crash if unresolved.
+
+    cli_flag is the real argparse flag that overrides this field, if one exists. Some contract
+    fields (feature_set, screen_width, screen_height) are manifest-only and have no CLI flag, so
+    the error message must not advertise one.
+    """
     if cli_val is not None:
         if manifest_val is not None and _num_differs(cli_val, manifest_val):
             logging.warning(
@@ -214,10 +220,11 @@ def _resolve_contract(name: str, cli_val: Any, manifest_val: Any) -> Any:
         return cli_val
     if manifest_val is not None:
         return manifest_val
+    override = f", or pass {cli_flag} to override" if cli_flag else ""
     raise SystemExit(
         f"Required contract field '{name}' is missing from the model manifest and was not passed "
         f"on the CLI. Use a model artifact with a complete manifest.json "
-        f"(--artifact-dir / --manifest-path), or pass --{name.replace('_', '-')} to override."
+        f"(--artifact-dir / --manifest-path){override}."
     )
 
 
@@ -294,16 +301,16 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
     manifest = _manifest_values(model_path, manifest_path)
 
     # Immutable contract: manifest is authoritative; only an explicit CLI flag overrides (warns).
-    fps = float(_resolve_contract("fps", arg("fps"), manifest.get("fps")))
-    seq_len = int(_resolve_contract("seq_len", arg("seq_len"), manifest.get("seq_len")))
-    imgsz = int(_resolve_contract("imgsz", arg("imgsz"), manifest.get("imgsz")))
-    conf = float(_resolve_contract("conf", arg("conf"), manifest.get("conf")))
+    fps = float(_resolve_contract("fps", arg("fps"), manifest.get("fps"), "--fps"))
+    seq_len = int(_resolve_contract("seq_len", arg("seq_len"), manifest.get("seq_len"), "--seq-len"))
+    imgsz = int(_resolve_contract("imgsz", arg("imgsz"), manifest.get("imgsz"), "--imgsz"))
+    conf = float(_resolve_contract("conf", arg("conf"), manifest.get("conf"), "--conf"))
     feature_set = str(_resolve_contract("feature_set", None, manifest.get("feature_set")))
     screen_width = int(_resolve_contract("screen_width", None, manifest.get("screen_width")))
     screen_height = int(_resolve_contract("screen_height", None, manifest.get("screen_height")))
 
     cli_yolo = YOLO_SIZE_MAP.get(arg("yolo_size"), arg("yolo_size")) if arg("yolo_size") else None
-    yolo_weights = str(_resolve_contract("yolo_model", cli_yolo, manifest.get("yolo_model")))
+    yolo_weights = str(_resolve_contract("yolo_model", cli_yolo, manifest.get("yolo_model"), "--yolo-size"))
 
     # Mutable postprocess: CLI -> config -> manifest -> crash.
     overlap = int(_resolve_mutable("overlap", arg("overlap"), cfg("overlap"), manifest.get("overlap")))
@@ -345,6 +352,13 @@ def run_pipeline(cfg: RunConfig) -> int:
         print(f"Error: video file not found at '{cfg.video_path}'")
         return 1
 
+    # Fail fast, before the expensive pose/preprocess passes: only feature_set 'v1' is implemented.
+    if cfg.feature_set != "v1":
+        raise SystemExit(
+            f"This model declares feature_set='{cfg.feature_set}', but only 'v1' is implemented "
+            f"in the runtime. See docs/runtime-config-refactor-plan.md (§7, v0 backwards compat)."
+        )
+
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     base_name = cfg.output_name or cfg.video_path.stem
 
@@ -376,11 +390,6 @@ def run_pipeline(cfg: RunConfig) -> int:
         )
         pre.preprocess_single_video(raw_npz, str(cfg.video_path), str(preprocessed_npz), overwrite=True)
 
-        if cfg.feature_set != "v1":
-            raise SystemExit(
-                f"This model declares feature_set='{cfg.feature_set}', but only 'v1' is implemented "
-                f"in the runtime. See docs/runtime-config-refactor-plan.md (§7, v0 backwards compat)."
-            )
         fe = FeatureEngineer(
             screen_width=int(cfg.screen_width),
             screen_height=int(cfg.screen_height),

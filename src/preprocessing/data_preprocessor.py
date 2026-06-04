@@ -6,7 +6,7 @@ from preprocessing.court_detector import CourtDetector
 
 
 class DataPreprocessor:
-    def __init__(self, screen_width: int = 1280, screen_height: int = 720, merge_iou_thresh: float = 0.6, save_court_masks: bool = False, yolo_model_path: str = "yolov8s-pose.pt", conf: float = 0.25) -> None:
+    def __init__(self, screen_width: int = 1280, screen_height: int = 720, merge_iou_thresh: float = 0.6, save_court_masks: bool = False, yolo_model_path: str = "yolov8n-pose.pt", conf: float = 0.25) -> None:
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.screen_center_x = screen_width / 2

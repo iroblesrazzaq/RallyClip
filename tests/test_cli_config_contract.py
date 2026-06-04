@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 import pytest
@@ -201,3 +202,87 @@ def test_readme_documented_artifact_flags_are_supported_by_argparse(monkeypatch,
     monkeypatch.setattr(cli_main, "run_pipeline", lambda cfg: 0)
 
     assert cli_main.main() == 0
+
+
+def _complete_manifest():
+    return {
+        "feature_pipeline": {
+            "target_fps": 5.0, "imgsz": 960, "conf": 0.25, "feature_set": "v1",
+            "screen_width": 1280, "screen_height": 720, "yolo_model": "yolov8n-pose.pt",
+        },
+        "inference": {"seq_len_frames": 100, "overlap_frames": 50},
+        "postprocess": {"params": {"high": 0.7, "low": 0.45, "sigma": 1.0, "min_dur_sec": 1.0}},
+    }
+
+
+def _model_dir_with_manifest(tmp_path, payload, *, name="custom"):
+    """Write a model artifact dir whose manifest is `payload` (dict -> JSON, or raw str if malformed)."""
+    model_dir = tmp_path / "models" / name
+    model_dir.mkdir(parents=True)
+    (model_dir / "model.onnx").write_bytes(b"fake onnx")
+    (model_dir / "scaler.json").write_text("{}", encoding="utf-8")
+    text = payload if isinstance(payload, str) else json.dumps(payload)
+    (model_dir / "manifest.json").write_text(text, encoding="utf-8")
+    return model_dir
+
+
+def _build_from_model_dir(cli_main, tmp_path, model_dir):
+    video_path = tmp_path / "match.mp4"
+    video_path.write_bytes(b"fake video")
+    return cli_main.build_run_config(_args(
+        video=str(video_path),
+        model_path=str(model_dir / "model.onnx"),
+        scaler_path=str(model_dir / "scaler.json"),
+    ))
+
+
+def test_missing_contract_field_without_flag_omits_flag_advice(tmp_path, monkeypatch):
+    # screen_width is manifest-only (no CLI flag); the error must not advertise --screen-width.
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    payload = _complete_manifest()
+    del payload["feature_pipeline"]["screen_width"]
+
+    with pytest.raises(SystemExit) as ei:
+        _build_from_model_dir(cli_main, tmp_path, _model_dir_with_manifest(tmp_path, payload))
+    msg = str(ei.value)
+    assert "screen_width" in msg
+    assert "--screen-width" not in msg
+    assert "manifest.json" in msg
+
+
+def test_missing_contract_field_with_flag_suggests_real_flag(tmp_path, monkeypatch):
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    payload = _complete_manifest()
+    del payload["feature_pipeline"]["target_fps"]
+
+    with pytest.raises(SystemExit) as ei:
+        _build_from_model_dir(cli_main, tmp_path, _model_dir_with_manifest(tmp_path, payload))
+    assert "--fps" in str(ei.value)
+
+
+def test_missing_yolo_model_suggests_yolo_size_flag(tmp_path, monkeypatch):
+    # yolo_model is overridden by --yolo-size, not a (nonexistent) --yolo-model.
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    payload = _complete_manifest()
+    del payload["feature_pipeline"]["yolo_model"]
+
+    with pytest.raises(SystemExit) as ei:
+        _build_from_model_dir(cli_main, tmp_path, _model_dir_with_manifest(tmp_path, payload))
+    msg = str(ei.value)
+    assert "--yolo-size" in msg
+    assert "--yolo-model" not in msg
+
+
+def test_malformed_manifest_warns_and_falls_back(tmp_path, monkeypatch, caplog):
+    # A present-but-corrupt manifest must warn, not silently masquerade as "missing field".
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    model_dir = _model_dir_with_manifest(tmp_path, "{ not valid json", name="broken")
+
+    with caplog.at_level("WARNING"):
+        values = cli_main._manifest_values(model_dir / "model.onnx", model_dir / "manifest.json")
+
+    assert values == {}
+    assert any("manifest" in r.getMessage().lower() for r in caplog.records)
