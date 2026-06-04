@@ -47,6 +47,27 @@ def _make_clip(path, seconds=12, fps=10, with_audio=True, sample_rate=48000):
         container.close()
 
 
+def _make_audio_only(path, seconds=2, sample_rate=48000):
+    """Generate a clip with an audio stream but no video stream."""
+    container = av.open(str(path), "w")
+    try:
+        a = container.add_stream("aac", rate=sample_rate)
+        a.layout = "stereo"
+        for start in range(0, seconds * sample_rate, 1024):
+            n = min(1024, seconds * sample_rate - start)
+            silence = np.zeros(n, dtype="float32")
+            af = av.AudioFrame.from_ndarray(np.stack([silence, silence]), format="fltp", layout="stereo")
+            af.sample_rate = sample_rate
+            af.pts = start
+            af.time_base = Fraction(1, sample_rate)
+            for pkt in a.encode(af):
+                container.mux(pkt)
+        for pkt in a.encode():
+            container.mux(pkt)
+    finally:
+        container.close()
+
+
 def _streams_and_duration(path):
     with av.open(str(path)) as c:
         kinds = {s.type for s in c.streams}
@@ -103,3 +124,16 @@ def test_segment_video_only_input(tmp_path):
     kinds, duration = _streams_and_duration(out)
     assert kinds == {"video"}  # no audio stream, no crash
     assert duration == pytest.approx(2.0, abs=0.3)
+
+
+def test_segment_no_video_stream_raises_without_leaving_a_file(tmp_path):
+    src = tmp_path / "audio_only.mp4"
+    try:
+        _make_audio_only(src)
+    except Exception as exc:
+        pytest.skip(f"cannot encode test clip: {exc}")
+    out = tmp_path / "out.mp4"
+
+    with pytest.raises(RuntimeError):
+        segment_video(str(src), [(0.5, 1.0)], str(out))
+    assert not out.exists()  # no corrupt/zero-byte output left behind
