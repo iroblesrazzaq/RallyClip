@@ -128,6 +128,8 @@ def _load_default_config() -> Dict[str, Any]:
     cfg["csv_output_dir"] = str(DEFAULT_CSV_DIR)
     cfg["output_name"] = None
     cfg["scaler_path"] = None
+    cfg.pop("available_devices", None)
+    cfg.pop("auto_device", None)
     return cfg
 
 
@@ -355,10 +357,11 @@ def _run_pipeline(job_id: str) -> None:
             yolo_model_path=yolo_weights,
             conf=float(cfg["conf"]),
         )
+        _check_cancel(job)
+        _set_step(job, "pose", "in_progress", 1)
         court_mask, _ = pre.compute_court_mask(str(upload_path))
 
         _check_cancel(job)
-        _set_step(job, "pose", "in_progress", 1)
         extractor = PoseExtractor(
             model_dir=models_dir,
             model_path=yolo_weights,
