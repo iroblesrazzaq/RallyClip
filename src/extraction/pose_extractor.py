@@ -22,7 +22,13 @@ class PoseExtractor:
     and saves compressed npz artifacts. Designed for reuse by CLI and GUI.
     """
 
-    def __init__(self, model_dir: Optional[str] = None, model_path: str = "yolov8s-pose.pt", imgsz: int = 1920) -> None:
+    def __init__(
+        self,
+        model_dir: Optional[str] = None,
+        model_path: str = "yolov8s-pose.pt",
+        imgsz: int = 1920,
+        device: Optional[str] = None,
+    ) -> None:
         # Set early so downstream checks can use it
         self.model_path = model_path
         self.model_dir = model_dir
@@ -39,12 +45,15 @@ class PoseExtractor:
 
         from runtime.device import prefer_cpu_over_mps_for_pose, resolve_pose_device
 
-        env_device = os.environ.get("POSE_DEVICE", "").strip().lower()
-        device_from_env = env_device in {"cpu", "cuda", "mps"}
-        self.device = resolve_pose_device(env_device if device_from_env else None)
-        if not device_from_env:
-            self.device = prefer_cpu_over_mps_for_pose(self.device, self.model_path)
-            os.environ["POSE_DEVICE"] = self.device
+        if device is not None:
+            self.device = device
+        else:
+            env_device = os.environ.get("POSE_DEVICE", "").strip().lower()
+            device_from_env = env_device in {"cpu", "cuda", "mps"}
+            self.device = resolve_pose_device(env_device if device_from_env else None)
+            if not device_from_env:
+                self.device = prefer_cpu_over_mps_for_pose(self.device, self.model_path)
+                os.environ["POSE_DEVICE"] = self.device
 
         env_bs = os.environ.get("POSE_BATCH_SIZE", "").strip()
         if env_bs.isdigit():
