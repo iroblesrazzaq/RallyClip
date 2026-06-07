@@ -144,7 +144,14 @@ ADVANCED_WARNINGS = {
 }
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/")
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+CORS(
+    app,
+    resources={
+        r"/api/*": {
+            "origins": [r"http://127\.0\.0\.1:\d+", r"http://localhost:\d+"],
+        }
+    },
+)
 
 jobs_lock = threading.Lock()
 jobs: Dict[str, JobDict] = {}
@@ -152,6 +159,14 @@ jobs: Dict[str, JobDict] = {}
 
 class PipelineCancelled(Exception):
     """Raised when a job is cancelled mid-flight."""
+
+
+def _ensure_job_dir(job_id: str) -> Path:
+    job_dir = (JOBS_DIR / job_id).resolve()
+    jobs_root = JOBS_DIR.resolve()
+    if jobs_root not in job_dir.parents and job_dir != jobs_root:
+        raise ValueError(f"Invalid job id: {job_id!r}")
+    return job_dir
 
 
 def _new_job_state(job_id: str, cfg: Dict[str, Any]) -> JobDict:
@@ -564,8 +579,11 @@ def upload_and_start():
         cfg_raw = {}
     cfg = _normalize_config(cfg_raw)
 
-    job_id = request.form.get("job_id") or str(uuid.uuid4())
-    job_dir = JOBS_DIR / job_id
+    job_id = str(uuid.uuid4())
+    try:
+        job_dir = _ensure_job_dir(job_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     job_dir.mkdir(parents=True, exist_ok=True)
     upload_path = job_dir / filename
     file.save(str(upload_path))
