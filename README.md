@@ -1,11 +1,12 @@
 # RallyClip
 
-RallyClip is an open-source CLI for tennis video segmentation. It extracts rally/point intervals from full match footage and outputs a segmented video plus optional CSV timestamps.
+RallyClip is an open-source tool for tennis video segmentation. It extracts rally/point intervals from full match footage and outputs a segmented video plus optional CSV timestamps.
 
-This public repo is the local product:
-- CLI inference/runtime
-- local GUI code (kinda deprecated, low priority rn)
-- open training pipeline code (used by me, haven't made super clean yet
+This repo ships:
+- `rallyclip` CLI for local inference
+- `rallyclip-desktop` native desktop app (PySide6)
+- `rallyclip gui` browser-based local UI for development
+- open training pipeline code
 
 
 ## Features coming soon (in rough order)
@@ -55,6 +56,19 @@ These aren't necessarily features per se, but things I want to try implementing 
 git clone https://github.com/iroblesrazzaq/RallyClip.git
 cd RallyClip
 pip install .
+```
+
+### Desktop app
+```bash
+pip install ".[desktop]"
+rallyclip-desktop
+```
+
+The desktop app bundles the local Flask backend in a native window. Device selection defaults to **Auto** (`CUDA > MPS > CPU`) and can be overridden in Advanced settings.
+
+### Browser GUI (development)
+```bash
+rallyclip gui
 ```
 
 ## Model assets
@@ -127,3 +141,18 @@ Run with:
 ```bash
 rallyclip --config config.toml
 ```
+
+## GitHub Releases
+Tagged releases (`v*`) build desktop bundles for macOS, Windows, and Linux via GitHub Actions.
+
+To cut a release locally:
+```bash
+pip install ".[desktop,pack]"
+python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt')"
+pyinstaller --noconfirm --onedir --name RallyClip src/gui/desktop.py \
+  --hidden-import=gui.app \
+  --add-data "gui/frontend:gui/frontend" \
+  --add-data "models/rallyclip_v0.3.1:models/rallyclip_v0.3.1"
+```
+
+Release artifacts include bundled RallyClip ONNX assets and download/cache YOLO weights during the build step.

@@ -37,31 +37,9 @@ class PoseExtractor:
             except Exception:
                 profile = "main"
 
-        env_device = os.environ.get("POSE_DEVICE", "").strip().lower()
-        valid_devices = {"cpu", "cuda", "mps"}
-        device_from_env = env_device in valid_devices
-        if device_from_env:
-            self.device = env_device
-        else:
-            if profile == "mvp":
-                if torch.cuda.is_available():
-                    self.device = "cuda"
-                elif torch.backends.mps.is_available():
-                    self.device = "mps"
-                else:
-                    self.device = "cpu"
-            else:
-                if torch.backends.mps.is_available():
-                    self.device = "mps"
-                elif torch.cuda.is_available():
-                    self.device = "cuda"
-                else:
-                    self.device = "cpu"
+        from runtime.device import resolve_pose_device
 
-        # Work around known MPS pose performance bug unless user explicitly requests it.
-        if (not device_from_env) and self.device == "mps" and "pose" in self.model_path.lower():
-            logging.warning("POSE: defaulting to cpu due to known MPS pose performance issues; set POSE_DEVICE=mps to force MPS.")
-            self.device = "cpu"
+        self.device = resolve_pose_device(os.environ.get("POSE_DEVICE") or None)
 
         env_bs = os.environ.get("POSE_BATCH_SIZE", "").strip()
         if env_bs.isdigit():

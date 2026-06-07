@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rallyclip"
 version = "0.1.0"
-description = "AI-powered tennis match analysis CLI"
+description = "Local tennis match segmentation — CLI and desktop app"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -31,9 +31,17 @@ dependencies = [
 dev = [
   "pytest",
 ]
+desktop = [
+  "PySide6>=6.6",
+  "PySide6-Addons>=6.6",
+]
+pack = [
+  "pyinstaller>=6.0",
+]
 
 [project.scripts]
 rallyclip = "cli:main"
+rallyclip-desktop = "gui.desktop:main"
 
 [tool.pytest.ini_options]
 markers = [
@@ -43,9 +51,22 @@ markers = [
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.data-files]
+"rallyclip/gui" = [
+  "gui/frontend/index.html",
+  "gui/frontend/styles.css",
+  "gui/frontend/script.js",
+]
+"rallyclip/models/rallyclip_v0.3.1" = [
+  "models/rallyclip_v0.3.1/model.onnx",
+  "models/rallyclip_v0.3.1/scaler.json",
+  "models/rallyclip_v0.3.1/manifest.json",
+]
 
 [tool.setuptools.package-data]
 # Ship the empirical default court mask used as the detection fallback.

@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: RallyClip-macos
+          - os: windows-latest
+            artifact: RallyClip-windows
+          - os: ubuntu-latest
+            artifact: RallyClip-linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install build deps
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[desktop,pack]"
+      - name: Fetch YOLO weights
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from ultralytics import YOLO
+          models_dir = Path("models")
+          models_dir.mkdir(parents=True, exist_ok=True)
+          YOLO("yolov8n-pose.pt")
+          print("YOLO weights ready in", models_dir)
+          PY
+      - name: Build desktop bundle
+        shell: bash
+        run: |
+          SEP=":"
+          if [ "${{ runner.os }}" = "Windows" ]; then SEP=";"; fi
+          pyinstaller --noconfirm --onedir \
+            --name RallyClip \
+            --hidden-import=gui.app \
+            --hidden-import=runtime.device \
+            --hidden-import=runtime.defaults \
+            --hidden-import=runtime.paths \
+            --collect-submodules=flask \
+            --add-data "gui/frontend${SEP}gui/frontend" \
+            --add-data "models/rallyclip_v0.3.1${SEP}models/rallyclip_v0.3.1" \
+            --add-data "src/preprocessing/default_court_mask.png${SEP}preprocessing" \
+            src/gui/desktop.py
+      - name: Archive build
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            powershell Compress-Archive -Path dist/RallyClip -DestinationPath "${{ matrix.artifact }}.zip"
+            if command -v certutil >/dev/null 2>&1; then certutil -hashfile "${{ matrix.artifact }}.zip" SHA256 > "${{ matrix.artifact }}.zip.sha256"; fi
+          else
+            cd dist && tar -czf "../${{ matrix.artifact }}.tar.gz" RallyClip
+            cd ..
+            shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
+          fi
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ matrix.artifact }}.*
+          draft: true
+          generate_release_notes: true

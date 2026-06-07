@@ -3,252 +3,165 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RallyClip - AI Tennis Segmentation</title>
+    <title>RallyClip</title>
     <link rel="stylesheet" href="styles.css">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
-    <div class="container">
-        <header class="header">
-            <div class="header-content">
-                <h1><i class="fas fa-tennis-ball"></i> RallyClip</h1>
-                <p class="subtitle">Free and Open Source tennis match segmentation.</p>
-                <p class="note">Recommended input: 1080p (minimum 720p) for best pose quality.</p>
-            </div>
-        </header>
-
-        <main class="main-content">
-            <!-- File Upload Section -->
-            <section class="upload-section">
-                <div class="upload-container">
-                    <div class="file-drop-zone" id="dropZone">
-                        <div class="drop-content">
-                            <i class="fas fa-cloud-upload-alt upload-icon"></i>
-                            <h3>Drop your tennis video here</h3>
-                            <p>or <button class="browse-btn" id="browseBtn">browse files</button></p>
-                            <p class="file-info">Supports MP4 files up to 2GB</p>
-                        </div>
-                        <input type="file" id="fileInput" accept="video/mp4,video/*" style="display: none;">
-                    </div>
-                    
-                    <div class="selected-file" id="selectedFile" style="display: none;">
-                        <div class="file-preview">
-                            <i class="fas fa-video file-icon"></i>
-                            <div class="file-details">
-                                <span class="file-name" id="fileName"></span>
-                                <span class="file-size" id="fileSize"></span>
-                            </div>
-                            <button class="remove-file-btn" id="removeFileBtn" aria-label="Remove file">
-                                <i class="fas fa-times"></i>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Control Buttons Section -->
-            <section class="controls-section">
-                <div class="control-buttons">
-                    <button class="btn btn-primary" id="startBtn" disabled>
-                        <i class="fas fa-play"></i>
-                        Start Analysis
-                    </button>
-                    <button class="btn btn-secondary" id="cancelBtn" disabled>
-                        <i class="fas fa-stop"></i>
-                        Cancel
-                    </button>
-                    <button class="btn btn-tertiary" id="advancedToggle">
-                        <i class="fas fa-sliders-h"></i>
-                        Advanced settings
-                    </button>
-                </div>
-
-                <div class="advanced-panel" id="advancedPanel" style="display: none;">
-                    <div class="advanced-header">
-                        <div>
-                            <h3>Advanced settings</h3>
-                            <p class="advanced-tip">Defaults are tuned; change only if you know what you're doing.</p>
-                        </div>
-                        <button class="link-btn" id="resetAdvanced">Reset to defaults</button>
-                    </div>
-                    <div class="advanced-grid">
-                        <div class="field">
-                            <label for="outputName">Output name</label>
-                            <input type="text" id="outputName" placeholder="Defaults to video name">
-                        </div>
-                        <div class="field">
-                            <label for="yoloSize">Pose model</label>
-                            <select id="yoloSize"></select>
-                            <p class="hint">Small is default; nano will be faster but less accurate.</p>
-                        </div>
-                        <div class="field">
-                            <label for="yoloDevice">Device</label>
-                            <select id="yoloDevice">
-                                <option value="">Auto</option>
-                                <option value="cpu">CPU</option>
-                                <option value="cuda">CUDA</option>
-                                <option value="mps">MPS</option>
-                            </select>
-                            <p class="hint">Auto picks MPS/CUDA if available; set explicitly if needed.</p>
-                        </div>
-                        <div class="field">
-                            <label for="low">Hysteresis low</label>
-                            <input type="number" step="0.01" min="0" max="1" id="low">
-                            <p class="hint warning" id="lowWarning"></p>
-                        </div>
-                        <div class="field">
-                            <label for="high">Hysteresis high</label>
-                            <input type="number" step="0.01" min="0" max="1" id="high">
-                            <p class="hint warning" id="highWarning"></p>
-                        </div>
-                        <div class="field">
-                            <label for="minDurSec">Min segment length (sec)</label>
-                            <input type="number" step="0.1" min="0" id="minDurSec">
-                            <p class="hint warning" id="minDurWarning"></p>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Progress Section -->
-            <section class="progress-section" id="progressSection" style="display: none;">
-                <h3>Analysis Progress</h3>
-                <div class="progress-container">
-                    <!-- Pose Extraction -->
-                    <div class="progress-item">
-                        <div class="progress-header">
-                            <span class="progress-label">
-                                <i class="fas fa-running"></i>
-                                Pose Extraction
-                            </span>
-                            <span class="progress-status" id="poseStatus">Waiting...</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="poseFill"></div>
-                        </div>
-                        <div class="progress-percentage" id="posePercentage">0%</div>
-                    </div>
-
-                    <!-- Preprocessing -->
-                    <div class="progress-item">
-                        <div class="progress-header">
-                            <span class="progress-label">
-                                <i class="fas fa-cogs"></i>
-                                Preprocessing
-                            </span>
-                            <span class="progress-status" id="preprocessStatus">Waiting...</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="preprocessFill"></div>
-                        </div>
-                        <div class="progress-percentage" id="preprocessPercentage">0%</div>
-                    </div>
-
-                    <!-- Feature Engineering -->
-                    <div class="progress-item">
-                        <div class="progress-header">
-                            <span class="progress-label">
-                                <i class="fas fa-brain"></i>
-                                Feature Engineering
-                            </span>
-                            <span class="progress-status" id="featureStatus">Waiting...</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="featureFill"></div>
-                        </div>
-                        <div class="progress-percentage" id="featurePercentage">0%</div>
-                    </div>
-
-                    <!-- Inference -->
-                    <div class="progress-item">
-                        <div class="progress-header">
-                            <span class="progress-label">
-                                <i class="fas fa-robot"></i>
-                                AI Inference
-                            </span>
-                            <span class="progress-status" id="inferenceStatus">Waiting...</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="inferenceFill"></div>
-                        </div>
-                        <div class="progress-percentage" id="inferencePercentage">0%</div>
-                    </div>
-
-                    <!-- Output Video Drawing -->
-                    <div class="progress-item">
-                        <div class="progress-header">
-                            <span class="progress-label">
-                                <i class="fas fa-video"></i>
-                                Output Video Drawing
-                            </span>
-                            <span class="progress-status" id="outputStatus">Waiting...</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress-fill" id="outputFill"></div>
-                        </div>
-                        <div class="progress-percentage" id="outputPercentage">0%</div>
-                    </div>
-                </div>
-
-                <!-- Overall Progress -->
-                <div class="overall-progress">
-                    <div class="overall-progress-header">
-                        <span class="overall-label">Overall Progress</span>
-                        <span class="overall-percentage" id="overallPercentage">0%</span>
-                        <span class="eta-pill" id="etaPill" style="display:none;">ETA ~</span>
-                    </div>
-                    <div class="overall-progress-bar">
-                        <div class="overall-progress-fill" id="overallFill"></div>
-                    </div>
-                    <div class="overall-eta" id="etaText">Est. remaining: --</div>
-                </div>
-            </section>
-
-            <!-- Results Section -->
-            <section class="results-section" id="resultsSection" style="display: none;">
-                <h3>Analysis Complete!</h3>
-                <div class="results-container">
-                    <div class="result-item">
-                        <div class="result-info">
-                            <i class="fas fa-video result-icon"></i>
-                            <div class="result-details">
-                                <h4>Segmented Video</h4>
-                            </div>
-                        </div>
-                        <button class="btn btn-download" id="downloadVideoBtn">
-                            <i class="fas fa-download"></i>
-                            Download MP4
-                        </button>
-                    </div>
-
-                    <div class="result-item">
-                        <div class="result-info">
-                            <i class="fas fa-table result-icon"></i>
-                            <div class="result-details">
-                                <h4>Point Times CSV</h4>
-                            </div>
-                        </div>
-                        <button class="btn btn-download" id="downloadCsvBtn">
-                            <i class="fas fa-download"></i>
-                            Download CSV
-                        </button>
-                    </div>
-                </div>
-
-                <div class="new-analysis">
-                    <button class="btn btn-primary" id="newAnalysisBtn">
-                        <i class="fas fa-plus"></i>
-                        Start New Analysis
-                    </button>
-                </div>
-            </section>
-        </main>
-
-        <footer class="footer">
-            <p>&copy; 2026 RallyClip. AI-powered tennis analysis.</p>
-        </footer>
+    <div class="marquee" aria-hidden="true">
+        <div class="marquee-track">
+            <span>LOCAL DESKTOP RELEASE</span>
+            <span>POINT-ONLY CLIPS</span>
+            <span>MP4 IN · SEGMENTS OUT</span>
+            <span>LOCAL DESKTOP RELEASE</span>
+            <span>POINT-ONLY CLIPS</span>
+            <span>MP4 IN · SEGMENTS OUT</span>
+        </div>
     </div>
 
+    <header class="site-header">
+        <div class="brand">RallyClip</div>
+        <nav class="site-nav">
+            <button type="button" class="nav-link" data-scroll="upload">Upload</button>
+            <button type="button" class="nav-link" data-scroll="progress">Progress</button>
+            <button type="button" class="nav-link" data-scroll="results">Results</button>
+        </nav>
+    </header>
+
+    <main class="hero">
+        <section class="hero-copy">
+            <p class="eyebrow">Accepting match videos</p>
+            <h1>Turn full tennis matches into point-only clips.</h1>
+            <p class="lede">
+                RallyClip runs locally on your machine. Drop an MP4, wait while pose and segmentation finish,
+                then download the condensed video and point timestamps.
+            </p>
+            <p class="hint">Recommended input: 1080p (minimum 720p) for best pose quality.</p>
+
+            <div class="upload-block" id="upload">
+                <div class="file-drop-zone" id="dropZone">
+                    <p class="drop-title">Drop your match video here</p>
+                    <p class="drop-sub">or <button type="button" class="text-button" id="browseBtn">browse files</button></p>
+                    <p class="drop-meta">MP4 only · up to 2GB</p>
+                    <input type="file" id="fileInput" accept="video/mp4,video/*" hidden>
+                </div>
+
+                <div class="selected-file" id="selectedFile" hidden>
+                    <div class="file-row">
+                        <div>
+                            <div class="file-name" id="fileName"></div>
+                            <div class="file-size" id="fileSize"></div>
+                        </div>
+                        <button type="button" class="icon-button" id="removeFileBtn" aria-label="Remove file">×</button>
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-primary" id="startBtn" disabled>Start segmentation</button>
+                    <button type="button" class="btn btn-secondary" id="cancelBtn" disabled>Cancel</button>
+                    <button type="button" class="btn btn-ghost" id="advancedToggle">Advanced</button>
+                </div>
+
+                <div class="advanced-panel" id="advancedPanel" hidden>
+                    <div class="advanced-head">
+                        <div>
+                            <h2>Advanced settings</h2>
+                            <p>Defaults follow the bundled model manifest. Change only if you know why.</p>
+                        </div>
+                        <button type="button" class="text-button" id="resetAdvanced">Reset</button>
+                    </div>
+                    <div class="advanced-grid">
+                        <label class="field">
+                            <span>Output name</span>
+                            <input type="text" id="outputName" placeholder="Defaults to video name">
+                        </label>
+                        <label class="field">
+                            <span>Output folder</span>
+                            <input type="text" id="outputDir" placeholder="Uses app default if empty">
+                        </label>
+                        <label class="field">
+                            <span>CSV folder</span>
+                            <input type="text" id="csvOutputDir" placeholder="Uses app default if empty">
+                        </label>
+                        <label class="field">
+                            <span>Pose model</span>
+                            <select id="yoloSize"></select>
+                        </label>
+                        <label class="field">
+                            <span>Device</span>
+                            <select id="yoloDevice"></select>
+                            <span class="field-note" id="deviceNote"></span>
+                        </label>
+                        <label class="field">
+                            <span>Hysteresis low</span>
+                            <input type="number" step="0.01" min="0" max="1" id="low">
+                            <span class="field-note warning" id="lowWarning"></span>
+                        </label>
+                        <label class="field">
+                            <span>Hysteresis high</span>
+                            <input type="number" step="0.01" min="0" max="1" id="high">
+                            <span class="field-note warning" id="highWarning"></span>
+                        </label>
+                        <label class="field">
+                            <span>Min segment length (sec)</span>
+                            <input type="number" step="0.1" min="0" id="minDurSec">
+                            <span class="field-note warning" id="minDurWarning"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <aside class="hero-panel">
+            <div class="status-badge" id="statusBadge">
+                <span id="statusBadgeText">Ready</span>
+            </div>
+            <div class="panel-card" id="progress" hidden>
+                <h2>Progress</h2>
+                <div class="overall">
+                    <div class="overall-row">
+                        <span>Overall</span>
+                        <span id="overallPercentage">0%</span>
+                    </div>
+                    <div class="bar"><div class="bar-fill overall-fill" id="overallFill"></div></div>
+                    <p class="eta" id="etaText">Est. remaining: --</p>
+                </div>
+                <div class="steps" id="progressSection">
+                    <div class="step" data-step="pose">
+                        <div class="step-row"><span>Pose extraction</span><span id="poseStatus">Waiting</span></div>
+                        <div class="bar"><div class="bar-fill" id="poseFill"></div></div>
+                    </div>
+                    <div class="step" data-step="preprocess">
+                        <div class="step-row"><span>Preprocessing</span><span id="preprocessStatus">Waiting</span></div>
+                        <div class="bar"><div class="bar-fill" id="preprocessFill"></div></div>
+                    </div>
+                    <div class="step" data-step="feature">
+                        <div class="step-row"><span>Features</span><span id="featureStatus">Waiting</span></div>
+                        <div class="bar"><div class="bar-fill" id="featureFill"></div></div>
+                    </div>
+                    <div class="step" data-step="inference">
+                        <div class="step-row"><span>Inference</span><span id="inferenceStatus">Waiting</span></div>
+                        <div class="bar"><div class="bar-fill" id="inferenceFill"></div></div>
+                    </div>
+                    <div class="step" data-step="output">
+                        <div class="step-row"><span>Output</span><span id="outputStatus">Waiting</span></div>
+                        <div class="bar"><div class="bar-fill" id="outputFill"></div></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="panel-card" id="results" hidden>
+                <h2>Results</h2>
+                <p class="lede small">Your segmented video and point timestamps are ready.</p>
+                <div class="result-actions">
+                    <button type="button" class="btn btn-primary" id="downloadVideoBtn">Download MP4</button>
+                    <button type="button" class="btn btn-secondary" id="downloadCsvBtn">Download CSV</button>
+                    <button type="button" class="btn btn-ghost" id="newAnalysisBtn">New match</button>
+                </div>
+            </div>
+        </aside>
+    </main>
+
+    <div class="toast-stack" id="toastStack" aria-live="polite"></div>
     <script src="script.js"></script>
 </body>
 </html>
