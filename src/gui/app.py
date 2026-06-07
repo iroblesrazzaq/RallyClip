@@ -39,29 +39,22 @@ from infer import (
     write_segments_csv,
 )
 from preprocessing.data_preprocessor import DataPreprocessor
+from runtime.defaults import build_gui_defaults
+from runtime.device import apply_pose_device, detect_available_devices, resolve_auto_device
+from runtime.paths import resolve_frontend_dir
 from segmentation.segment import segment_video
 
 JobDict = Dict[str, Any]
 
 
-def _find_static_dir() -> Path:
-    """Locate the frontend bundle relative to common repo roots."""
-    rel = Path("apps/gui/frontend")
-    for root in _candidate_roots():
-        candidate = Path(root) / rel
-        if candidate.exists():
-            return candidate.resolve()
-    return (Path(__file__).resolve().parent / "../../apps/gui/frontend").resolve()
-
-
-STATIC_DIR = _find_static_dir()
+STATIC_DIR = resolve_frontend_dir()
 
 
 def _default_jobs_dir() -> Path:
     """Pick a jobs/output root inside the RallyClip install if possible; fallback to CWD."""
     for root in _candidate_roots():
         root_path = Path(root).resolve()
-        if (root_path / "models").exists() or (root_path / "apps").exists():
+        if (root_path / "models").exists() or (root_path / "gui").exists():
             return (root_path / "RallyClipJobs").resolve()
     return (Path.cwd() / "RallyClipJobs").resolve()
 
@@ -69,7 +62,7 @@ def _default_jobs_dir() -> Path:
 def _default_output_dir() -> Path:
     for root in _candidate_roots():
         root_path = Path(root).resolve()
-        if (root_path / "models").exists() or (root_path / "apps").exists():
+        if (root_path / "models").exists() or (root_path / "gui").exists():
             return (root_path / "output_videos").resolve()
     return (Path.cwd() / "output_videos").resolve()
 
@@ -77,7 +70,7 @@ def _default_output_dir() -> Path:
 def _default_csv_dir() -> Path:
     for root in _candidate_roots():
         root_path = Path(root).resolve()
-        if (root_path / "models").exists() or (root_path / "apps").exists():
+        if (root_path / "models").exists() or (root_path / "gui").exists():
             return (root_path / "output_csvs").resolve()
     return (Path.cwd() / "output_csvs").resolve()
 
@@ -106,28 +99,39 @@ JOBS_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_OUTPUT_DIR = _default_output_dir()
 DEFAULT_CSV_DIR = _default_csv_dir()
 
-DEFAULT_CONFIG: Dict[str, Any] = {
-    "write_csv": True,
-    "segment_video": True,
-    "yolo_size": "small",
-    "yolo_device": None,
-    "output_name": None,
-    "output_dir": str(DEFAULT_OUTPUT_DIR),
-    "csv_output_dir": str(DEFAULT_CSV_DIR),
-    "model_path": None,
-    "scaler_path": None,
-    "fps": 5.0,
-    "seq_len": 100,
-    "overlap": 50,
-    "sigma": 1.0,
-    "low": 0.45,
-    "high": 0.7,
-    "min_dur_sec": 1.0,
-    "conf": 0.25,
-    "imgsz": 960,
-    "start_time": 0,
-    "duration": 999999,
-}
+def _load_default_config() -> Dict[str, Any]:
+    try:
+        cfg = build_gui_defaults()
+    except Exception as exc:
+        logging.warning("Could not load manifest defaults (%s); using minimal fallback.", exc)
+        cfg = {
+            "write_csv": True,
+            "segment_video": True,
+            "yolo_size": "small",
+            "yolo_device": None,
+            "fps": 5.0,
+            "seq_len": 100,
+            "overlap": 50,
+            "sigma": 1.0,
+            "low": 0.45,
+            "high": 0.7,
+            "min_dur_sec": 1.0,
+            "conf": 0.25,
+            "imgsz": 960,
+            "feature_set": "v1",
+            "screen_width": 1280,
+            "screen_height": 720,
+            "start_time": 0,
+            "duration": 999999,
+        }
+    cfg["output_dir"] = str(DEFAULT_OUTPUT_DIR)
+    cfg["csv_output_dir"] = str(DEFAULT_CSV_DIR)
+    cfg["output_name"] = None
+    cfg["scaler_path"] = None
+    return cfg
+
+
+DEFAULT_CONFIG: Dict[str, Any] = _load_default_config()
 
 ADVANCED_WARNINGS = {
     "fps": "Changing fps will break model expectations; keep at 5.0 unless you retrain.",
@@ -214,7 +218,7 @@ def _safe_open_browser(port: int) -> None:
 
 
 def _normalize_config(raw: Dict[str, Any]) -> Dict[str, Any]:
-    cfg = {**DEFAULT_CONFIG}
+    cfg = {**_load_default_config()}
     cfg.update({k: v for k, v in (raw or {}).items() if v is not None})
     return cfg
 
@@ -308,7 +312,9 @@ def _run_pipeline(job_id: str) -> None:
         job["weights"] = weights
 
         if cfg.get("yolo_device"):
-            os.environ["POSE_DEVICE"] = str(cfg["yolo_device"])
+            apply_pose_device(str(cfg["yolo_device"]))
+        else:
+            apply_pose_device(None)
 
         yolo_weights = _resolve_yolo_weights(cfg)
         model_path, scaler_path = _resolve_model_paths(cfg)
@@ -320,8 +326,23 @@ def _run_pipeline(job_id: str) -> None:
                 break
 
         _check_cancel(job)
+        if str(cfg.get("feature_set", "v1")) != "v1":
+            raise RuntimeError(
+                f"Unsupported feature_set '{cfg.get('feature_set')}'. Only 'v1' is implemented."
+            )
+
+        pre = DataPreprocessor(
+            screen_width=int(cfg["screen_width"]),
+            screen_height=int(cfg["screen_height"]),
+            save_court_masks=False,
+            yolo_model_path=yolo_weights,
+            conf=float(cfg["conf"]),
+        )
+        court_mask, _ = pre.compute_court_mask(str(upload_path))
+
+        _check_cancel(job)
         _set_step(job, "pose", "in_progress", 1)
-        extractor = PoseExtractor(model_dir=models_dir, model_path=yolo_weights)
+        extractor = PoseExtractor(model_dir=models_dir, model_path=yolo_weights, imgsz=int(cfg["imgsz"]))
 
         def pose_progress(frac: float, meta: Optional[Dict[str, Any]] = None) -> None:
             if job.get("cancelled"):
@@ -346,7 +367,7 @@ def _run_pipeline(job_id: str) -> None:
             start_time_seconds=int(cfg["start_time"]),
             duration_seconds=int(cfg["duration"]),
             target_fps=int(cfg["fps"]),
-            imgsz=int(cfg.get("imgsz", 1920)),
+            imgsz=int(cfg["imgsz"]),
             annotations_csv=None,
             progress_callback=pose_progress,
         )
@@ -355,9 +376,10 @@ def _run_pipeline(job_id: str) -> None:
 
         _check_cancel(job)
         _set_step(job, "preprocess", "in_progress", 5)
-        pre = DataPreprocessor(save_court_masks=False)
         preprocessed_npz = str(job_dir / "preprocessed.npz")
-        success_pre = pre.preprocess_single_video(raw_npz, str(upload_path), preprocessed_npz, overwrite=True)
+        success_pre = pre.preprocess_single_video(
+            raw_npz, str(upload_path), preprocessed_npz, overwrite=True, court_mask=court_mask
+        )
         if not success_pre or not Path(preprocessed_npz).exists():
             raise RuntimeError("Preprocessing failed")
         job["paths"]["preprocessed_npz"] = preprocessed_npz
@@ -365,7 +387,11 @@ def _run_pipeline(job_id: str) -> None:
 
         _check_cancel(job)
         _set_step(job, "feature", "in_progress", 5)
-        fe = FeatureEngineer(target_fps=float(cfg["fps"]))
+        fe = FeatureEngineer(
+            screen_width=int(cfg["screen_width"]),
+            screen_height=int(cfg["screen_height"]),
+            target_fps=float(cfg["fps"]),
+        )
         features_npz = str(job_dir / "features.npz")
         success_fe = fe.create_features_from_preprocessed(preprocessed_npz, features_npz, overwrite=True)
         if not success_fe or not Path(features_npz).exists():
@@ -507,11 +533,16 @@ def health() -> tuple[Any, int]:
 
 @app.route("/api/config/defaults", methods=["GET"])
 def config_defaults() -> tuple[Any, int]:
+    defaults = _load_default_config()
+    available = detect_available_devices()
+    auto_device = resolve_auto_device()
     return jsonify(
         {
-            "defaults": DEFAULT_CONFIG,
+            "defaults": defaults,
             "yolo_sizes": list(YOLO_SIZE_MAP.keys()),
             "warnings": ADVANCED_WARNINGS,
+            "available_devices": available,
+            "auto_device": auto_device,
         }
     ), 200
 
@@ -603,23 +634,22 @@ def download_csv(job_id: str):
     return send_file(csv_path, as_attachment=True, download_name=f"{job_id}_segments.csv")
 
 
-def launch(port: Optional[int] = None) -> int:
+def _configure_gui_logging() -> None:
     verbose = os.environ.get("RALLYCLIP_GUI_VERBOSE", "").strip().lower() in {"1", "true", "yes"}
     log_level = logging.INFO if verbose else logging.ERROR
     logging.basicConfig(level=log_level, format="%(asctime)s [%(levelname)s] %(message)s")
-    # Quiet Flask/werkzeug unless verbose
     for name in ("werkzeug", "flask.app"):
         logging.getLogger(name).setLevel(log_level)
     if not verbose:
-        # Disable tqdm bars in GUI mode to keep the terminal clean
         os.environ.setdefault("RALLYCLIP_NO_TQDM", "1")
-        # Suppress the Flask devserver banner
         try:
             import flask.cli  # type: ignore
             flask.cli.show_server_banner = lambda *args, **kwargs: None  # noqa: E731
         except Exception:
             pass
-    _sweep_old_jobs()
+
+
+def _choose_gui_port(port: Optional[int] = None) -> int:
     preferred_ports: list[int] = []
     env_port = os.environ.get("RALLYCLIP_GUI_PORT")
     if port:
@@ -630,7 +660,27 @@ def launch(port: Optional[int] = None) -> int:
         except ValueError:
             pass
     preferred_ports.extend([8000, 5173])
-    chosen_port = _pick_port(preferred_ports)
+    return _pick_port(preferred_ports)
+
+
+def start_backend_thread(port: Optional[int] = None) -> tuple[int, threading.Thread]:
+    """Start the Flask backend on localhost and return (port, thread)."""
+    _configure_gui_logging()
+    _sweep_old_jobs()
+    chosen_port = _choose_gui_port(port)
+
+    def _serve() -> None:
+        app.run(host="127.0.0.1", port=chosen_port, debug=False, use_reloader=False, threaded=True)
+
+    thread = threading.Thread(target=_serve, daemon=True, name="rallyclip-gui-backend")
+    thread.start()
+    return chosen_port, thread
+
+
+def launch(port: Optional[int] = None) -> int:
+    _configure_gui_logging()
+    _sweep_old_jobs()
+    chosen_port = _choose_gui_port(port)
     threading.Thread(target=_safe_open_browser, args=(chosen_port,), daemon=True).start()
     app.logger.info("Starting GUI on http://127.0.0.1:%s", chosen_port)
     try:

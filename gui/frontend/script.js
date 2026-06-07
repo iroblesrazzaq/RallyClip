@@ -1,4 +1,4 @@
-class RallyClip {
+class RallyClipApp {
     constructor() {
         this.selectedFile = null;
         this.isProcessing = false;
@@ -7,492 +7,373 @@ class RallyClip {
         this.defaults = {};
         this.warnings = {};
         this.yoloOptions = [];
+        this.availableDevices = [];
+        this.autoDevice = "cpu";
         this.weights = null;
         this.etaSeconds = null;
-        this.poseEtaSeconds = null;
-        this.poseFps = null;
 
-        this.initializeElements();
+        this.cacheElements();
         this.bindEvents();
         this.loadDefaults();
         this.restoreJobIfAny();
     }
 
-    initializeElements() {
-        // File upload elements
-        this.dropZone = document.getElementById('dropZone');
-        this.fileInput = document.getElementById('fileInput');
-        this.browseBtn = document.getElementById('browseBtn');
-        this.selectedFileDiv = document.getElementById('selectedFile');
-        this.fileName = document.getElementById('fileName');
-        this.fileSize = document.getElementById('fileSize');
-        this.removeFileBtn = document.getElementById('removeFileBtn');
+    cacheElements() {
+        this.dropZone = document.getElementById("dropZone");
+        this.fileInput = document.getElementById("fileInput");
+        this.browseBtn = document.getElementById("browseBtn");
+        this.selectedFileDiv = document.getElementById("selectedFile");
+        this.fileName = document.getElementById("fileName");
+        this.fileSize = document.getElementById("fileSize");
+        this.removeFileBtn = document.getElementById("removeFileBtn");
+        this.startBtn = document.getElementById("startBtn");
+        this.cancelBtn = document.getElementById("cancelBtn");
+        this.advancedToggle = document.getElementById("advancedToggle");
+        this.advancedPanel = document.getElementById("advancedPanel");
+        this.resetAdvanced = document.getElementById("resetAdvanced");
+        this.outputName = document.getElementById("outputName");
+        this.outputDir = document.getElementById("outputDir");
+        this.csvOutputDir = document.getElementById("csvOutputDir");
+        this.yoloSize = document.getElementById("yoloSize");
+        this.yoloDevice = document.getElementById("yoloDevice");
+        this.deviceNote = document.getElementById("deviceNote");
+        this.low = document.getElementById("low");
+        this.high = document.getElementById("high");
+        this.minDurSec = document.getElementById("minDurSec");
+        this.lowWarning = document.getElementById("lowWarning");
+        this.highWarning = document.getElementById("highWarning");
+        this.minDurWarning = document.getElementById("minDurWarning");
+        this.statusBadge = document.getElementById("statusBadge");
+        this.statusBadgeText = document.getElementById("statusBadgeText");
+        this.progressCard = document.getElementById("progress");
+        this.resultsCard = document.getElementById("results");
+        this.overallFill = document.getElementById("overallFill");
+        this.overallPercentage = document.getElementById("overallPercentage");
+        this.etaText = document.getElementById("etaText");
+        this.downloadVideoBtn = document.getElementById("downloadVideoBtn");
+        this.downloadCsvBtn = document.getElementById("downloadCsvBtn");
+        this.newAnalysisBtn = document.getElementById("newAnalysisBtn");
+        this.toastStack = document.getElementById("toastStack");
 
-        // Control elements
-        this.startBtn = document.getElementById('startBtn');
-        this.cancelBtn = document.getElementById('cancelBtn');
-        this.advancedToggle = document.getElementById('advancedToggle');
-        this.advancedPanel = document.getElementById('advancedPanel');
-        this.resetAdvanced = document.getElementById('resetAdvanced');
-
-        // Advanced inputs
-        this.outputName = document.getElementById('outputName');
-        this.yoloSize = document.getElementById('yoloSize');
-        this.yoloDevice = document.getElementById('yoloDevice');
-        this.low = document.getElementById('low');
-        this.high = document.getElementById('high');
-        this.minDurSec = document.getElementById('minDurSec');
-        this.lowWarning = document.getElementById('lowWarning');
-        this.highWarning = document.getElementById('highWarning');
-        this.minDurWarning = document.getElementById('minDurWarning');
-
-        // Progress elements
-        this.progressSection = document.getElementById('progressSection');
         this.progressItems = {
-            pose: {
-                status: document.getElementById('poseStatus'),
-                fill: document.getElementById('poseFill'),
-                percentage: document.getElementById('posePercentage'),
-                item: null
-            },
-            preprocess: {
-                status: document.getElementById('preprocessStatus'),
-                fill: document.getElementById('preprocessFill'),
-                percentage: document.getElementById('preprocessPercentage'),
-                item: null
-            },
-            feature: {
-                status: document.getElementById('featureStatus'),
-                fill: document.getElementById('featureFill'),
-                percentage: document.getElementById('featurePercentage'),
-                item: null
-            },
-            inference: {
-                status: document.getElementById('inferenceStatus'),
-                fill: document.getElementById('inferenceFill'),
-                percentage: document.getElementById('inferencePercentage'),
-                item: null
-            },
-            output: {
-                status: document.getElementById('outputStatus'),
-                fill: document.getElementById('outputFill'),
-                percentage: document.getElementById('outputPercentage'),
-                item: null
-            }
+            pose: { status: document.getElementById("poseStatus"), fill: document.getElementById("poseFill") },
+            preprocess: { status: document.getElementById("preprocessStatus"), fill: document.getElementById("preprocessFill") },
+            feature: { status: document.getElementById("featureStatus"), fill: document.getElementById("featureFill") },
+            inference: { status: document.getElementById("inferenceStatus"), fill: document.getElementById("inferenceFill") },
+            output: { status: document.getElementById("outputStatus"), fill: document.getElementById("outputFill") },
         };
-
-        // Set progress item references
-        const progressItemsElements = document.querySelectorAll('.progress-item');
-        const steps = ['pose', 'preprocess', 'feature', 'inference', 'output'];
-        steps.forEach((step, index) => {
-            this.progressItems[step].item = progressItemsElements[index];
-        });
-
-        // Overall progress
-        this.overallFill = document.getElementById('overallFill');
-        this.overallPercentage = document.getElementById('overallPercentage');
-        this.etaText = document.getElementById('etaText');
-        this.etaPill = document.getElementById('etaPill');
-
-        // Results elements
-        this.resultsSection = document.getElementById('resultsSection');
-        this.downloadVideoBtn = document.getElementById('downloadVideoBtn');
-        this.downloadCsvBtn = document.getElementById('downloadCsvBtn');
-        this.newAnalysisBtn = document.getElementById('newAnalysisBtn');
     }
 
     bindEvents() {
-        // File upload events
-        this.dropZone.addEventListener('dragover', this.handleDragOver.bind(this));
-        this.dropZone.addEventListener('dragleave', this.handleDragLeave.bind(this));
-        this.dropZone.addEventListener('drop', this.handleDrop.bind(this));
-        this.dropZone.addEventListener('click', () => this.fileInput.click());
-        
-        this.browseBtn.addEventListener('click', (e) => {
+        this.dropZone.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            this.dropZone.classList.add("dragover");
+        });
+        this.dropZone.addEventListener("dragleave", () => this.dropZone.classList.remove("dragover"));
+        this.dropZone.addEventListener("drop", (e) => {
+            e.preventDefault();
+            this.dropZone.classList.remove("dragover");
+            if (e.dataTransfer.files.length) this.processFile(e.dataTransfer.files[0]);
+        });
+        this.dropZone.addEventListener("click", () => this.fileInput.click());
+        this.browseBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             this.fileInput.click();
         });
-        
-        this.fileInput.addEventListener('change', this.handleFileSelect.bind(this));
-        this.removeFileBtn.addEventListener('click', this.removeFile.bind(this));
-
-        // Control events
-        this.startBtn.addEventListener('click', this.startAnalysis.bind(this));
-        this.cancelBtn.addEventListener('click', this.cancelAnalysis.bind(this));
-        this.advancedToggle.addEventListener('click', this.toggleAdvanced.bind(this));
-        this.resetAdvanced.addEventListener('click', this.resetAdvancedSettings.bind(this));
-
-        // Download events
-        this.downloadVideoBtn.addEventListener('click', this.downloadVideo.bind(this));
-        this.downloadCsvBtn.addEventListener('click', this.downloadCsv.bind(this));
-        this.newAnalysisBtn.addEventListener('click', this.startNewAnalysis.bind(this));
+        this.fileInput.addEventListener("change", (e) => {
+            if (e.target.files.length) this.processFile(e.target.files[0]);
+        });
+        this.removeFileBtn.addEventListener("click", () => this.removeFile());
+        this.startBtn.addEventListener("click", () => this.startAnalysis());
+        this.cancelBtn.addEventListener("click", () => this.cancelAnalysis());
+        this.advancedToggle.addEventListener("click", () => {
+            this.advancedPanel.hidden = !this.advancedPanel.hidden;
+        });
+        this.resetAdvanced.addEventListener("click", () => {
+            this.applyDefaults();
+            this.showToast("Advanced settings reset", "success");
+        });
+        this.downloadVideoBtn.addEventListener("click", () => this.downloadVideo());
+        this.downloadCsvBtn.addEventListener("click", () => this.downloadCsv());
+        this.newAnalysisBtn.addEventListener("click", () => this.startNewAnalysis());
+        this.yoloDevice.addEventListener("change", () => this.updateDeviceNote());
+        document.querySelectorAll("[data-scroll]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                const target = document.getElementById(btn.dataset.scroll);
+                if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+            });
+        });
     }
 
     async loadDefaults() {
         try {
-            const resp = await fetch('/api/config/defaults');
-            if (!resp.ok) throw new Error('Failed to load defaults');
+            const resp = await fetch("/api/config/defaults");
+            if (!resp.ok) throw new Error("Failed to load defaults");
             const payload = await resp.json();
             this.defaults = payload.defaults || {};
             this.warnings = payload.warnings || {};
             this.yoloOptions = payload.yolo_sizes || [];
+            this.availableDevices = payload.available_devices || ["cpu"];
+            this.autoDevice = payload.auto_device || "cpu";
             this.applyDefaults();
         } catch (err) {
-            console.error('Failed to fetch defaults', err);
-            this.showError('Could not load defaults; using built-in values.');
-            this.defaults = this.defaults || {};
+            console.error(err);
+            this.showToast("Could not load server defaults", "error");
         }
     }
 
     applyDefaults() {
-        if (!this.defaults) return;
-        this.populateSelect(this.yoloSize, this.yoloOptions, this.defaults.yolo_size || 'small');
-        this.yoloDevice.value = this.defaults.yolo_device || '';
+        this.populateSelect(this.yoloSize, this.yoloOptions, this.defaults.yolo_size || "small");
+        this.populateDeviceSelect();
+        this.outputName.value = "";
+        this.outputDir.value = this.defaults.output_dir || "";
+        this.csvOutputDir.value = this.defaults.csv_output_dir || "";
         this.low.value = this.defaults.low ?? 0.45;
-        this.high.value = this.defaults.high ?? 0.8;
-        this.minDurSec.value = this.defaults.min_dur_sec ?? 0.5;
-        this.outputName.value = '';
-
-        // Warnings
-        this.lowWarning.textContent = this.warnings.low || '';
-        this.highWarning.textContent = this.warnings.high || '';
-        this.minDurWarning.textContent = this.warnings.min_dur_sec || '';
+        this.high.value = this.defaults.high ?? 0.7;
+        this.minDurSec.value = this.defaults.min_dur_sec ?? 1.0;
+        this.lowWarning.textContent = this.warnings.low || "";
+        this.highWarning.textContent = this.warnings.high || "";
+        this.minDurWarning.textContent = this.warnings.min_dur_sec || "";
+        this.updateDeviceNote();
     }
 
     populateSelect(selectEl, options, selected) {
-        if (!selectEl) return;
-        selectEl.innerHTML = '';
-        options.forEach(opt => {
-            const o = document.createElement('option');
-            o.value = opt;
-            o.textContent = opt;
-            if (opt === selected) o.selected = true;
-            selectEl.appendChild(o);
+        selectEl.innerHTML = "";
+        options.forEach((opt) => {
+            const option = document.createElement("option");
+            option.value = opt;
+            option.textContent = opt;
+            option.selected = opt === selected;
+            selectEl.appendChild(option);
         });
-        if (selected && !options.includes(selected)) {
-            const custom = document.createElement('option');
-            custom.value = selected;
-            custom.textContent = selected;
-            custom.selected = true;
-            selectEl.appendChild(custom);
+    }
+
+    populateDeviceSelect() {
+        const options = [{ value: "", label: `Auto (${this.autoDevice})` }];
+        ["cuda", "mps", "cpu"].forEach((device) => {
+            const available = this.availableDevices.includes(device);
+            options.push({
+                value: device,
+                label: available ? device.toUpperCase() : `${device.toUpperCase()} (unavailable)`,
+                disabled: !available,
+            });
+        });
+        this.yoloDevice.innerHTML = "";
+        options.forEach(({ value, label, disabled }) => {
+            const option = document.createElement("option");
+            option.value = value;
+            option.textContent = label;
+            option.disabled = Boolean(disabled);
+            this.yoloDevice.appendChild(option);
+        });
+    }
+
+    updateDeviceNote() {
+        const selected = this.yoloDevice.value;
+        if (!selected) {
+            this.deviceNote.textContent = `Auto picks ${this.autoDevice.toUpperCase()} on this machine (CUDA > MPS > CPU).`;
+            return;
         }
-    }
-
-    toggleAdvanced() {
-        const isHidden = this.advancedPanel.style.display === 'none';
-        this.advancedPanel.style.display = isHidden ? 'block' : 'none';
-    }
-
-    resetAdvancedSettings() {
-        this.applyDefaults();
-        this.showInfo('Advanced settings reset to defaults');
-    }
-
-    // File handling methods
-    handleDragOver(e) {
-        e.preventDefault();
-        this.dropZone.classList.add('dragover');
-    }
-
-    handleDragLeave(e) {
-        e.preventDefault();
-        if (!this.dropZone.contains(e.relatedTarget)) {
-            this.dropZone.classList.remove('dragover');
-        }
-    }
-
-    handleDrop(e) {
-        e.preventDefault();
-        this.dropZone.classList.remove('dragover');
-        
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-            this.processFile(files[0]);
-        }
-    }
-
-    handleFileSelect(e) {
-        const files = e.target.files;
-        if (files.length > 0) {
-            this.processFile(files[0]);
-        }
+        this.deviceNote.textContent = `Using ${selected.toUpperCase()} for pose extraction.`;
     }
 
     processFile(file) {
-        // Validate file type - only MP4 is tested and supported
-        if (file.type !== 'video/mp4' && !file.name.toLowerCase().endsWith('.mp4')) {
-            this.showError('Please select an MP4 video file. Other formats are not currently supported.');
+        if (file.type !== "video/mp4" && !file.name.toLowerCase().endsWith(".mp4")) {
+            this.showToast("Only MP4 videos are supported.", "error");
             return;
         }
-
-        // Validate file size (2GB limit)
-        const maxSize = 2 * 1024 * 1024 * 1024; // 2GB
+        const maxSize = 2 * 1024 * 1024 * 1024;
         if (file.size > maxSize) {
-            this.showError('File size must be less than 2GB.');
+            this.showToast("File must be under 2GB.", "error");
             return;
         }
-
         this.selectedFile = file;
-        this.displaySelectedFile();
-    }
-
-    displaySelectedFile() {
-        this.fileName.textContent = this.selectedFile.name;
-        this.fileSize.textContent = this.formatFileSize(this.selectedFile.size);
-        
-        this.dropZone.style.display = 'none';
-        this.selectedFileDiv.style.display = 'block';
+        this.fileName.textContent = file.name;
+        this.fileSize.textContent = this.formatFileSize(file.size);
+        this.dropZone.hidden = true;
+        this.selectedFileDiv.hidden = false;
         this.startBtn.disabled = false;
+        this.setStatus("Ready", "ready");
     }
 
     removeFile() {
         this.selectedFile = null;
-        this.fileInput.value = '';
-        
-        this.dropZone.style.display = 'block';
-        this.selectedFileDiv.style.display = 'none';
+        this.fileInput.value = "";
+        this.dropZone.hidden = false;
+        this.selectedFileDiv.hidden = true;
         this.startBtn.disabled = true;
-        
         this.resetProgress();
+        this.setStatus("Ready", "ready");
     }
 
     formatFileSize(bytes) {
-        if (bytes === 0) return '0 Bytes';
-        
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    }
-
-    // Analysis control methods
-    async startAnalysis() {
-        if (!this.selectedFile || this.isProcessing) return;
-
-        this.isProcessing = true;
-        this.startBtn.disabled = true;
-        this.cancelBtn.disabled = false;
-        this.progressSection.style.display = 'block';
-        this.resultsSection.style.display = 'none';
-
-        try {
-            const jobId = await this.uploadFileAndStart();
-            this.currentJobId = jobId;
-            try { localStorage.setItem('rallyclip_job_id', jobId); } catch (_) {}
-            this.startProgressMonitoring();
-        } catch (error) {
-            console.error('Error starting analysis:', error);
-            this.showError('Failed to start analysis. Please try again.');
-            this.resetControls();
-        }
+        const units = ["Bytes", "KB", "MB", "GB"];
+        if (bytes === 0) return "0 Bytes";
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return `${(bytes / 1024 ** i).toFixed(2)} ${units[i]}`;
     }
 
     buildConfigFromForm() {
         const cfg = { ...(this.defaults || {}) };
         cfg.output_name = this.outputName.value.trim() || null;
+        cfg.output_dir = this.outputDir.value.trim() || cfg.output_dir;
+        cfg.csv_output_dir = this.csvOutputDir.value.trim() || cfg.csv_output_dir;
         cfg.yolo_size = this.yoloSize.value || cfg.yolo_size;
         cfg.yolo_device = this.yoloDevice.value || null;
-        cfg.write_csv = true; // always write CSV for GUI
-        cfg.segment_video = true; // always write segmented MP4 in GUI
+        cfg.write_csv = true;
+        cfg.segment_video = true;
         cfg.low = parseFloat(this.low.value) || cfg.low;
         cfg.high = parseFloat(this.high.value) || cfg.high;
         cfg.min_dur_sec = parseFloat(this.minDurSec.value) || cfg.min_dur_sec;
         return cfg;
     }
 
+    async startAnalysis() {
+        if (!this.selectedFile || this.isProcessing) return;
+        this.isProcessing = true;
+        this.startBtn.disabled = true;
+        this.cancelBtn.disabled = false;
+        this.progressCard.hidden = false;
+        this.resultsCard.hidden = true;
+        this.setStatus("Processing", "processing");
+
+        try {
+            const jobId = await this.uploadFileAndStart();
+            this.currentJobId = jobId;
+            try { localStorage.setItem("rallyclip_job_id", jobId); } catch (_) {}
+            this.startProgressMonitoring();
+        } catch (error) {
+            console.error(error);
+            this.showToast("Failed to start segmentation.", "error");
+            this.resetControls();
+            this.setStatus("Error", "error");
+        }
+    }
+
     async uploadFileAndStart() {
         const formData = new FormData();
-        formData.append('video', this.selectedFile);
-        formData.append('config', JSON.stringify(this.buildConfigFromForm()));
-
-        const response = await fetch('/api/upload-and-start', {
-            method: 'POST',
-            body: formData
-        });
-
-        if (!response.ok) {
-            const msg = await response.text();
-            throw new Error(`HTTP error! status: ${response.status}, ${msg}`);
-        }
-
+        formData.append("video", this.selectedFile);
+        formData.append("config", JSON.stringify(this.buildConfigFromForm()));
+        const response = await fetch("/api/upload-and-start", { method: "POST", body: formData });
+        if (!response.ok) throw new Error(await response.text());
         const result = await response.json();
         return result.job_id;
     }
 
     startProgressMonitoring() {
-        this.progressInterval = setInterval(async () => {
-            try {
-                await this.updateProgress();
-            } catch (error) {
-                console.error('Error updating progress:', error);
-                this.stopProgressMonitoring();
-            }
-        }, 1000); // Update every second
+        this.progressInterval = setInterval(() => this.updateProgress().catch((err) => {
+            console.error(err);
+            this.stopProgressMonitoring();
+        }), 1000);
     }
 
     async restoreJobIfAny() {
         let storedId = null;
-        try { storedId = localStorage.getItem('rallyclip_job_id'); } catch (_) {}
+        try { storedId = localStorage.getItem("rallyclip_job_id"); } catch (_) {}
         if (!storedId) return;
-
         this.currentJobId = storedId;
-        this.progressSection.style.display = 'block';
+        this.progressCard.hidden = false;
         this.startBtn.disabled = true;
         this.cancelBtn.disabled = false;
+        this.setStatus("Processing", "processing");
         this.startProgressMonitoring();
-        try {
-            await this.updateProgress();
-        } catch (e) {
-            console.warn('Failed to restore job progress:', e);
-        }
+        await this.updateProgress();
     }
 
     async updateProgress() {
         if (!this.currentJobId) return;
-
         const response = await fetch(`/api/progress/${this.currentJobId}`);
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const progress = await response.json();
-        if (progress.weights) {
-            this.weights = progress.weights;
-        }
+        if (progress.weights) this.weights = progress.weights;
         this.etaSeconds = progress.eta_seconds ?? null;
-        this.poseEtaSeconds = progress.pose_eta_seconds ?? null;
-        this.poseFps = progress.pose_throughput_fps ?? null;
         this.displayProgress(progress);
 
-        if (progress.status === 'completed') {
-            this.onAnalysisComplete();
-        } else if (progress.status === 'failed') {
-            this.onAnalysisError(progress.error || 'Analysis failed');
-        } else if (progress.status === 'cancelled') {
-            this.onAnalysisCancelled();
-        }
+        if (progress.status === "completed") this.onAnalysisComplete();
+        else if (progress.status === "failed") this.onAnalysisError(progress.error || "Segmentation failed");
+        else if (progress.status === "cancelled") this.onAnalysisCancelled();
     }
 
     displayProgress(progress) {
-        const steps = ['pose', 'preprocess', 'feature', 'inference', 'output'];
-        let totalProgress = 0;
-        const weights = this.weights || progress.weights || null;
+        const steps = ["pose", "preprocess", "feature", "inference", "output"];
         let weightedSum = 0;
         let weightTotal = 0;
+        let plainSum = 0;
 
         steps.forEach((step) => {
-            const stepProgress = progress.steps[step] || { status: 'waiting', progress: 0 };
+            const stepProgress = progress.steps[step] || { status: "waiting", progress: 0 };
             const elements = this.progressItems[step];
-
             elements.status.textContent = this.formatStatus(stepProgress.status);
-            elements.status.className = `progress-status ${stepProgress.status}`;
-
             elements.fill.style.width = `${stepProgress.progress}%`;
-            elements.percentage.textContent = `${Math.round(stepProgress.progress)}%`;
-
-            elements.item.classList.remove('active', 'completed');
-            if (stepProgress.status === 'in_progress') {
-                elements.item.classList.add('active');
-            } else if (stepProgress.status === 'completed') {
-                elements.item.classList.add('completed');
-            }
-
-            totalProgress += stepProgress.progress;
-            if (weights && typeof weights[step] === 'number') {
-                weightedSum += stepProgress.progress * weights[step];
-                weightTotal += weights[step];
+            plainSum += stepProgress.progress;
+            if (this.weights && typeof this.weights[step] === "number") {
+                weightedSum += stepProgress.progress * this.weights[step];
+                weightTotal += this.weights[step];
             }
         });
 
-        const overallProgress = (weightTotal > 0)
-            ? (weightedSum / weightTotal)
-            : (totalProgress / steps.length);
-        this.overallFill.style.width = `${overallProgress}%`;
-        this.overallPercentage.textContent = `${Math.round(overallProgress)}%`;
+        const overall = weightTotal > 0 ? weightedSum / weightTotal : plainSum / steps.length;
+        this.overallFill.style.width = `${overall}%`;
+        this.overallPercentage.textContent = `${Math.round(overall)}%`;
         this.updateEta(progress);
     }
 
     updateEta(progress) {
-        if (!this.etaText) return;
-        const eta = (progress.eta_seconds !== null && progress.eta_seconds !== undefined)
-            ? progress.eta_seconds
-            : (this.weights && this.weights.eta_seconds ? this.weights.eta_seconds : null);
-        if (eta === null || eta === undefined) {
-            this.etaText.textContent = 'Est. remaining: --';
-            if (this.etaPill) this.etaPill.style.display = 'none';
+        const eta = progress.eta_seconds ?? this.etaSeconds;
+        if (eta == null) {
+            this.etaText.textContent = "Est. remaining: --";
             return;
         }
         const remaining = Math.max(0, Math.round(eta));
         const minutes = Math.floor(remaining / 60);
         const seconds = remaining % 60;
-        if (minutes > 0) {
-            this.etaText.textContent = `Est. remaining: ~${minutes}m ${seconds.toString().padStart(2, '0')}s`;
-        } else {
-            this.etaText.textContent = `Est. remaining: ~${seconds}s`;
-        }
-        if (this.etaPill) {
-            const pretty = minutes > 0 ? `${minutes}m ${seconds.toString().padStart(2, '0')}s` : `${seconds}s`;
-            this.etaPill.textContent = `ETA ~${pretty}`;
-            this.etaPill.style.display = 'inline-flex';
-        }
+        this.etaText.textContent = minutes > 0
+            ? `Est. remaining: ~${minutes}m ${String(seconds).padStart(2, "0")}s`
+            : `Est. remaining: ~${seconds}s`;
     }
 
     formatStatus(status) {
-        const statusMap = {
-            'waiting': 'Waiting...',
-            'in_progress': 'In Progress...',
-            'completed': 'Completed',
-            'failed': 'Failed'
-        };
-        return statusMap[status] || status;
+        return ({
+            waiting: "Waiting",
+            in_progress: "Running",
+            completed: "Done",
+            failed: "Failed",
+        })[status] || status;
     }
 
     async cancelAnalysis() {
         if (!this.currentJobId || !this.isProcessing) return;
-
-        try {
-            const response = await fetch(`/api/cancel/${this.currentJobId}`, {
-                method: 'POST'
-            });
-
-            if (response.ok) {
-                this.onAnalysisCancelled();
-            } else {
-                throw new Error('Failed to cancel analysis');
-            }
-        } catch (error) {
-            console.error('Error cancelling analysis:', error);
-            this.showError('Failed to cancel analysis');
-        }
+        const response = await fetch(`/api/cancel/${this.currentJobId}`, { method: "POST" });
+        if (response.ok) this.onAnalysisCancelled();
+        else this.showToast("Could not cancel job.", "error");
     }
 
     onAnalysisComplete() {
         this.stopProgressMonitoring();
         this.isProcessing = false;
         this.cancelBtn.disabled = true;
-        this.resultsSection.style.display = 'block';
-        
-        this.showSuccess('Analysis completed successfully!');
-        if (this.etaText) {
-            this.etaText.textContent = 'Est. remaining: 0s';
-        }
-        try { localStorage.removeItem('rallyclip_job_id'); } catch (_) {}
+        this.resultsCard.hidden = false;
+        this.setStatus("Done", "done");
+        this.showToast("Segmentation complete.", "success");
+        this.etaText.textContent = "Est. remaining: 0s";
+        try { localStorage.removeItem("rallyclip_job_id"); } catch (_) {}
     }
 
     onAnalysisError(error) {
         this.stopProgressMonitoring();
         this.resetControls();
-        this.showError(`Analysis failed: ${error}`);
-        try { localStorage.removeItem('rallyclip_job_id'); } catch (_) {}
+        this.showToast(error, "error");
+        this.setStatus("Error", "error");
+        try { localStorage.removeItem("rallyclip_job_id"); } catch (_) {}
     }
 
     onAnalysisCancelled() {
         this.stopProgressMonitoring();
         this.resetControls();
         this.resetProgress();
-        this.showInfo('Analysis cancelled');
-        try { localStorage.removeItem('rallyclip_job_id'); } catch (_) {}
+        this.showToast("Job cancelled.", "success");
+        this.setStatus("Ready", "ready");
+        try { localStorage.removeItem("rallyclip_job_id"); } catch (_) {}
     }
 
     stopProgressMonitoring() {
@@ -510,67 +391,41 @@ class RallyClip {
     }
 
     resetProgress() {
-        this.progressSection.style.display = 'none';
-        this.resultsSection.style.display = 'none';
-
-        Object.values(this.progressItems).forEach(item => {
-            item.status.textContent = 'Waiting...';
-            item.status.className = 'progress-status';
-            item.fill.style.width = '0%';
-            item.percentage.textContent = '0%';
-            item.item.classList.remove('active', 'completed');
+        this.progressCard.hidden = true;
+        this.resultsCard.hidden = true;
+        Object.values(this.progressItems).forEach((item) => {
+            item.status.textContent = "Waiting";
+            item.fill.style.width = "0%";
         });
-
-        this.overallFill.style.width = '0%';
-        this.overallPercentage.textContent = '0%';
-        if (this.etaText) {
-            this.etaText.textContent = 'Est. remaining: --';
-        }
+        this.overallFill.style.width = "0%";
+        this.overallPercentage.textContent = "0%";
+        this.etaText.textContent = "Est. remaining: --";
     }
 
-    // Download methods
     async downloadVideo() {
         if (!this.currentJobId) return;
-
-        try {
-            const response = await fetch(`/api/download/video/${this.currentJobId}`);
-            if (response.ok) {
-                const blob = await response.blob();
-                this.downloadBlob(blob, 'rallyclip_analysis_video.mp4');
-            } else {
-                throw new Error('Failed to download video');
-            }
-        } catch (error) {
-            console.error('Error downloading video:', error);
-            this.showError('Failed to download video');
-        }
+        const response = await fetch(`/api/download/video/${this.currentJobId}`);
+        if (!response.ok) return this.showToast("Video not ready.", "error");
+        const blob = await response.blob();
+        this.downloadBlob(blob, "rallyclip_segmented.mp4");
     }
 
     async downloadCsv() {
         if (!this.currentJobId) return;
-
-        try {
-            const response = await fetch(`/api/download/csv/${this.currentJobId}`);
-            if (response.ok) {
-                const blob = await response.blob();
-                this.downloadBlob(blob, 'rallyclip_analysis_data.csv');
-            } else {
-                throw new Error('Failed to download CSV');
-            }
-        } catch (error) {
-            console.error('Error downloading CSV:', error);
-            this.showError('Failed to download CSV');
-        }
+        const response = await fetch(`/api/download/csv/${this.currentJobId}`);
+        if (!response.ok) return this.showToast("CSV not ready.", "error");
+        const blob = await response.blob();
+        this.downloadBlob(blob, "rallyclip_segments.csv");
     }
 
     downloadBlob(blob, filename) {
         const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
         window.URL.revokeObjectURL(url);
     }
 
@@ -580,40 +435,20 @@ class RallyClip {
         this.resetControls();
     }
 
-    // Utility methods
-    showError(message) {
-        this.showNotification(message, 'error');
+    setStatus(text, tone) {
+        this.statusBadgeText.textContent = text;
+        this.statusBadge.className = `status-badge ${tone}`;
     }
 
-    showSuccess(message) {
-        this.showNotification(message, 'success');
-    }
-
-    showInfo(message) {
-        this.showNotification(message, 'info');
-    }
-
-    showNotification(message, type = 'info') {
-        const notification = document.createElement('div');
-        notification.className = `notification notification-${type}`;
-        notification.textContent = message;
-
-        document.body.appendChild(notification);
-        setTimeout(() => {
-            notification.style.transform = 'translateX(0)';
-        }, 50);
-
-        setTimeout(() => {
-            notification.style.transform = 'translateX(100%)';
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    notification.parentNode.removeChild(notification);
-                }
-            }, 300);
-        }, 4000);
+    showToast(message, tone = "info") {
+        const toast = document.createElement("div");
+        toast.className = `toast ${tone}`;
+        toast.textContent = message;
+        this.toastStack.appendChild(toast);
+        setTimeout(() => toast.remove(), 4000);
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    new RallyClip();
+document.addEventListener("DOMContentLoaded", () => {
+    new RallyClipApp();
 });
