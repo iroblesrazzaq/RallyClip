@@ -277,7 +277,16 @@ class RallyClipApp {
         this.cancelBtn.disabled = false;
         this.setStatus("Processing", "processing");
         this.startProgressMonitoring();
-        await this.updateProgress();
+        try {
+            await this.updateProgress();
+        } catch (e) {
+            console.warn("Could not restore job progress:", e);
+            this.stopProgressMonitoring();
+            this.resetControls();
+            this.resetProgress();
+            this.setStatus("Ready", "ready");
+            try { localStorage.removeItem("rallyclip_job_id"); } catch (_) {}
+        }
     }
 
     async updateProgress() {

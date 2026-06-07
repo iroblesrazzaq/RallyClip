@@ -56,18 +56,11 @@ include-package-data = true
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools.data-files]
-"rallyclip/gui" = [
-  "gui/frontend/index.html",
-  "gui/frontend/styles.css",
-  "gui/frontend/script.js",
-]
-"rallyclip/models/rallyclip_v0.3.1" = [
-  "models/rallyclip_v0.3.1/model.onnx",
-  "models/rallyclip_v0.3.1/scaler.json",
-  "models/rallyclip_v0.3.1/manifest.json",
-]
-
 [tool.setuptools.package-data]
 # Ship the empirical default court mask used as the detection fallback.
 preprocessing = ["*.png"]
+gui = [
+  "frontend/index.html",
+  "frontend/styles.css",
+  "frontend/script.js",
+]

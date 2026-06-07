@@ -218,7 +218,7 @@ def _safe_open_browser(port: int) -> None:
 
 
 def _normalize_config(raw: Dict[str, Any]) -> Dict[str, Any]:
-    cfg = {**_load_default_config()}
+    cfg = {**DEFAULT_CONFIG}
     cfg.update({k: v for k, v in (raw or {}).items() if v is not None})
     return cfg
 

@@ -151,7 +151,7 @@ pip install ".[desktop,pack]"
 python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt')"
 pyinstaller --noconfirm --onedir --name RallyClip src/gui/desktop.py \
   --hidden-import=gui.app \
-  --add-data "gui/frontend:gui/frontend" \
+  --add-data "src/gui/frontend:gui/frontend" \
   --add-data "models/rallyclip_v0.3.1:models/rallyclip_v0.3.1"
 ```
 

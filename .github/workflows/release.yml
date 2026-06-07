@@ -54,7 +54,7 @@ jobs:
             --hidden-import=runtime.defaults \
             --hidden-import=runtime.paths \
             --collect-submodules=flask \
-            --add-data "gui/frontend${SEP}gui/frontend" \
+            --add-data "src/gui/frontend${SEP}gui/frontend" \
             --add-data "models/rallyclip_v0.3.1${SEP}models/rallyclip_v0.3.1" \
             --add-data "src/preprocessing/default_court_mask.png${SEP}preprocessing" \
             src/gui/desktop.py
