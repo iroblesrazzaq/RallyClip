@@ -52,14 +52,27 @@ def test_resolve_pose_device_honors_explicit_choice(monkeypatch):
 def test_apply_pose_device_sets_env(monkeypatch):
     torch_mod = types.SimpleNamespace(
         cuda=types.SimpleNamespace(is_available=lambda: False),
-        backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: False)),
+        backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: True)),
     )
     monkeypatch.setitem(__import__("sys").modules, "torch", torch_mod)
     monkeypatch.delenv("POSE_DEVICE", raising=False)
     from runtime.device import apply_pose_device
 
-    device = apply_pose_device(None)
+    device = apply_pose_device(None, model_path="yolov8n-pose.pt")
     assert device == "cpu"
     import os
 
     assert os.environ["POSE_DEVICE"] == "cpu"
+
+
+def test_apply_pose_device_honors_explicit_mps(monkeypatch):
+    torch_mod = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: False),
+        backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: True)),
+    )
+    monkeypatch.setitem(__import__("sys").modules, "torch", torch_mod)
+    monkeypatch.delenv("POSE_DEVICE", raising=False)
+    from runtime.device import apply_pose_device
+
+    device = apply_pose_device("mps", model_path="yolov8n-pose.pt")
+    assert device == "mps"

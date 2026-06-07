@@ -24,7 +24,7 @@ def test_gui_health_and_defaults(tmp_path, monkeypatch):
 
     from gui import app as gui_app
 
-    gui_app.DEFAULT_CONFIG = gui_app._load_default_config()
+    monkeypatch.setattr(gui_app, "DEFAULT_CONFIG", gui_app._load_default_config())
     client = gui_app.app.test_client()
 
     health = client.get("/api/health")

@@ -37,9 +37,14 @@ class PoseExtractor:
             except Exception:
                 profile = "main"
 
-        from runtime.device import resolve_pose_device
+        from runtime.device import prefer_cpu_over_mps_for_pose, resolve_pose_device
 
-        self.device = resolve_pose_device(os.environ.get("POSE_DEVICE") or None)
+        env_device = os.environ.get("POSE_DEVICE", "").strip().lower()
+        device_from_env = env_device in {"cpu", "cuda", "mps"}
+        self.device = resolve_pose_device(env_device if device_from_env else None)
+        if not device_from_env:
+            self.device = prefer_cpu_over_mps_for_pose(self.device, self.model_path)
+            os.environ["POSE_DEVICE"] = self.device
 
         env_bs = os.environ.get("POSE_BATCH_SIZE", "").strip()
         if env_bs.isdigit():
