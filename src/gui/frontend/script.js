@@ -222,9 +222,12 @@ class RallyClipApp {
         cfg.yolo_device = this.yoloDevice.value || null;
         cfg.write_csv = true;
         cfg.segment_video = true;
-        cfg.low = parseFloat(this.low.value) || cfg.low;
-        cfg.high = parseFloat(this.high.value) || cfg.high;
-        cfg.min_dur_sec = parseFloat(this.minDurSec.value) || cfg.min_dur_sec;
+        const parsedLow = parseFloat(this.low.value);
+        const parsedHigh = parseFloat(this.high.value);
+        const parsedMinDur = parseFloat(this.minDurSec.value);
+        cfg.low = Number.isNaN(parsedLow) ? cfg.low : parsedLow;
+        cfg.high = Number.isNaN(parsedHigh) ? cfg.high : parsedHigh;
+        cfg.min_dur_sec = Number.isNaN(parsedMinDur) ? cfg.min_dur_sec : parsedMinDur;
         return cfg;
     }
 
@@ -420,18 +423,28 @@ class RallyClipApp {
 
     async downloadVideo() {
         if (!this.currentJobId) return;
-        const response = await fetch(`/api/download/video/${this.currentJobId}`);
-        if (!response.ok) return this.showToast("Video not ready.", "error");
-        const blob = await response.blob();
-        this.downloadBlob(blob, "rallyclip_segmented.mp4");
+        try {
+            const response = await fetch(`/api/download/video/${this.currentJobId}`);
+            if (!response.ok) return this.showToast("Video not ready.", "error");
+            const blob = await response.blob();
+            this.downloadBlob(blob, "rallyclip_segmented.mp4");
+        } catch (err) {
+            console.error("Video download failed:", err);
+            this.showToast("Video download failed.", "error");
+        }
     }
 
     async downloadCsv() {
         if (!this.currentJobId) return;
-        const response = await fetch(`/api/download/csv/${this.currentJobId}`);
-        if (!response.ok) return this.showToast("CSV not ready.", "error");
-        const blob = await response.blob();
-        this.downloadBlob(blob, "rallyclip_segments.csv");
+        try {
+            const response = await fetch(`/api/download/csv/${this.currentJobId}`);
+            if (!response.ok) return this.showToast("CSV not ready.", "error");
+            const blob = await response.blob();
+            this.downloadBlob(blob, "rallyclip_segments.csv");
+        } catch (err) {
+            console.error("CSV download failed:", err);
+            this.showToast("CSV download failed.", "error");
+        }
     }
 
     downloadBlob(blob, filename) {
