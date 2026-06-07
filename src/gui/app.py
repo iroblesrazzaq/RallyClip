@@ -548,7 +548,7 @@ def health() -> tuple[Any, int]:
 
 @app.route("/api/config/defaults", methods=["GET"])
 def config_defaults() -> tuple[Any, int]:
-    defaults = _load_default_config()
+    defaults = {**DEFAULT_CONFIG}
     available = detect_available_devices()
     auto_device = resolve_auto_device()
     return jsonify(
