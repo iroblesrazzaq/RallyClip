@@ -41,7 +41,7 @@ def resolve_auto_device() -> DeviceName:
     return "cpu"
 
 
-def resolve_pose_device(explicit: Optional[str] = None) -> DeviceName:
+def resolve_pose_device(explicit: Optional[str] = None, *, read_env: bool = True) -> DeviceName:
     """Resolve pose/YOLO device from explicit choice, env, or auto priority."""
     valid = set(_DEVICE_ORDER)
     if explicit:
@@ -53,9 +53,10 @@ def resolve_pose_device(explicit: Optional[str] = None) -> DeviceName:
         else:
             raise ValueError(f"Unsupported device '{explicit}'. Choose auto, cuda, mps, or cpu.")
 
-    env_val = os.environ.get("POSE_DEVICE", "").strip().lower()
-    if env_val in valid:
-        return env_val  # type: ignore[return-value]
+    if read_env:
+        env_val = os.environ.get("POSE_DEVICE", "").strip().lower()
+        if env_val in valid:
+            return env_val  # type: ignore[return-value]
 
     return resolve_auto_device()
 
@@ -76,10 +77,12 @@ def apply_pose_device(
     *,
     model_path: str = "",
     set_env: bool = True,
+    read_env: Optional[bool] = None,
 ) -> DeviceName:
     """Set POSE_DEVICE for downstream PoseExtractor and return the resolved device."""
     user_explicit = bool(explicit and explicit.strip().lower() not in ("", "auto"))
-    device = resolve_pose_device(explicit)
+    use_env = set_env if read_env is None else read_env
+    device = resolve_pose_device(explicit, read_env=use_env)
     if not user_explicit:
         device = prefer_cpu_over_mps_for_pose(device, model_path)
     if set_env:
