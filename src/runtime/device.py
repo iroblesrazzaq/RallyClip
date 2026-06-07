@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Literal, Optional
 
@@ -59,8 +60,26 @@ def resolve_pose_device(explicit: Optional[str] = None) -> DeviceName:
     return resolve_auto_device()
 
 
-def apply_pose_device(explicit: Optional[str] = None) -> DeviceName:
+def prefer_cpu_over_mps_for_pose(device: DeviceName, model_path: str) -> DeviceName:
+    """Avoid auto-selected MPS for YOLO pose models with known backend issues."""
+    if device == "mps" and "pose" in model_path.lower():
+        logging.warning(
+            "POSE: defaulting to cpu due to known MPS pose performance issues; "
+            "set yolo_device=mps to force MPS."
+        )
+        return "cpu"
+    return device
+
+
+def apply_pose_device(
+    explicit: Optional[str] = None,
+    *,
+    model_path: str = "",
+) -> DeviceName:
     """Set POSE_DEVICE for downstream PoseExtractor and return the resolved device."""
+    user_explicit = bool(explicit and explicit.strip().lower() not in ("", "auto"))
     device = resolve_pose_device(explicit)
+    if not user_explicit:
+        device = prefer_cpu_over_mps_for_pose(device, model_path)
     os.environ["POSE_DEVICE"] = device
     return device

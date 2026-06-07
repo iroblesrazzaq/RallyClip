@@ -326,12 +326,12 @@ def _run_pipeline(job_id: str) -> None:
         weights = _compute_weights(duration_seconds)
         job["weights"] = weights
 
-        if cfg.get("yolo_device"):
-            apply_pose_device(str(cfg["yolo_device"]))
-        else:
-            apply_pose_device(None)
-
         yolo_weights = _resolve_yolo_weights(cfg)
+        if cfg.get("yolo_device"):
+            apply_pose_device(str(cfg["yolo_device"]), model_path=yolo_weights)
+        else:
+            apply_pose_device(None, model_path=yolo_weights)
+
         model_path, scaler_path = _resolve_model_paths(cfg)
         models_dir = None
         for root in _candidate_roots():
