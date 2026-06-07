@@ -352,9 +352,16 @@ class RallyClipApp {
 
     async cancelAnalysis() {
         if (!this.currentJobId || !this.isProcessing) return;
-        const response = await fetch(`/api/cancel/${this.currentJobId}`, { method: "POST" });
-        if (response.ok) this.onAnalysisCancelled();
-        else this.showToast("Could not cancel job.", "error");
+        try {
+            const response = await fetch(`/api/cancel/${this.currentJobId}`, { method: "POST" });
+            if (response.ok) this.onAnalysisCancelled();
+            else this.showToast("Could not cancel job.", "error");
+        } catch (err) {
+            console.error("Cancel request failed:", err);
+            this.showToast("Cancel request failed.", "error");
+            this.resetControls();
+            this.setStatus("Ready", "ready");
+        }
     }
 
     onAnalysisComplete() {

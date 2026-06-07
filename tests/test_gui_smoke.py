@@ -49,3 +49,16 @@ def test_gui_index_served(tmp_path, monkeypatch):
     response = client.get("/")
     assert response.status_code == 200
     assert b"RallyClip" in response.data
+
+
+def test_ensure_job_dir_rejects_path_traversal(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    monkeypatch.setattr(gui_app, "JOBS_DIR", tmp_path / "jobs")
+    gui_app.JOBS_DIR.mkdir(parents=True)
+
+    safe = gui_app._ensure_job_dir("abc123")
+    assert safe == (gui_app.JOBS_DIR / "abc123").resolve()
+
+    with pytest.raises(ValueError):
+        gui_app._ensure_job_dir("../../outside")
