@@ -328,9 +328,11 @@ def _run_pipeline(job_id: str) -> None:
 
         yolo_weights = _resolve_yolo_weights(cfg)
         if cfg.get("yolo_device"):
-            apply_pose_device(str(cfg["yolo_device"]), model_path=yolo_weights)
+            pose_device = apply_pose_device(
+                str(cfg["yolo_device"]), model_path=yolo_weights, set_env=False
+            )
         else:
-            apply_pose_device(None, model_path=yolo_weights)
+            pose_device = apply_pose_device(None, model_path=yolo_weights, set_env=False)
 
         model_path, scaler_path = _resolve_model_paths(cfg)
         models_dir = None
@@ -357,7 +359,12 @@ def _run_pipeline(job_id: str) -> None:
 
         _check_cancel(job)
         _set_step(job, "pose", "in_progress", 1)
-        extractor = PoseExtractor(model_dir=models_dir, model_path=yolo_weights, imgsz=int(cfg["imgsz"]))
+        extractor = PoseExtractor(
+            model_dir=models_dir,
+            model_path=yolo_weights,
+            imgsz=int(cfg["imgsz"]),
+            device=pose_device,
+        )
 
         def pose_progress(frac: float, meta: Optional[Dict[str, Any]] = None) -> None:
             if job.get("cancelled"):

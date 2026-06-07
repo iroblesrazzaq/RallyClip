@@ -75,11 +75,13 @@ def apply_pose_device(
     explicit: Optional[str] = None,
     *,
     model_path: str = "",
+    set_env: bool = True,
 ) -> DeviceName:
     """Set POSE_DEVICE for downstream PoseExtractor and return the resolved device."""
     user_explicit = bool(explicit and explicit.strip().lower() not in ("", "auto"))
     device = resolve_pose_device(explicit)
     if not user_explicit:
         device = prefer_cpu_over_mps_for_pose(device, model_path)
-    os.environ["POSE_DEVICE"] = device
+    if set_env:
+        os.environ["POSE_DEVICE"] = device
     return device
