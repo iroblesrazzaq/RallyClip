@@ -9,10 +9,11 @@ This public repo is the local product:
 
 
 ## Features coming soon (in rough order)
-- Deployed model to web (alpha coming soon!)
-- Scaling data -> better models
-- Rally segmentation
-- clean up repo lol
+- gh release (desktop app)
+- Retrain on YOLOv26-pose model for better accuracy/lower FLOPS
+- Retrain on scaled data
+- quantize yolov26 to int8 for edge inference speed
+
 
 ## Features down the road
 In no particular order,
