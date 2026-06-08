@@ -286,7 +286,7 @@ def _estimate_duration_seconds(video_path: Path) -> float:
             if getattr(stream, "duration", None) and getattr(stream, "time_base", None):
                 return float(stream.duration * stream.time_base)
             if container.duration:
-                return float(container.duration) / av.time_base
+                return float(container.duration) * float(av.time_base)
     except Exception:
         return 0.0
     return 0.0
