@@ -62,3 +62,14 @@ def test_ensure_job_dir_rejects_path_traversal(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError):
         gui_app._ensure_job_dir("../../outside")
+
+
+def test_default_config_excludes_ui_metadata():
+    from gui import app as gui_app
+
+    assert "available_devices" not in gui_app.DEFAULT_CONFIG
+    assert "auto_device" not in gui_app.DEFAULT_CONFIG
+
+    normalized = gui_app._normalize_config({})
+    assert "available_devices" not in normalized
+    assert "auto_device" not in normalized

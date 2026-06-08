@@ -76,3 +76,21 @@ def test_apply_pose_device_honors_explicit_mps(monkeypatch):
 
     device = apply_pose_device("mps", model_path="yolov8n-pose.pt")
     assert device == "mps"
+
+
+def test_apply_pose_device_gui_mode_ignores_ambient_env(monkeypatch):
+    """GUI jobs use set_env=False and must not inherit shell POSE_DEVICE."""
+    import os
+
+    torch_mod = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: False),
+        backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: True)),
+    )
+    monkeypatch.setitem(__import__("sys").modules, "torch", torch_mod)
+    monkeypatch.setenv("POSE_DEVICE", "cuda")
+
+    from runtime.device import apply_pose_device
+
+    device = apply_pose_device(None, model_path="yolov8n-pose.pt", set_env=False)
+    assert device == "cpu"
+    assert os.environ["POSE_DEVICE"] == "cuda"
