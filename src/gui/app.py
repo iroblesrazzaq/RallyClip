@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 import threading
@@ -150,7 +151,10 @@ CORS(
     app,
     resources={
         r"/api/*": {
-            "origins": [r"http://127\.0\.0\.1:\d+", r"http://localhost:\d+"],
+            "origins": [
+                re.compile(r"http://127\.0\.0\.1:\d+"),
+                re.compile(r"http://localhost:\d+"),
+            ],
         }
     },
 )

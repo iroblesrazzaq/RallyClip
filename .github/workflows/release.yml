@@ -49,6 +49,7 @@ jobs:
           test -f models/rallyclip_v0.3.1/model.onnx
           test -f models/rallyclip_v0.3.1/scaler.json
           test -f models/rallyclip_v0.3.1/manifest.json
+          test -f src/preprocessing/default_court_mask.png
       - name: Build desktop bundle
         shell: bash
         run: |
