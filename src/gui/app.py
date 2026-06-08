@@ -395,6 +395,7 @@ def _run_pipeline(job_id: str) -> None:
             imgsz=int(cfg["imgsz"]),
             annotations_csv=None,
             progress_callback=pose_progress,
+            output_dir=str(job_dir),
         )
         job["paths"]["raw_npz"] = raw_npz
         _set_step(job, "pose", "completed", 100)
