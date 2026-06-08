@@ -285,8 +285,8 @@ def _estimate_duration_seconds(video_path: Path) -> float:
             stream = container.streams.video[0]
             if getattr(stream, "duration", None) and getattr(stream, "time_base", None):
                 return float(stream.duration * stream.time_base)
-            if container.duration and container.time_base:
-                return float(container.duration * container.time_base)
+            if container.duration:
+                return float(container.duration) / av.time_base
     except Exception:
         return 0.0
     return 0.0
@@ -366,6 +366,7 @@ def _run_pipeline(job_id: str) -> None:
             save_court_masks=False,
             yolo_model_path=yolo_weights,
             conf=float(cfg["conf"]),
+            yolo_device=pose_device,
         )
         _check_cancel(job)
         _set_step(job, "pose", "in_progress", 1)
