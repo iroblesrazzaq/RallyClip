@@ -1,14 +1,19 @@
 import os
-import subprocess
 import time
 from typing import Callable, Optional
-import numpy as np
+
 import av
-from ultralytics import YOLO
-from ultralytics.utils import SETTINGS
+import logging
+import numpy as np
 import torch
 from tqdm import tqdm
-import logging
+from ultralytics import YOLO
+from ultralytics.utils import SETTINGS
+
+
+def _pipeline_profile() -> str:
+    profile = os.environ.get("PIPELINE_PROFILE", "").strip().lower()
+    return profile or "main"
 
 
 
@@ -34,14 +39,7 @@ class PoseExtractor:
         self.model_dir = model_dir
         self.imgsz = int(imgsz)
 
-        profile = os.environ.get("PIPELINE_PROFILE", "").strip().lower()
-        if not profile:
-            try:
-                git_branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, check=True)
-                branch_name = git_branch.stdout.strip()
-                profile = "mvp" if branch_name == "mvp" else "main"
-            except Exception:
-                profile = "main"
+        profile = _pipeline_profile()
 
         from runtime.device import prefer_cpu_over_mps_for_pose, resolve_pose_device
 
