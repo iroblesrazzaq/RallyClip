@@ -275,6 +275,7 @@ class RallyClipApp {
         try { storedId = localStorage.getItem("rallyclip_job_id"); } catch (_) {}
         if (!storedId) return;
         this.currentJobId = storedId;
+        this.isProcessing = true;
         this.progressCard.hidden = false;
         this.startBtn.disabled = true;
         this.cancelBtn.disabled = false;
