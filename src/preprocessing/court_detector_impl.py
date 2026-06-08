@@ -20,7 +20,7 @@ class CourtDetector:
     A class for detecting tennis court boundaries and estimating playable areas from video frames.
     """
     
-    def __init__(self, yolo_model_path: str = 'models/yolov8n-pose.pt', conf: float = 0.25):
+    def __init__(self, yolo_model_path: str = 'models/yolov8n-pose.pt', conf: float = 0.25, device: Optional[str] = None):
         """
         Initialize the CourtDetector.
 
@@ -34,12 +34,15 @@ class CourtDetector:
         self.BASELINE_WIDTH_RATIO = 0.6
         self.yolo_model_path = yolo_model_path
         self.conf = float(conf)
+        self.device = device
         self.yolo_model = None
         
         # Initialize YOLO model if available
         if YOLO_AVAILABLE:
             try:
                 self.yolo_model = YOLO(yolo_model_path)
+                if self.device:
+                    self.yolo_model.to(self.device)
                 logging.info("YOLO model loaded successfully")
             except Exception as e:
                 logging.warning("YOLO model failed to load: %s", e)

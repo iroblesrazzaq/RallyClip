@@ -8,7 +8,7 @@ from preprocessing.court_detector import CourtDetector
 
 
 class DataPreprocessor:
-    def __init__(self, screen_width: int = 1280, screen_height: int = 720, merge_iou_thresh: float = 0.6, save_court_masks: bool = False, yolo_model_path: str = "yolov8n-pose.pt", conf: float = 0.25) -> None:
+    def __init__(self, screen_width: int = 1280, screen_height: int = 720, merge_iou_thresh: float = 0.6, save_court_masks: bool = False, yolo_model_path: str = "yolov8n-pose.pt", conf: float = 0.25, yolo_device: str | None = None) -> None:
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.screen_center_x = screen_width / 2
@@ -18,6 +18,7 @@ class DataPreprocessor:
         # pinned in the model manifest) so there is one model in play and one auto-download.
         self.yolo_model_path = yolo_model_path
         self.conf = float(conf)
+        self.yolo_device = yolo_device
         self.left_zone_x = screen_width * 0.10
         self.right_zone_x = screen_width * 0.90
         self.bottom_zone_y = screen_height * 0.80
@@ -123,7 +124,7 @@ class DataPreprocessor:
 
     def generate_court_mask(self, video_path: str):
         try:
-            detector = CourtDetector(yolo_model_path=self.yolo_model_path, conf=self.conf)
+            detector = CourtDetector(yolo_model_path=self.yolo_model_path, conf=self.conf, device=self.yolo_device)
             mask, clean_frame, metadata = detector.process_video(video_path, target_time=60)
             return mask
         except Exception as e:
@@ -172,7 +173,7 @@ class DataPreprocessor:
         (resized to the frame) so frames are still filtered rather than passed through
         unmasked. Always returns (mask, metadata) with a usable mask (never None).
         """
-        detector = CourtDetector(yolo_model_path=self.yolo_model_path, conf=self.conf)
+        detector = CourtDetector(yolo_model_path=self.yolo_model_path, conf=self.conf, device=self.yolo_device)
         frame_shape = (self.screen_height, self.screen_width)
         for t in self._court_sample_times(video_path):
             try:
