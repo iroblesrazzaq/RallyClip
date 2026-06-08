@@ -35,12 +35,12 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
-          from pathlib import Path
           from ultralytics import YOLO
-          models_dir = Path("models")
-          models_dir.mkdir(parents=True, exist_ok=True)
+          # Downloads yolov8n-pose.pt into the Ultralytics cache dir
+          # (e.g. ~/.cache/ultralytics/). Not bundled by PyInstaller;
+          # Ultralytics auto-downloads at runtime on first use.
           YOLO("yolov8n-pose.pt")
-          print("YOLO weights ready in", models_dir)
+          print("YOLO weights downloaded to Ultralytics cache.")
           PY
       - name: Verify RallyClip model artifacts
         shell: bash

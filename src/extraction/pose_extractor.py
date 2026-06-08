@@ -112,6 +112,7 @@ class PoseExtractor:
         imgsz: Optional[int] = None,
         annotations_csv: Optional[str] = None,
         progress_callback: Optional[Callable[[float], None]] = None,
+        output_dir: Optional[str] = None,
     ) -> str:
         import csv
         predict_imgsz = int(self.imgsz if imgsz is None else imgsz)
@@ -290,10 +291,14 @@ class PoseExtractor:
         else:
             model_size = "s"
         subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{target_fps}fps_{start_time_seconds}s_to_{start_time_seconds + duration_seconds}s"
-        output_dir = os.path.join("pose_data", "raw", subdir_name)
-        os.makedirs(output_dir, exist_ok=True)
         base_name = os.path.splitext(os.path.basename(video_path))[0]
         output_filename = f"{base_name}_posedata_{start_time_seconds}s_to_{start_time_seconds + duration_seconds}s_yolo{model_size}.npz"
-        output_path = os.path.join(output_dir, output_filename)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = os.path.join(output_dir, output_filename)
+        else:
+            output_dir_path = os.path.join("pose_data", "raw", subdir_name)
+            os.makedirs(output_dir_path, exist_ok=True)
+            output_path = os.path.join(output_dir_path, output_filename)
         np.savez_compressed(output_path, frames=all_frames_data)
         return output_path
