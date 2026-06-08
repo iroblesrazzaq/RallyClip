@@ -326,7 +326,8 @@ def _run_pipeline(job_id: str) -> None:
         upload_path = Path(job["paths"]["upload"])
         job_dir = Path(job["paths"]["job_dir"])
         job_dir.mkdir(parents=True, exist_ok=True)
-        base_name = cfg.get("output_name") or upload_path.stem
+        raw_output_name = cfg.get("output_name") or upload_path.stem
+        base_name = Path(str(raw_output_name)).name or upload_path.stem
 
         duration_seconds = _estimate_duration_seconds(upload_path)
         if duration_seconds <= 0:
