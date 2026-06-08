@@ -280,9 +280,13 @@ def _resolve_model_paths(cfg: Dict[str, Any]) -> tuple[Path, Path]:
 def _estimate_duration_seconds(video_path: Path) -> float:
     try:
         with av.open(str(video_path)) as container:
+            if not container.streams.video:
+                return 0.0
             stream = container.streams.video[0]
             if getattr(stream, "duration", None) and getattr(stream, "time_base", None):
                 return float(stream.duration * stream.time_base)
+            if container.duration and container.time_base:
+                return float(container.duration * container.time_base)
     except Exception:
         return 0.0
     return 0.0
@@ -326,7 +330,8 @@ def _run_pipeline(job_id: str) -> None:
 
         duration_seconds = _estimate_duration_seconds(upload_path)
         if duration_seconds <= 0:
-            duration_seconds = float(cfg.get("duration", 0) or 0)
+            cfg_duration = float(cfg.get("duration") or 0)
+            duration_seconds = cfg_duration if 0 < cfg_duration < 999999 else 600.0
         elif cfg.get("duration") and cfg["duration"] > 0:
             duration_seconds = min(duration_seconds, float(cfg["duration"]))
         weights = _compute_weights(duration_seconds)

@@ -34,6 +34,8 @@ class PoseExtractor:
         imgsz: int = 1920,
         device: Optional[str] = None,
     ) -> None:
+        # When device is set, use it as-is. Auto-selected devices should be
+        # resolved via runtime.device.apply_pose_device before construction.
         # Set early so downstream checks can use it
         self.model_path = model_path
         self.model_dir = model_dir
