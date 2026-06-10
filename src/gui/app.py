@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import socket
+import sys
 import threading
 import time
 import uuid
@@ -41,7 +42,12 @@ from infer import (
 )
 from preprocessing.data_preprocessor import DataPreprocessor
 from runtime.defaults import build_gui_defaults
-from runtime.device import apply_pose_device, detect_available_devices, resolve_auto_device
+from runtime.device import (
+    apply_pose_device,
+    detect_available_devices,
+    prefer_cpu_over_mps_for_pose,
+    resolve_auto_device,
+)
 from runtime.paths import resolve_frontend_dir
 from segmentation.segment import segment_video
 
@@ -51,8 +57,18 @@ JobDict = Dict[str, Any]
 STATIC_DIR = resolve_frontend_dir()
 
 
+def _frozen_data_root() -> Optional[Path]:
+    """In packaged builds, keep user data out of the bundle and the CWD."""
+    if getattr(sys, "frozen", False):
+        return (Path.home() / "RallyClip").resolve()
+    return None
+
+
 def _default_jobs_dir() -> Path:
     """Pick a jobs/output root inside the RallyClip install if possible; fallback to CWD."""
+    frozen_root = _frozen_data_root()
+    if frozen_root is not None:
+        return frozen_root / "jobs"
     for root in _candidate_roots():
         root_path = Path(root).resolve()
         if (root_path / "models").exists() or (root_path / "gui").exists():
@@ -61,6 +77,9 @@ def _default_jobs_dir() -> Path:
 
 
 def _default_output_dir() -> Path:
+    frozen_root = _frozen_data_root()
+    if frozen_root is not None:
+        return frozen_root / "output_videos"
     for root in _candidate_roots():
         root_path = Path(root).resolve()
         if (root_path / "models").exists() or (root_path / "gui").exists():
@@ -69,6 +88,9 @@ def _default_output_dir() -> Path:
 
 
 def _default_csv_dir() -> Path:
+    frozen_root = _frozen_data_root()
+    if frozen_root is not None:
+        return frozen_root / "output_csvs"
     for root in _candidate_roots():
         root_path = Path(root).resolve()
         if (root_path / "models").exists() or (root_path / "gui").exists():
@@ -348,11 +370,15 @@ def _run_pipeline(job_id: str) -> None:
 
         model_path, scaler_path = _resolve_model_paths(cfg)
         models_dir = None
-        for root in _candidate_roots():
-            candidate = Path(root) / "models"
-            if candidate.exists():
-                models_dir = str(candidate.resolve())
-                break
+        frozen_root = _frozen_data_root()
+        if frozen_root is not None:
+            models_dir = str(frozen_root / "models")
+        else:
+            for root in _candidate_roots():
+                candidate = Path(root) / "models"
+                if candidate.exists():
+                    models_dir = str(candidate.resolve())
+                    break
 
         _check_cancel(job)
         if str(cfg.get("feature_set", "v1")) != "v1":
@@ -572,7 +598,11 @@ def health() -> tuple[Any, int]:
 def config_defaults() -> tuple[Any, int]:
     defaults = {**DEFAULT_CONFIG}
     available = detect_available_devices()
-    auto_device = resolve_auto_device()
+    # Report the device the pipeline will actually use on "Auto" (auto-MPS is
+    # downgraded to CPU for pose models).
+    auto_device = prefer_cpu_over_mps_for_pose(
+        resolve_auto_device(), _resolve_yolo_weights(DEFAULT_CONFIG), warn=False
+    )
     return jsonify(
         {
             "defaults": defaults,
@@ -591,9 +621,12 @@ def upload_and_start():
     file = request.files["video"]
     if not file or file.filename == "":
         return jsonify({"error": "No file provided"}), 400
-    filename = secure_filename(file.filename)
-    if not filename.lower().endswith(".mp4"):
+    if not file.filename.lower().endswith(".mp4"):
         return jsonify({"error": "Only MP4 files are supported"}), 400
+    filename = secure_filename(file.filename)
+    # secure_filename strips non-ASCII; don't reject those uploads, rename them.
+    if not filename.lower().endswith(".mp4") or filename.lower() == ".mp4":
+        filename = "input.mp4"
 
     try:
         cfg_raw = json.loads(request.form.get("config", "{}") or "{}")
@@ -645,9 +678,10 @@ def cancel_job(job_id: str):
         job = jobs.get(job_id)
     if job is None:
         return jsonify({"error": "Unknown job id"}), 404
-    job["cancelled"] = True
-    job["status"] = "cancelled"
-    return jsonify({"status": "cancelled"}), 200
+    if job["status"] == "in_progress":
+        job["cancelled"] = True
+        job["status"] = "cancelled"
+    return jsonify({"status": job["status"]}), 200
 
 
 @app.route("/api/download/video/<job_id>", methods=["GET"])
