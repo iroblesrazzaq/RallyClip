@@ -73,9 +73,14 @@ class RunConfig:
 
 
 def _candidate_roots() -> list[Path]:
-    """Possible roots where assets might live (repo root, cwd, site-packages)."""
+    """Possible roots where assets might live (frozen bundle, repo root, cwd, site-packages)."""
     here = Path(__file__).resolve()
-    roots = [Path.cwd()]
+    roots = []
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            roots.append(Path(meipass).resolve())
+    roots.append(Path.cwd())
     for depth in (2, 3, 4):
         try:
             roots.append(here.parents[depth])

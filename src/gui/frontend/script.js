@@ -264,9 +264,16 @@ class RallyClipApp {
     }
 
     startProgressMonitoring() {
-        this.progressInterval = setInterval(() => this.updateProgress().catch((err) => {
+        this.pollFailures = 0;
+        this.progressInterval = setInterval(() => this.updateProgress().then(() => {
+            this.pollFailures = 0;
+        }).catch((err) => {
             console.error(err);
-            this.stopProgressMonitoring();
+            this.pollFailures += 1;
+            if (this.pollFailures >= 5) {
+                this.stopProgressMonitoring();
+                this.onAnalysisError("Lost connection to the RallyClip backend.");
+            }
         }), 1000);
     }
 
@@ -358,8 +365,14 @@ class RallyClipApp {
         if (!this.currentJobId || !this.isProcessing) return;
         try {
             const response = await fetch(`/api/cancel/${this.currentJobId}`, { method: "POST" });
-            if (response.ok) this.onAnalysisCancelled();
-            else this.showToast("Could not cancel job.", "error");
+            if (response.ok) {
+                const payload = await response.json().catch(() => ({}));
+                // The job may have finished before the cancel landed; let the
+                // next progress poll surface the real terminal state.
+                if (payload.status === "cancelled") this.onAnalysisCancelled();
+            } else {
+                this.showToast("Could not cancel job.", "error");
+            }
         } catch (err) {
             console.error("Cancel request failed:", err);
             this.showToast("Cancel request failed.", "error");

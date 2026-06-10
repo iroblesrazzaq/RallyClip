@@ -61,13 +61,14 @@ def resolve_pose_device(explicit: Optional[str] = None, *, read_env: bool = True
     return resolve_auto_device()
 
 
-def prefer_cpu_over_mps_for_pose(device: DeviceName, model_path: str) -> DeviceName:
+def prefer_cpu_over_mps_for_pose(device: DeviceName, model_path: str, *, warn: bool = True) -> DeviceName:
     """Avoid auto-selected MPS for YOLO pose models with known backend issues."""
     if device == "mps" and "pose" in model_path.lower():
-        logging.warning(
-            "POSE: defaulting to cpu due to known MPS pose performance issues; "
-            "set yolo_device=mps to force MPS."
-        )
+        if warn:
+            logging.warning(
+                "POSE: defaulting to cpu due to known MPS pose performance issues; "
+                "set yolo_device=mps to force MPS."
+            )
         return "cpu"
     return device
 
