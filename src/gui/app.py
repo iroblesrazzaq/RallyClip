@@ -117,8 +117,9 @@ def _sweep_old_jobs(max_age_hours: int = 24) -> None:
         pass
 
 
+# Created lazily on first job (upload mkdirs with parents=True); importing the
+# module must not write to disk.
 JOBS_DIR = _default_jobs_dir()
-JOBS_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_OUTPUT_DIR = _default_output_dir()
 DEFAULT_CSV_DIR = _default_csv_dir()
 
@@ -169,6 +170,7 @@ ADVANCED_WARNINGS = {
 }
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/")
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB — matches UI cap
 CORS(
     app,
     resources={
