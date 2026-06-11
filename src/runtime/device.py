@@ -76,7 +76,7 @@ def prefer_cpu_over_mps_for_pose(device: DeviceName, model_path: str, *, warn: b
 def apply_pose_device(
     explicit: Optional[str] = None,
     *,
-    model_path: str = "",
+    model_path: str,
     set_env: bool = True,
     read_env: Optional[bool] = None,
 ) -> DeviceName:

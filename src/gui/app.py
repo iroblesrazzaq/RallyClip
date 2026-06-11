@@ -285,6 +285,9 @@ def _safe_open_browser(port: int) -> None:
 # Keys the browser may override. Everything else (manifest-pinned inference
 # params, model/artifact paths) keeps the server-side default even though the
 # frontend round-trips the full defaults payload.
+# output_dir/csv_output_dir are intentionally free-form: this is a local
+# single-user app and choosing where outputs land is a feature (e.g. external
+# drives). Cross-origin abuse is blocked by _reject_cross_origin_writes.
 _CLIENT_KEYS = {
     "output_name",
     "output_dir",
@@ -440,6 +443,9 @@ def _run_pipeline(job_id: str) -> None:
         _check_cancel(job)
         _set_step(job, "pose", "in_progress", 1)
         court_mask, _ = pre.compute_court_mask(str(upload_path))
+        # Court mask detection has no inner progress hooks; tick so the bar
+        # visibly moves before pose extraction starts reporting.
+        _set_step(job, "pose", "in_progress", 3)
 
         _check_cancel(job)
         extractor = PoseExtractor(
@@ -452,7 +458,7 @@ def _run_pipeline(job_id: str) -> None:
         def pose_progress(frac: float, meta: Optional[Dict[str, Any]] = None) -> None:
             if job.get("cancelled"):
                 raise PoseExtractionCancelled("Job cancelled during pose extraction")
-            _set_step(job, "pose", "in_progress", int(1 + max(0.0, min(1.0, frac)) * 98))
+            _set_step(job, "pose", "in_progress", int(3 + max(0.0, min(1.0, frac)) * 96))
             if meta:
                 frames_seen = meta.get("frames_seen", meta.get("frames_done", 0))
                 frames_total = meta.get("frames_total", 1)
