@@ -59,11 +59,16 @@ jobs:
             --name RallyClip \
             --hidden-import=gui.app \
             --hidden-import=cli.main \
+            --hidden-import=runtime.assets \
             --hidden-import=runtime.device \
             --hidden-import=runtime.defaults \
             --hidden-import=runtime.paths \
             --collect-submodules=flask \
             --collect-all=ultralytics \
+            --exclude-module=PyQt5 \
+            --exclude-module=PyQt6 \
+            --exclude-module=PySide2 \
+            --exclude-module=openvino \
             --add-data "src/gui/frontend${SEP}gui/frontend" \
             --add-data "models/rallyclip_v0.3.1${SEP}models/rallyclip_v0.3.1" \
             --add-data "src/preprocessing/default_court_mask.png${SEP}preprocessing" \
