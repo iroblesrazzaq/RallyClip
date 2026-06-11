@@ -1,9 +1,29 @@
 from __future__ import annotations
 
+import os
 import sys
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+
+def _fix_frozen_webengine_paths() -> None:
+    """Point Qt at the relocated QtWebEngineCore.framework in macOS bundles.
+
+    PyInstaller moves the framework to the bundle root (codesign rules) but
+    Qt 6.11 still searches the PySide6/Qt/lib copy, which only carries the
+    main binary — without these overrides the app aborts at QWebEngineView.
+    """
+    if not getattr(sys, "frozen", False) or sys.platform != "darwin":
+        return
+    framework = Path(getattr(sys, "_MEIPASS", "")) / "QtWebEngineCore.framework" / "Versions" / "A"
+    helper = framework / "Helpers" / "QtWebEngineProcess.app" / "Contents" / "MacOS" / "QtWebEngineProcess"
+    resources = framework / "Resources"
+    if helper.exists():
+        os.environ.setdefault("QTWEBENGINEPROCESS_PATH", str(helper))
+    if resources.is_dir():
+        os.environ.setdefault("QTWEBENGINE_RESOURCES_PATH", str(resources))
 
 
 def _wait_for_backend(port: int, timeout_sec: float = 30.0, pump=None) -> bool:
@@ -32,6 +52,7 @@ def main() -> int:
         sys.argv = [sys.argv[0], *sys.argv[2:]]
         return cli_main()
 
+    _fix_frozen_webengine_paths()
     try:
         from PySide6.QtCore import Qt, QUrl
         from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
