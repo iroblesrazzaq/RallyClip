@@ -282,9 +282,30 @@ def _safe_open_browser(port: int) -> None:
         pass
 
 
+# Keys the browser may override. Everything else (manifest-pinned inference
+# params, model/artifact paths) keeps the server-side default even though the
+# frontend round-trips the full defaults payload.
+_CLIENT_KEYS = {
+    "output_name",
+    "output_dir",
+    "csv_output_dir",
+    "yolo_size",
+    "yolo_device",
+    "write_csv",
+    "segment_video",
+    "low",
+    "high",
+    "min_dur_sec",
+    "start_time",
+    "duration",
+}
+
+
 def _normalize_config(raw: Dict[str, Any]) -> Dict[str, Any]:
     cfg = {**DEFAULT_CONFIG}
-    cfg.update({k: v for k, v in (raw or {}).items() if v is not None})
+    cfg.update(
+        {k: v for k, v in (raw or {}).items() if v is not None and k in _CLIENT_KEYS}
+    )
     return cfg
 
 
