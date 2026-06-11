@@ -27,7 +27,7 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
 import numpy as np
 import av
 
-from cli.main import YOLO_SIZE_MAP, _candidate_roots, _resolve_asset
+from runtime.assets import YOLO_SIZE_MAP, candidate_roots, resolve_asset
 from extraction.pose_extractor import PoseExtractionCancelled, PoseExtractor
 from features.feature_engineer import FeatureEngineer
 from infer import (
@@ -69,7 +69,7 @@ def _default_jobs_dir() -> Path:
     frozen_root = _frozen_data_root()
     if frozen_root is not None:
         return frozen_root / "jobs"
-    for root in _candidate_roots():
+    for root in candidate_roots():
         root_path = Path(root).resolve()
         if (root_path / "models").exists() or (root_path / "gui").exists():
             return (root_path / "RallyClipJobs").resolve()
@@ -80,7 +80,7 @@ def _default_output_dir() -> Path:
     frozen_root = _frozen_data_root()
     if frozen_root is not None:
         return frozen_root / "output_videos"
-    for root in _candidate_roots():
+    for root in candidate_roots():
         root_path = Path(root).resolve()
         if (root_path / "models").exists() or (root_path / "gui").exists():
             return (root_path / "output_videos").resolve()
@@ -91,7 +91,7 @@ def _default_csv_dir() -> Path:
     frozen_root = _frozen_data_root()
     if frozen_root is not None:
         return frozen_root / "output_csvs"
-    for root in _candidate_roots():
+    for root in candidate_roots():
         root_path = Path(root).resolve()
         if (root_path / "models").exists() or (root_path / "gui").exists():
             return (root_path / "output_csvs").resolve()
@@ -322,7 +322,7 @@ def _resolve_yolo_weights(cfg: Dict[str, Any]) -> str:
 
 
 def _resolve_model_paths(cfg: Dict[str, Any]) -> tuple[Path, Path]:
-    model_path = _resolve_asset(
+    model_path = resolve_asset(
         cfg.get("model_path"),
         env_var="RALLYCLIP_MODEL_PATH",
         relatives=[
@@ -332,7 +332,7 @@ def _resolve_model_paths(cfg: Dict[str, Any]) -> tuple[Path, Path]:
         ],
         description="RallyClip model artifact (ONNX or PyTorch checkpoint)",
     )
-    scaler_path = _resolve_asset(
+    scaler_path = resolve_asset(
         cfg.get("scaler_path"),
         env_var="RALLYCLIP_SCALER_PATH",
         relatives=[
@@ -420,7 +420,7 @@ def _run_pipeline(job_id: str) -> None:
         if frozen_root is not None:
             models_dir = str(frozen_root / "models")
         else:
-            for root in _candidate_roots():
+            for root in candidate_roots():
                 candidate = Path(root) / "models"
                 if candidate.exists():
                     models_dir = str(candidate.resolve())

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from cli.main import YOLO_SIZE_MAP, _manifest_values, _resolve_asset
+from runtime.assets import YOLO_SIZE_MAP, manifest_values, resolve_asset
 from runtime.device import detect_available_devices, resolve_auto_device
 
 
@@ -22,13 +22,13 @@ def resolve_default_artifacts(
             raise FileNotFoundError(f"Artifact dir missing model/scaler: {artifact_path}")
         return model_path.resolve(), scaler_path.resolve(), manifest_path.resolve()
 
-    model_path = _resolve_asset(
+    model_path = resolve_asset(
         None,
         env_var="RALLYCLIP_MODEL_PATH",
         relatives=model_relatives,
         description="RallyClip model artifact (ONNX)",
     )
-    scaler_path = _resolve_asset(
+    scaler_path = resolve_asset(
         None,
         env_var="RALLYCLIP_SCALER_PATH",
         relatives=scaler_relatives,
@@ -41,7 +41,7 @@ def resolve_default_artifacts(
 def build_gui_defaults(artifact_dir: Optional[str] = None) -> Dict[str, Any]:
     """Manifest-driven defaults for the GUI, aligned with CLI contract fields."""
     model_path, _scaler_path, manifest_path = resolve_default_artifacts(artifact_dir)
-    manifest = _manifest_values(model_path, manifest_path if manifest_path.exists() else None)
+    manifest = manifest_values(model_path, manifest_path if manifest_path.exists() else None)
 
     required = (
         "fps",
