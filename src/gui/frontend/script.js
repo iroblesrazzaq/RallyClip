@@ -473,6 +473,7 @@ class RallyClipApp {
     }
 
     startNewAnalysis() {
+        this.stopProgressMonitoring();
         this.removeFile();
         this.resetProgress();
         this.resetControls();
