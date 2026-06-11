@@ -264,6 +264,7 @@ class RallyClipApp {
     }
 
     startProgressMonitoring() {
+        this.stopProgressMonitoring();
         this.pollFailures = 0;
         this.progressInterval = setInterval(() => this.updateProgress().then(() => {
             this.pollFailures = 0;

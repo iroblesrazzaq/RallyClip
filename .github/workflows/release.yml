@@ -58,6 +58,7 @@ jobs:
           pyinstaller --noconfirm --onedir \
             --name RallyClip \
             --hidden-import=gui.app \
+            --hidden-import=cli.main \
             --hidden-import=runtime.device \
             --hidden-import=runtime.defaults \
             --hidden-import=runtime.paths \
@@ -67,6 +68,30 @@ jobs:
             --add-data "models/rallyclip_v0.3.1${SEP}models/rallyclip_v0.3.1" \
             --add-data "src/preprocessing/default_court_mask.png${SEP}preprocessing" \
             src/gui/desktop.py
+      - name: Smoke test headless CLI in bundle
+        shell: bash
+        run: |
+          BIN="$(pwd)/dist/RallyClip/RallyClip"
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="$BIN.exe"; fi
+
+          # 1) Frozen import chain + argparse work.
+          "$BIN" --cli --help
+
+          # 2) Frozen asset resolution: hide the repo's models/ and run from a
+          #    neutral cwd so ONLY the bundled copy can satisfy resolve_asset
+          #    (candidate_roots includes the checkout via cwd/parent dirs).
+          #    Must fail cleanly on the missing video (exit 1, no traceback) —
+          #    a broken resolution also exits 1, but with a traceback.
+          mv models models_hidden
+          set +e
+          out=$(cd "$RUNNER_TEMP" && "$BIN" --cli --video ./missing.mp4 --no-segment-video 2>&1)
+          code=$?
+          set -e
+          mv models_hidden models
+          echo "$out"
+          test "$code" -eq 1
+          echo "$out" | grep -q "video file not found"
+          ! echo "$out" | grep -q "Traceback"
       - name: Archive build
         shell: bash
         run: |
