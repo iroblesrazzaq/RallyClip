@@ -13,7 +13,8 @@ def _wait_for_backend(port: int, timeout_sec: float = 15.0, pump=None) -> bool:
         if pump is not None:
             pump()
         try:
-            with urllib.request.urlopen(url, timeout=1.0) as resp:
+            # Short timeout so the splash-screen event pump isn't starved.
+            with urllib.request.urlopen(url, timeout=0.3) as resp:
                 if resp.status == 200:
                     return True
         except (urllib.error.URLError, TimeoutError):
