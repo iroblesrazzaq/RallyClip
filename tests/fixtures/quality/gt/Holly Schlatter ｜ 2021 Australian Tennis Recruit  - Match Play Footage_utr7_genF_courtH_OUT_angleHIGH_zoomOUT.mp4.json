@@ -1,0 +1,401 @@
+{
+  "video_path": "/Users/ismaelrobles-razzaq/cs_projects/RallyClip/data/raw_videos/Holly Schlatter \uff5c 2021 Australian Tennis Recruit  - Match Play Footage_utr7_genF_courtH_OUT_angleHIGH_zoomOUT.mp4",
+  "segments": [
+    {
+      "start_time": 21.992296,
+      "end_time": 27.404093,
+      "label": "in_play"
+    },
+    {
+      "start_time": 45.6171,
+      "end_time": 50.070592,
+      "label": "in_play"
+    },
+    {
+      "start_time": 74.725864,
+      "end_time": 78.08319,
+      "label": "in_play"
+    },
+    {
+      "start_time": 83.686471,
+      "end_time": 95.088677,
+      "label": "in_play"
+    },
+    {
+      "start_time": 115.364011,
+      "end_time": 118.429239,
+      "label": "in_play"
+    },
+    {
+      "start_time": 123.626224,
+      "end_time": 130.894483,
+      "label": "in_play"
+    },
+    {
+      "start_time": 147.914515,
+      "end_time": 170.057434,
+      "label": "in_play"
+    },
+    {
+      "start_time": 190.240047,
+      "end_time": 196.085154,
+      "label": "in_play"
+    },
+    {
+      "start_time": 212.3114,
+      "end_time": 217.607082,
+      "label": "in_play"
+    },
+    {
+      "start_time": 230.640276,
+      "end_time": 240.573033,
+      "label": "in_play"
+    },
+    {
+      "start_time": 322.076712,
+      "end_time": 348.821955,
+      "label": "in_play"
+    },
+    {
+      "start_time": 364.216594,
+      "end_time": 368.920622,
+      "label": "in_play"
+    },
+    {
+      "start_time": 374.215187,
+      "end_time": 391.740168,
+      "label": "in_play"
+    },
+    {
+      "start_time": 406.857192,
+      "end_time": 412.62928,
+      "label": "in_play"
+    },
+    {
+      "start_time": 419.555079,
+      "end_time": 433.797703,
+      "label": "in_play"
+    },
+    {
+      "start_time": 454.459925,
+      "end_time": 460.524592,
+      "label": "in_play"
+    },
+    {
+      "start_time": 464.956675,
+      "end_time": 477.49277,
+      "label": "in_play"
+    },
+    {
+      "start_time": 504.117016,
+      "end_time": 513.407848,
+      "label": "in_play"
+    },
+    {
+      "start_time": 527.231357,
+      "end_time": 540.273359,
+      "label": "in_play"
+    },
+    {
+      "start_time": 579.485214,
+      "end_time": 582.397267,
+      "label": "in_play"
+    },
+    {
+      "start_time": 595.079982,
+      "end_time": 598.533876,
+      "label": "in_play"
+    },
+    {
+      "start_time": 603.135092,
+      "end_time": 606.305009,
+      "label": "in_play"
+    },
+    {
+      "start_time": 631.345719,
+      "end_time": 636.535189,
+      "label": "in_play"
+    },
+    {
+      "start_time": 646.196638,
+      "end_time": 658.288143,
+      "label": "in_play"
+    },
+    {
+      "start_time": 676.497331,
+      "end_time": 679.901226,
+      "label": "in_play"
+    },
+    {
+      "start_time": 699.029368,
+      "end_time": 703.497443,
+      "label": "in_play"
+    },
+    {
+      "start_time": 846.552266,
+      "end_time": 850.865249,
+      "label": "in_play"
+    },
+    {
+      "start_time": 863.104469,
+      "end_time": 872.529417,
+      "label": "in_play"
+    },
+    {
+      "start_time": 890.577384,
+      "end_time": 902.819725,
+      "label": "in_play"
+    },
+    {
+      "start_time": 916.342574,
+      "end_time": 922.730984,
+      "label": "in_play"
+    },
+    {
+      "start_time": 928.697495,
+      "end_time": 939.633524,
+      "label": "in_play"
+    },
+    {
+      "start_time": 958.051448,
+      "end_time": 963.380252,
+      "label": "in_play"
+    },
+    {
+      "start_time": 977.173341,
+      "end_time": 982.844052,
+      "label": "in_play"
+    },
+    {
+      "start_time": 993.802271,
+      "end_time": 1008.511569,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1035.492179,
+      "end_time": 1038.741784,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1042.443904,
+      "end_time": 1046.405178,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1067.822367,
+      "end_time": 1072.078493,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1090.74203,
+      "end_time": 1093.681843,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1098.026722,
+      "end_time": 1112.048599,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1138.443975,
+      "end_time": 1145.348903,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1162.153102,
+      "end_time": 1165.713848,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1170.055333,
+      "end_time": 1181.691564,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1313.119859,
+      "end_time": 1332.563261,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1355.325808,
+      "end_time": 1360.364455,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1366.981504,
+      "end_time": 1371.476056,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1393.280064,
+      "end_time": 1399.612595,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1414.540659,
+      "end_time": 1418.975337,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1434.415474,
+      "end_time": 1440.760757,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1447.405894,
+      "end_time": 1464.24454,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1487.107167,
+      "end_time": 1513.323945,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1532.674378,
+      "end_time": 1553.043084,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1566.628128,
+      "end_time": 1578.450268,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1596.017825,
+      "end_time": 1601.03931,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1605.889384,
+      "end_time": 1611.282185,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1634.885188,
+      "end_time": 1651.83245,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1673.24417,
+      "end_time": 1684.43074,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1698.791766,
+      "end_time": 1704.759959,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1709.865066,
+      "end_time": 1715.557748,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1750.253705,
+      "end_time": 1761.95284,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1785.886873,
+      "end_time": 1793.777359,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1805.364217,
+      "end_time": 1808.359607,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1814.026554,
+      "end_time": 1818.901328,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1840.897499,
+      "end_time": 1843.936078,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1856.3159,
+      "end_time": 1862.455141,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1885.165477,
+      "end_time": 1889.323804,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1894.150465,
+      "end_time": 1908.065361,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1935.740114,
+      "end_time": 1938.711438,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1942.184118,
+      "end_time": 1944.947477,
+      "label": "in_play"
+    },
+    {
+      "start_time": 2073.069969,
+      "end_time": 2099.773533,
+      "label": "in_play"
+    },
+    {
+      "start_time": 2115.698058,
+      "end_time": 2119.190726,
+      "label": "in_play"
+    },
+    {
+      "start_time": 2133.627574,
+      "end_time": 2158.35273,
+      "label": "in_play"
+    },
+    {
+      "start_time": 2186.408056,
+      "end_time": 2223.692225,
+      "label": "in_play"
+    },
+    {
+      "start_time": 2244.23173,
+      "end_time": 2249.797872,
+      "label": "in_play"
+    },
+    {
+      "start_time": 2261.612251,
+      "end_time": 2266.076015,
+      "label": "in_play"
+    },
+    {
+      "start_time": 2280.284549,
+      "end_time": 2297.952479,
+      "label": "in_play"
+    },
+    {
+      "start_time": 2321.855357,
+      "end_time": 2325.95867,
+      "label": "in_play"
+    },
+    {
+      "start_time": 2332.173807,
+      "end_time": 2339.523868,
+      "label": "in_play"
+    },
+    {
+      "start_time": 2361.43297,
+      "end_time": 2367.817449,
+      "label": "in_play"
+    },
+    {
+      "start_time": 2388.305053,
+      "end_time": 2396.334518,
+      "label": "in_play"
+    }
+  ],
+  "metadata": {}
+}
