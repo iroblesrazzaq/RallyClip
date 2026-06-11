@@ -646,6 +646,10 @@ def health() -> tuple[Any, int]:
 @app.route("/api/config/defaults", methods=["GET"])
 def config_defaults() -> tuple[Any, int]:
     defaults = {**DEFAULT_CONFIG}
+    # Server-internal values; the frontend never edits these (see _CLIENT_KEYS)
+    # and absolute server paths don't belong in the browser payload.
+    for key in ("model_path", "artifact_dir", "scaler_path", "yolo_weights"):
+        defaults.pop(key, None)
     available = detect_available_devices()
     # Report the device the pipeline will actually use on "Auto" (auto-MPS is
     # downgraded to CPU for pose models).
@@ -789,7 +793,7 @@ def _choose_gui_port(port: Optional[int] = None) -> int:
 def start_backend_thread(port: Optional[int] = None) -> tuple[int, threading.Thread]:
     """Start the Flask backend on localhost and return (port, thread)."""
     _configure_gui_logging()
-    _sweep_old_jobs()
+    threading.Thread(target=_sweep_old_jobs, daemon=True, name="rallyclip-job-sweep").start()
     chosen_port = _choose_gui_port(port)
 
     def _serve() -> None:
@@ -802,7 +806,7 @@ def start_backend_thread(port: Optional[int] = None) -> tuple[int, threading.Thr
 
 def launch(port: Optional[int] = None) -> int:
     _configure_gui_logging()
-    _sweep_old_jobs()
+    threading.Thread(target=_sweep_old_jobs, daemon=True, name="rallyclip-job-sweep").start()
     chosen_port = _choose_gui_port(port)
     threading.Thread(target=_safe_open_browser, args=(chosen_port,), daemon=True).start()
     app.logger.info("Starting GUI on http://127.0.0.1:%s", chosen_port)
