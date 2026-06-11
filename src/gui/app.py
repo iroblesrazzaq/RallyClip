@@ -151,6 +151,8 @@ def _load_default_config() -> Dict[str, Any]:
     cfg["output_dir"] = str(DEFAULT_OUTPUT_DIR)
     cfg["csv_output_dir"] = str(DEFAULT_CSV_DIR)
     cfg["output_name"] = None
+    # scaler_path is resolved fresh at job-run time via resolve_asset;
+    # model_path is retained from build_gui_defaults as a validated startup hint.
     cfg["scaler_path"] = None
     cfg.pop("available_devices", None)
     cfg.pop("auto_device", None)
@@ -176,8 +178,8 @@ CORS(
     resources={
         r"/api/*": {
             "origins": [
-                re.compile(r"http://127\.0\.0\.1:\d+$"),
-                re.compile(r"http://localhost:\d+$"),
+                re.compile(r"http://127\.0\.0\.1(:\d+)?$"),
+                re.compile(r"http://localhost(:\d+)?$"),
             ],
         }
     },
