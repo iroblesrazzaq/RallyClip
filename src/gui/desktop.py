@@ -6,7 +6,7 @@ import urllib.error
 import urllib.request
 
 
-def _wait_for_backend(port: int, timeout_sec: float = 15.0, pump=None) -> bool:
+def _wait_for_backend(port: int, timeout_sec: float = 30.0, pump=None) -> bool:
     deadline = time.time() + timeout_sec
     url = f"http://127.0.0.1:{port}/api/health"
     while time.time() < deadline:
@@ -23,6 +23,15 @@ def _wait_for_backend(port: int, timeout_sec: float = 15.0, pump=None) -> bool:
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--cli":
+        # Lazy import is deliberate: cli.main pulls torch/ultralytics, and
+        # importing it at module top would delay GUI startup before the
+        # splash screen can appear.
+        from cli.main import main as cli_main
+
+        sys.argv = [sys.argv[0], *sys.argv[2:]]
+        return cli_main()
+
     try:
         from PySide6.QtCore import Qt, QUrl
         from PySide6.QtGui import QColor, QFont, QPainter, QPixmap

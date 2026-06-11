@@ -151,8 +151,24 @@ pip install ".[desktop,pack]"
 python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt')"
 pyinstaller --noconfirm --onedir --name RallyClip src/gui/desktop.py \
   --hidden-import=gui.app \
+  --hidden-import=cli.main \
   --add-data "src/gui/frontend:gui/frontend" \
-  --add-data "models/rallyclip_v0.3.1:models/rallyclip_v0.3.1"
+  --add-data "models/rallyclip_v0.3.1:models/rallyclip_v0.3.1" \
+  --add-data "src/preprocessing/default_court_mask.png:preprocessing"
 ```
 
 Release artifacts include bundled RallyClip ONNX assets and download/cache YOLO weights during the build step.
+
+### Headless mode
+The shipped binary can run the full pipeline without launching the GUI. Pass
+`--cli` as the first argument; everything after it is the regular `rallyclip`
+CLI:
+
+```bash
+dist/RallyClip/RallyClip --cli --video match.mp4 --start-time 1240 --duration 180 \
+  --write-csv --csv-output-dir /tmp/out --no-segment-video
+```
+
+`RallyClip --cli --help` prints the full flag reference. Note: YOLO pose
+weights are not bundled; the first headless run downloads them into a
+`models/` folder under the current working directory.
