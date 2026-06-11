@@ -181,6 +181,28 @@ CORS(
     },
 )
 
+_LOCAL_ORIGIN_RE = re.compile(r"^http://(127\.0\.0\.1|localhost)(:\d+)?$")
+_LOCAL_HOSTS = {"127.0.0.1", "localhost"}
+
+
+@app.before_request
+def _reject_cross_origin_writes():
+    """Block drive-by POSTs from non-local web pages (and DNS-rebinding hosts).
+
+    Multipart form POSTs skip CORS preflight, so CORS alone does not stop a
+    malicious website from submitting jobs with attacker-chosen output paths.
+    """
+    if request.method not in {"POST", "PUT", "DELETE", "PATCH"}:
+        return None
+    origin = request.headers.get("Origin")
+    if origin and not _LOCAL_ORIGIN_RE.match(origin):
+        return jsonify({"error": "Forbidden origin"}), 403
+    host = (request.host or "").rsplit(":", 1)[0]
+    if host not in _LOCAL_HOSTS:
+        return jsonify({"error": "Forbidden host"}), 403
+    return None
+
+
 jobs_lock = threading.Lock()
 jobs: Dict[str, JobDict] = {}
 
@@ -503,13 +525,13 @@ def _run_pipeline(job_id: str) -> None:
         _check_cancel(job)
         _set_step(job, "output", "in_progress", 5)
         if cfg.get("write_csv"):
-            csv_out = Path(cfg["csv_output_dir"] or DEFAULT_CSV_DIR) / f"{base_name}_segments.csv"
+            csv_out = Path(cfg["csv_output_dir"] or DEFAULT_CSV_DIR).expanduser() / f"{base_name}_segments.csv"
             csv_out.parent.mkdir(parents=True, exist_ok=True)
             write_segments_csv(segments, str(csv_out), fps=float(cfg["fps"]), overwrite=True)
             job["paths"]["csv"] = str(csv_out)
         video_out_path = None
         if cfg.get("segment_video"):
-            video_out = Path(cfg["output_dir"] or DEFAULT_OUTPUT_DIR) / f"{base_name}_segmented.mp4"
+            video_out = Path(cfg["output_dir"] or DEFAULT_OUTPUT_DIR).expanduser() / f"{base_name}_segmented.mp4"
             video_out.parent.mkdir(parents=True, exist_ok=True)
             intervals_sec = [(start_idx / float(cfg["fps"]), end_idx / float(cfg["fps"])) for start_idx, end_idx in segments]
             if intervals_sec:
