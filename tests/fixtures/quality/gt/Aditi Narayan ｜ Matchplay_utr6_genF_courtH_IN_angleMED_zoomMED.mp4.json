@@ -1,0 +1,251 @@
+{
+  "video_path": "/Users/ismaelrobles-razzaq/cs_projects/RallyClip/data/raw_videos/Aditi Narayan \uff5c Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED.mp4",
+  "segments": [
+    {
+      "start_time": 4.220474,
+      "end_time": 17.265099,
+      "label": "in_play"
+    },
+    {
+      "start_time": 38.451591,
+      "end_time": 43.447445,
+      "label": "in_play"
+    },
+    {
+      "start_time": 63.151813,
+      "end_time": 68.100734,
+      "label": "in_play"
+    },
+    {
+      "start_time": 89.458978,
+      "end_time": 94.107372,
+      "label": "in_play"
+    },
+    {
+      "start_time": 119.343177,
+      "end_time": 122.597019,
+      "label": "in_play"
+    },
+    {
+      "start_time": 143.990095,
+      "end_time": 147.89165,
+      "label": "in_play"
+    },
+    {
+      "start_time": 154.179887,
+      "end_time": 160.787228,
+      "label": "in_play"
+    },
+    {
+      "start_time": 183.031548,
+      "end_time": 192.724717,
+      "label": "in_play"
+    },
+    {
+      "start_time": 211.615727,
+      "end_time": 220.686195,
+      "label": "in_play"
+    },
+    {
+      "start_time": 239.949784,
+      "end_time": 244.749374,
+      "label": "in_play"
+    },
+    {
+      "start_time": 247.961646,
+      "end_time": 253.221985,
+      "label": "in_play"
+    },
+    {
+      "start_time": 274.693034,
+      "end_time": 279.405634,
+      "label": "in_play"
+    },
+    {
+      "start_time": 293.593823,
+      "end_time": 302.420483,
+      "label": "in_play"
+    },
+    {
+      "start_time": 319.197203,
+      "end_time": 322.273788,
+      "label": "in_play"
+    },
+    {
+      "start_time": 356.616926,
+      "end_time": 363.983415,
+      "label": "in_play"
+    },
+    {
+      "start_time": 380.073424,
+      "end_time": 383.906421,
+      "label": "in_play"
+    },
+    {
+      "start_time": 397.010888,
+      "end_time": 402.76674,
+      "label": "in_play"
+    },
+    {
+      "start_time": 428.095773,
+      "end_time": 434.586741,
+      "label": "in_play"
+    },
+    {
+      "start_time": 450.890886,
+      "end_time": 454.707336,
+      "label": "in_play"
+    },
+    {
+      "start_time": 461.038785,
+      "end_time": 468.06416,
+      "label": "in_play"
+    },
+    {
+      "start_time": 489.510334,
+      "end_time": 495.474723,
+      "label": "in_play"
+    },
+    {
+      "start_time": 515.194262,
+      "end_time": 519.902263,
+      "label": "in_play"
+    },
+    {
+      "start_time": 541.650596,
+      "end_time": 547.897443,
+      "label": "in_play"
+    },
+    {
+      "start_time": 559.899924,
+      "end_time": 563.614982,
+      "label": "in_play"
+    },
+    {
+      "start_time": 566.987578,
+      "end_time": 579.493077,
+      "label": "in_play"
+    },
+    {
+      "start_time": 608.821029,
+      "end_time": 613.730749,
+      "label": "in_play"
+    },
+    {
+      "start_time": 624.885125,
+      "end_time": 635.177085,
+      "label": "in_play"
+    },
+    {
+      "start_time": 659.707902,
+      "end_time": 667.77531,
+      "label": "in_play"
+    },
+    {
+      "start_time": 685.8413,
+      "end_time": 689.517273,
+      "label": "in_play"
+    },
+    {
+      "start_time": 692.75828,
+      "end_time": 699.356986,
+      "label": "in_play"
+    },
+    {
+      "start_time": 726.752233,
+      "end_time": 730.415888,
+      "label": "in_play"
+    },
+    {
+      "start_time": 748.112191,
+      "end_time": 753.904541,
+      "label": "in_play"
+    },
+    {
+      "start_time": 768.409937,
+      "end_time": 772.676691,
+      "label": "in_play"
+    },
+    {
+      "start_time": 792.590274,
+      "end_time": 797.635607,
+      "label": "in_play"
+    },
+    {
+      "start_time": 811.290943,
+      "end_time": 815.799852,
+      "label": "in_play"
+    },
+    {
+      "start_time": 821.342666,
+      "end_time": 825.754624,
+      "label": "in_play"
+    },
+    {
+      "start_time": 845.756735,
+      "end_time": 849.733409,
+      "label": "in_play"
+    },
+    {
+      "start_time": 853.041684,
+      "end_time": 860.761379,
+      "label": "in_play"
+    },
+    {
+      "start_time": 906.807046,
+      "end_time": 919.282621,
+      "label": "in_play"
+    },
+    {
+      "start_time": 940.098623,
+      "end_time": 945.619509,
+      "label": "in_play"
+    },
+    {
+      "start_time": 951.131161,
+      "end_time": 958.629239,
+      "label": "in_play"
+    },
+    {
+      "start_time": 975.525785,
+      "end_time": 980.454486,
+      "label": "in_play"
+    },
+    {
+      "start_time": 985.684862,
+      "end_time": 992.764576,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1020.158792,
+      "end_time": 1024.284929,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1029.867208,
+      "end_time": 1037.455173,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1057.545377,
+      "end_time": 1064.422441,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1083.596365,
+      "end_time": 1089.020403,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1113.378515,
+      "end_time": 1123.091176,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1133.38003,
+      "end_time": 1138.084719,
+      "label": "in_play"
+    }
+  ],
+  "metadata": {}
+}

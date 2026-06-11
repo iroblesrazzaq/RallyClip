@@ -1,0 +1,281 @@
+{
+  "video_path": "/Users/ismaelrobles-razzaq/cs_projects/RallyClip/data/raw_videos/Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN.mp4",
+  "segments": [
+    {
+      "start_time": 25.703329,
+      "end_time": 45.16392,
+      "label": "in_play"
+    },
+    {
+      "start_time": 69.595699,
+      "end_time": 85.840987,
+      "label": "in_play"
+    },
+    {
+      "start_time": 123.42583,
+      "end_time": 126.800549,
+      "label": "in_play"
+    },
+    {
+      "start_time": 134.410936,
+      "end_time": 139.169225,
+      "label": "in_play"
+    },
+    {
+      "start_time": 159.845565,
+      "end_time": 164.153305,
+      "label": "in_play"
+    },
+    {
+      "start_time": 175.947261,
+      "end_time": 181.889927,
+      "label": "in_play"
+    },
+    {
+      "start_time": 206.497988,
+      "end_time": 209.408596,
+      "label": "in_play"
+    },
+    {
+      "start_time": 219.687308,
+      "end_time": 222.160103,
+      "label": "in_play"
+    },
+    {
+      "start_time": 247.60821,
+      "end_time": 253.175881,
+      "label": "in_play"
+    },
+    {
+      "start_time": 275.348034,
+      "end_time": 279.310549,
+      "label": "in_play"
+    },
+    {
+      "start_time": 286.30988,
+      "end_time": 290.28477,
+      "label": "in_play"
+    },
+    {
+      "start_time": 312.725892,
+      "end_time": 321.586309,
+      "label": "in_play"
+    },
+    {
+      "start_time": 537.196618,
+      "end_time": 557.888802,
+      "label": "in_play"
+    },
+    {
+      "start_time": 575.456878,
+      "end_time": 578.952559,
+      "label": "in_play"
+    },
+    {
+      "start_time": 584.625113,
+      "end_time": 597.424904,
+      "label": "in_play"
+    },
+    {
+      "start_time": 622.41062,
+      "end_time": 632.525728,
+      "label": "in_play"
+    },
+    {
+      "start_time": 654.959679,
+      "end_time": 657.881431,
+      "label": "in_play"
+    },
+    {
+      "start_time": 660.859219,
+      "end_time": 670.907221,
+      "label": "in_play"
+    },
+    {
+      "start_time": 690.77971,
+      "end_time": 694.522405,
+      "label": "in_play"
+    },
+    {
+      "start_time": 703.127742,
+      "end_time": 713.873158,
+      "label": "in_play"
+    },
+    {
+      "start_time": 770.344767,
+      "end_time": 779.462189,
+      "label": "in_play"
+    },
+    {
+      "start_time": 800.051257,
+      "end_time": 807.812922,
+      "label": "in_play"
+    },
+    {
+      "start_time": 878.409671,
+      "end_time": 887.699727,
+      "label": "in_play"
+    },
+    {
+      "start_time": 910.163203,
+      "end_time": 915.716427,
+      "label": "in_play"
+    },
+    {
+      "start_time": 939.70675,
+      "end_time": 944.859886,
+      "label": "in_play"
+    },
+    {
+      "start_time": 954.003897,
+      "end_time": 957.529687,
+      "label": "in_play"
+    },
+    {
+      "start_time": 967.274002,
+      "end_time": 977.60131,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1000.455971,
+      "end_time": 1006.456361,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1034.724837,
+      "end_time": 1038.598196,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1051.571727,
+      "end_time": 1059.451529,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1086.174856,
+      "end_time": 1090.353409,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1095.743849,
+      "end_time": 1105.96887,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1128.405369,
+      "end_time": 1131.231813,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1136.112447,
+      "end_time": 1141.94234,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1167.766104,
+      "end_time": 1171.438606,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1190.304711,
+      "end_time": 1193.108152,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1198.916938,
+      "end_time": 1203.036502,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1226.594285,
+      "end_time": 1232.257235,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1335.730083,
+      "end_time": 1341.821974,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1373.436751,
+      "end_time": 1381.017927,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1413.346222,
+      "end_time": 1417.131061,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1427.839759,
+      "end_time": 1433.915229,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1461.26926,
+      "end_time": 1465.160559,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1479.810914,
+      "end_time": 1483.300201,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1491.645222,
+      "end_time": 1495.174972,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1525.135417,
+      "end_time": 1530.969971,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1551.209642,
+      "end_time": 1555.072642,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1563.096635,
+      "end_time": 1570.901356,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1593.967088,
+      "end_time": 1597.716571,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1606.973353,
+      "end_time": 1610.648629,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1615.341987,
+      "end_time": 1619.420295,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1662.534585,
+      "end_time": 1674.126626,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1689.78486,
+      "end_time": 1693.884119,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1706.955255,
+      "end_time": 1710.944213,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1718.232799,
+      "end_time": 1722.285778,
+      "label": "in_play"
+    }
+  ],
+  "metadata": {}
+}

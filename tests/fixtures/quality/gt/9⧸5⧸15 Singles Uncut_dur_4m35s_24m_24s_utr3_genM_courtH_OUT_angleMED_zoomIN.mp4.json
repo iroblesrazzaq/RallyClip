@@ -1,0 +1,221 @@
+{
+  "video_path": "/Users/ismaelrobles-razzaq/cs_projects/RallyClip/data/raw_videos/9\u29f85\u29f815 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN.mp4",
+  "segments": [
+    {
+      "start_time": 3.405,
+      "end_time": 7.658,
+      "label": "in_play"
+    },
+    {
+      "start_time": 30.792,
+      "end_time": 34.432,
+      "label": "in_play"
+    },
+    {
+      "start_time": 54.046,
+      "end_time": 56.596,
+      "label": "in_play"
+    },
+    {
+      "start_time": 63.935,
+      "end_time": 70.925,
+      "label": "in_play"
+    },
+    {
+      "start_time": 94.248,
+      "end_time": 98.846,
+      "label": "in_play"
+    },
+    {
+      "start_time": 114.816,
+      "end_time": 122.052,
+      "label": "in_play"
+    },
+    {
+      "start_time": 146.426,
+      "end_time": 149.184,
+      "label": "in_play"
+    },
+    {
+      "start_time": 157.605,
+      "end_time": 170.529,
+      "label": "in_play"
+    },
+    {
+      "start_time": 216.623,
+      "end_time": 219.419,
+      "label": "in_play"
+    },
+    {
+      "start_time": 195.73,
+      "end_time": 198.847,
+      "label": "in_play"
+    },
+    {
+      "start_time": 233.671,
+      "end_time": 236.227,
+      "label": "in_play"
+    },
+    {
+      "start_time": 243.851,
+      "end_time": 255.027,
+      "label": "in_play"
+    },
+    {
+      "start_time": 281.704,
+      "end_time": 285.454,
+      "label": "in_play"
+    },
+    {
+      "start_time": 293.697,
+      "end_time": 299.717,
+      "label": "in_play"
+    },
+    {
+      "start_time": 326.818,
+      "end_time": 330.124,
+      "label": "in_play"
+    },
+    {
+      "start_time": 341.247,
+      "end_time": 343.854,
+      "label": "in_play"
+    },
+    {
+      "start_time": 384.86,
+      "end_time": 386.681,
+      "label": "in_play"
+    },
+    {
+      "start_time": 406.265,
+      "end_time": 410.066,
+      "label": "in_play"
+    },
+    {
+      "start_time": 424.298,
+      "end_time": 437.92,
+      "label": "in_play"
+    },
+    {
+      "start_time": 458.831,
+      "end_time": 488.626,
+      "label": "in_play"
+    },
+    {
+      "start_time": 512.441,
+      "end_time": 514.361,
+      "label": "in_play"
+    },
+    {
+      "start_time": 518.921,
+      "end_time": 532.542,
+      "label": "in_play"
+    },
+    {
+      "start_time": 566.009,
+      "end_time": 568.897,
+      "label": "in_play"
+    },
+    {
+      "start_time": 585.713,
+      "end_time": 588.422,
+      "label": "in_play"
+    },
+    {
+      "start_time": 600.275,
+      "end_time": 614.064,
+      "label": "in_play"
+    },
+    {
+      "start_time": 643.808,
+      "end_time": 652.581,
+      "label": "in_play"
+    },
+    {
+      "start_time": 670.15,
+      "end_time": 678.341,
+      "label": "in_play"
+    },
+    {
+      "start_time": 806.328,
+      "end_time": 809.627,
+      "label": "in_play"
+    },
+    {
+      "start_time": 820.748,
+      "end_time": 826.618,
+      "label": "in_play"
+    },
+    {
+      "start_time": 839.744,
+      "end_time": 841.876,
+      "label": "in_play"
+    },
+    {
+      "start_time": 856.582,
+      "end_time": 864.43,
+      "label": "in_play"
+    },
+    {
+      "start_time": 886.5,
+      "end_time": 888.091,
+      "label": "in_play"
+    },
+    {
+      "start_time": 903.057,
+      "end_time": 907.931,
+      "label": "in_play"
+    },
+    {
+      "start_time": 915.065,
+      "end_time": 917.115,
+      "label": "in_play"
+    },
+    {
+      "start_time": 934.224,
+      "end_time": 941.805,
+      "label": "in_play"
+    },
+    {
+      "start_time": 961.492,
+      "end_time": 964.482,
+      "label": "in_play"
+    },
+    {
+      "start_time": 972.642,
+      "end_time": 980.851,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1002.903,
+      "end_time": 1006.247,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1014.416,
+      "end_time": 1017.928,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1038.521,
+      "end_time": 1047.14,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1068.099,
+      "end_time": 1071.3,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1082.633,
+      "end_time": 1094.049,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1112.293,
+      "end_time": 1118.736,
+      "label": "in_play"
+    }
+  ],
+  "metadata": {}
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "id": "9515_singles_uncut",
+    "video": "9⧸5⧸15 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN.mp4",
+    "gt": "9⧸5⧸15 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN.mp4.json",
+    "start_time_s": 215,
+    "duration_s": 180,
+    "gt_points_in_window": 8
+  },
+  {
+    "id": "aditi_narayan_matchplay",
+    "video": "Aditi Narayan ｜ Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED.mp4",
+    "gt": "Aditi Narayan ｜ Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED.mp4.json",
+    "start_time_s": 460,
+    "duration_s": 180,
+    "gt_points_in_window": 8
+  },
+  {
+    "id": "holly_schlatter_matchplay",
+    "video": "Holly Schlatter ｜ 2021 Australian Tennis Recruit  - Match Play Footage_utr7_genF_courtH_OUT_angleHIGH_zoomOUT.mp4",
+    "gt": "Holly Schlatter ｜ 2021 Australian Tennis Recruit  - Match Play Footage_utr7_genF_courtH_OUT_angleHIGH_zoomOUT.mp4.json",
+    "start_time_s": 1033,
+    "duration_s": 180,
+    "gt_points_in_window": 8
+  },
+  {
+    "id": "otto_friedlein_matchplay",
+    "video": "Otto Friedlein - unedited matchplay_utr12_genM_courtH_IN_angleHIGH_zoomOUT.mp4",
+    "gt": "Otto Friedlein - unedited matchplay_utr12_genM_courtH_IN_angleHIGH_zoomOUT.mp4.json",
+    "start_time_s": 755,
+    "duration_s": 180,
+    "gt_points_in_window": 8
+  },
+  {
+    "id": "satoru_nakajima_matchplay",
+    "video": "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN.mp4",
+    "gt": "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN.mp4.json",
+    "start_time_s": 930,
+    "duration_s": 180,
+    "gt_points_in_window": 8
+  }
+]
