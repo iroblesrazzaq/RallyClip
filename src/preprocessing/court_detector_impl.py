@@ -356,8 +356,10 @@ class CourtDetector:
             
             max_dist = 0
             p1_final, p2_final = None, None
-            points = contour.reshape(-1, 2)
-            
+            # The farthest pair always lies on the convex hull, so scan the
+            # hull instead of every contour point.
+            points = cv2.convexHull(contour).reshape(-1, 2)
+
             for p1 in points:
                 for p2 in points:
                     dist = np.linalg.norm(p1 - p2)
@@ -672,9 +674,9 @@ class CourtDetector:
             else:
                 # Vertical line
                 cv2.line(final_result_image, (rx1, 0), (rx1, frame.shape[0]), (255, 0, 0), 5)
-            print("Right doubles sideline: FOUND")
+            logging.info("Right doubles sideline: FOUND")
         else:
-            print("Right doubles sideline: NOT FOUND")
+            logging.info("Right doubles sideline: NOT FOUND")
             failures.append("RIGHT SIDELINE")
             
         if left_doubles_sideline is not None:
@@ -692,9 +694,9 @@ class CourtDetector:
             else:
                 # Vertical line
                 cv2.line(final_result_image, (lx1, 0), (lx1, frame.shape[0]), (0, 0, 255), 5)
-            print("Left doubles sideline: FOUND")
+            logging.info("Left doubles sideline: FOUND")
         else:
-            print("Left doubles sideline: NOT FOUND")
+            logging.info("Left doubles sideline: NOT FOUND")
             failures.append("LEFT SIDELINE")
         
         # Draw extended doubles sidelines in pink and yellow (if both sidelines are found)
@@ -743,7 +745,7 @@ class CourtDetector:
                 right_shifted_x = rx1 + dynamic_shift
                 cv2.line(final_result_image, (right_shifted_x, 0), (right_shifted_x, frame.shape[0]), (0, 255, 255), 3)  # Yellow
             
-            print(f"Extended doubles sidelines drawn (left: pink, right: yellow, shift: {dynamic_shift:.1f}px)")
+            logging.info(f"Extended doubles sidelines drawn (left: pink, right: yellow, shift: {dynamic_shift:.1f}px)")
         
         # Add failure text to image
         if failures:
@@ -861,12 +863,12 @@ class CourtDetector:
             if abs(lowest_y - baseline_y) < tolerance:
                 close_lines.append(line)
         
-        print(f"{side.capitalize()} side: Found {len(close_lines)} lines close to baseline out of {len(diagonal_lines)} total")
+        logging.info(f"{side.capitalize()} side: Found {len(close_lines)} lines close to baseline out of {len(diagonal_lines)} total")
         
         # Decision tree based on number of close lines
         if len(close_lines) == 1:
             # Branch 1: Exactly ONE line is close to baseline
-            print(f"{side.capitalize()} side: Branch 1 - One close line (assumed singles sideline)")
+            logging.info(f"{side.capitalize()} side: Branch 1 - One close line (assumed singles sideline)")
             
             singles_line = close_lines[0]
             far_lines = [line for line in diagonal_lines if line not in close_lines]
@@ -911,12 +913,12 @@ class CourtDetector:
             if best_candidate is not None:
                 return best_candidate, True
             else:
-                print(f"{side.capitalize()} side: No valid outward candidate found")
+                logging.info(f"{side.capitalize()} side: No valid outward candidate found")
                 return None, False
                 
         elif len(close_lines) == 2:
             # Branch 2: Exactly TWO lines are close to baseline
-            print(f"{side.capitalize()} side: Branch 2 - Two close lines (singles and doubles sidelines)")
+            logging.info(f"{side.capitalize()} side: Branch 2 - Two close lines (singles and doubles sidelines)")
             
             line1, line2 = close_lines[0], close_lines[1]
             
@@ -953,7 +955,7 @@ class CourtDetector:
             
         else:
             # Branch 3: ZERO or MORE THAN TWO lines are close to baseline
-            print(f"{side.capitalize()} side: Branch 3 - Ambiguous case ({len(close_lines)} close lines)")
+            logging.info(f"{side.capitalize()} side: Branch 3 - Ambiguous case ({len(close_lines)} close lines)")
             return None, False
     
     def _process_partial_baseline_case(self, diagonal_lines: List, baseline: List, 
