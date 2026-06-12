@@ -160,6 +160,10 @@ def run_pipeline_to_csv(
         "--write-csv",
         "--csv-output-dir",
         str(csv_output_dir),
+        # Pin the output basename to the entry id so the expected CSV path
+        # doesn't depend on how the CLI treats exotic video filename stems.
+        "--output-name",
+        entry.id,
         "--no-segment-video",
     ]
     argv.extend(runner.extra_args)
@@ -169,7 +173,7 @@ def run_pipeline_to_csv(
             f"{entry.id}: pipeline failed with exit code {proc.returncode}\n"
             f"command: {' '.join(argv)}\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
         )
-    csv_path = csv_output_dir / f"{video_path.stem}_segments.csv"
+    csv_path = csv_output_dir / f"{entry.id}_segments.csv"
     if not csv_path.is_file():
         raise FileNotFoundError(
             f"{entry.id}: pipeline succeeded but did not write expected CSV: {csv_path}"
@@ -214,7 +218,9 @@ def load_segments_csv(path: Path) -> list[tuple[float, float]]:
     return segments
 
 
-def intervals_to_binary(segments: Iterable[tuple[float, float]], timestamps: np.ndarray) -> np.ndarray:
+def intervals_to_binary(segments: list[tuple[float, float]], timestamps: np.ndarray) -> np.ndarray:
+    # list, not Iterable: segments is re-consumed once per frame below, so a
+    # one-shot generator would silently classify every later frame as 0.
     binary = np.zeros(timestamps.shape, dtype=int)
     frame_intervals = _frame_intervals_from_timestamps(timestamps)
     for idx, (frame_start, frame_end) in enumerate(frame_intervals):
