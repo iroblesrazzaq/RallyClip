@@ -1,0 +1,220 @@
+{
+  "fps": 5.0,
+  "gt_dir": "tests/fixtures/quality/gt",
+  "manifest": "tests/fixtures/quality/manifest.json",
+  "per_video": [
+    {
+      "boundary_offsets": {
+        "matched_points": 5,
+        "mean_end_offset_s": 0.7804000000000082,
+        "mean_start_offset_s": 0.6929999999999973,
+        "p90_abs_end_offset_s": 1.4808000000000021,
+        "p90_abs_start_offset_s": 1.8371999999999957
+      },
+      "duration_s": 180,
+      "gt_points_in_window": 8,
+      "id": "9515_singles_uncut",
+      "point_metrics": {
+        "cut_off_points": 2,
+        "cut_off_rate": 0.25,
+        "false_detected_points": 0,
+        "false_detected_rate": 0.0,
+        "missed_points": 3,
+        "missed_rate": 0.375,
+        "total_pred_points": 5,
+        "total_true_points": 8,
+        "unmatched_predicted_points": 1,
+        "unmatched_predicted_rate": 0.2,
+        "well_classified_points": 3,
+        "well_classified_rate": 0.375
+      },
+      "pred_points": 5,
+      "segment_metrics": {
+        "coverage": 0.6312849162011174,
+        "mean_iou": 0.8056471720264845,
+        "segment_f1": 0.6153846153846154,
+        "segment_precision": 0.8,
+        "segment_recall": 0.5,
+        "specificity": 0.9694868238557559
+      },
+      "start_time_s": 215,
+      "video": "9\u29f85\u29f815 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN.mp4"
+    },
+    {
+      "boundary_offsets": {
+        "matched_points": 8,
+        "mean_end_offset_s": 0.3806897500000106,
+        "mean_start_offset_s": 0.02654587500000627,
+        "p90_abs_end_offset_s": 0.5155981000000155,
+        "p90_abs_start_offset_s": 0.10451569999995626
+      },
+      "duration_s": 180,
+      "gt_points_in_window": 8,
+      "id": "aditi_narayan_matchplay",
+      "point_metrics": {
+        "cut_off_points": 0,
+        "cut_off_rate": 0.0,
+        "false_detected_points": 0,
+        "false_detected_rate": 0.0,
+        "missed_points": 0,
+        "missed_rate": 0.0,
+        "total_pred_points": 8,
+        "total_true_points": 8,
+        "unmatched_predicted_points": 0,
+        "unmatched_predicted_rate": 0.0,
+        "well_classified_points": 8,
+        "well_classified_rate": 1.0
+      },
+      "pred_points": 8,
+      "segment_metrics": {
+        "coverage": 0.9929824561403513,
+        "mean_iou": 0.9371640456317885,
+        "segment_f1": 1.0,
+        "segment_precision": 1.0,
+        "segment_recall": 1.0,
+        "specificity": 0.9739837398373985
+      },
+      "start_time_s": 460,
+      "video": "Aditi Narayan \uff5c Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED.mp4"
+    },
+    {
+      "boundary_offsets": {
+        "matched_points": 8,
+        "mean_end_offset_s": 0.436223499999977,
+        "mean_start_offset_s": 0.027548499999981046,
+        "p90_abs_end_offset_s": 0.8289062000000218,
+        "p90_abs_start_offset_s": 0.38333660000001935
+      },
+      "duration_s": 180,
+      "gt_points_in_window": 8,
+      "id": "holly_schlatter_matchplay",
+      "point_metrics": {
+        "cut_off_points": 1,
+        "cut_off_rate": 0.125,
+        "false_detected_points": 0,
+        "false_detected_rate": 0.0,
+        "missed_points": 0,
+        "missed_rate": 0.0,
+        "total_pred_points": 8,
+        "total_true_points": 8,
+        "unmatched_predicted_points": 0,
+        "unmatched_predicted_rate": 0.0,
+        "well_classified_points": 7,
+        "well_classified_rate": 0.875
+      },
+      "pred_points": 8,
+      "segment_metrics": {
+        "coverage": 0.9770114942528736,
+        "mean_iou": 0.88875274122807,
+        "segment_f1": 1.0,
+        "segment_precision": 1.0,
+        "segment_recall": 1.0,
+        "specificity": 0.9655712050078243
+      },
+      "start_time_s": 1033,
+      "video": "Holly Schlatter \uff5c 2021 Australian Tennis Recruit  - Match Play Footage_utr7_genF_courtH_OUT_angleHIGH_zoomOUT.mp4"
+    },
+    {
+      "boundary_offsets": {
+        "matched_points": 8,
+        "mean_end_offset_s": 0.7752500000000038,
+        "mean_start_offset_s": 0.21675000000000355,
+        "p90_abs_end_offset_s": 1.2604999999999777,
+        "p90_abs_start_offset_s": 0.43259999999998455
+      },
+      "duration_s": 180,
+      "gt_points_in_window": 8,
+      "id": "otto_friedlein_matchplay",
+      "point_metrics": {
+        "cut_off_points": 1,
+        "cut_off_rate": 0.125,
+        "false_detected_points": 0,
+        "false_detected_rate": 0.0,
+        "missed_points": 0,
+        "missed_rate": 0.0,
+        "total_pred_points": 8,
+        "total_true_points": 8,
+        "unmatched_predicted_points": 0,
+        "unmatched_predicted_rate": 0.0,
+        "well_classified_points": 7,
+        "well_classified_rate": 0.875
+      },
+      "pred_points": 8,
+      "segment_metrics": {
+        "coverage": 0.9608540925266906,
+        "mean_iou": 0.8319868870019205,
+        "segment_f1": 1.0,
+        "segment_precision": 1.0,
+        "segment_recall": 1.0,
+        "specificity": 0.9483037156704363
+      },
+      "start_time_s": 755,
+      "video": "Otto Friedlein - unedited matchplay_utr12_genM_courtH_IN_angleHIGH_zoomOUT.mp4"
+    },
+    {
+      "boundary_offsets": {
+        "matched_points": 8,
+        "mean_end_offset_s": 0.29759400000002634,
+        "mean_start_offset_s": -0.056986125000013654,
+        "p90_abs_end_offset_s": 0.6070214000000405,
+        "p90_abs_start_offset_s": 0.6532771000000379
+      },
+      "duration_s": 180,
+      "gt_points_in_window": 8,
+      "id": "satoru_nakajima_matchplay",
+      "point_metrics": {
+        "cut_off_points": 0,
+        "cut_off_rate": 0.0,
+        "false_detected_points": 0,
+        "false_detected_rate": 0.0,
+        "missed_points": 0,
+        "missed_rate": 0.0,
+        "total_pred_points": 8,
+        "total_true_points": 8,
+        "unmatched_predicted_points": 0,
+        "unmatched_predicted_rate": 0.0,
+        "well_classified_points": 8,
+        "well_classified_rate": 1.0
+      },
+      "pred_points": 8,
+      "segment_metrics": {
+        "coverage": 0.9771863117870726,
+        "mean_iou": 0.8962656922686714,
+        "segment_f1": 1.0,
+        "segment_precision": 1.0,
+        "segment_recall": 1.0,
+        "specificity": 0.9670329670329667
+      },
+      "start_time_s": 930,
+      "video": "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN.mp4"
+    }
+  ],
+  "pooled": {
+    "cut_off_points": 4,
+    "cut_off_rate": 0.1,
+    "false_detected_points": 0,
+    "false_detected_rate": 0.0,
+    "missed_points": 3,
+    "missed_rate": 0.075,
+    "segment_f1_mean": 0.9230769230769231,
+    "segment_precision_mean": 0.96,
+    "segment_recall_mean": 0.9,
+    "total_pred_points": 37,
+    "total_true_points": 40,
+    "unmatched_predicted_points": 1,
+    "unmatched_predicted_rate": 0.02702702702702703,
+    "well_classified_points": 33,
+    "well_classified_rate": 0.825
+  },
+  "runner": {
+    "command": [
+      "python",
+      "-m",
+      "cli.main"
+    ],
+    "extra_args": [],
+    "mode": "dev",
+    "release_bin": null
+  },
+  "video_dir": "raw_videos"
+}
