@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -97,6 +98,55 @@ jobs:
           test "$code" -eq 1
           echo "$out" | grep -q "video file not found"
           ! echo "$out" | grep -q "Traceback"
+      - name: Run pipeline e2e on synthetic clip
+        shell: bash
+        run: |
+          BIN="$(pwd)/dist/RallyClip/RallyClip"
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="$BIN.exe"; fi
+
+          # Full frozen pipeline: PyAV decode -> court-mask fallback -> pose
+          # (downloads nano YOLO weights into $RUNNER_TEMP/models) -> features
+          # -> ONNX inference -> CSV. Zero detected segments is expected on a
+          # synthetic clip; the assertion is exit 0 + a header CSV.
+          python scripts/make_smoke_clip.py "$RUNNER_TEMP/smoke.mp4"
+          cd "$RUNNER_TEMP"
+          "$BIN" --cli --video ./smoke.mp4 --yolo-size nano \
+            --write-csv --csv-output-dir ./csv_out --no-segment-video
+          test -f csv_out/smoke_segments.csv
+          head -1 csv_out/smoke_segments.csv | grep -q "start_time,end_time"
+      - name: Install QtWebEngine runtime libs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3 libxkbcommon0 libasound2t64 libgbm1 \
+            libxcomposite1 libxdamage1 libxrandr2 libxtst6
+      - name: Probe GUI backend boot
+        shell: bash
+        run: |
+          BIN="$(pwd)/dist/RallyClip/RallyClip"
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="$BIN.exe"; fi
+
+          # Boot the GUI personality headlessly and prove Flask + Qt +
+          # WebEngine all come up in the frozen bundle (catches missing
+          # QtWebEngine helpers/resources per-OS).
+          export QT_QPA_PLATFORM=offscreen
+          export RALLYCLIP_GUI_PORT=8765
+          "$BIN" > gui_probe.log 2>&1 &
+          GUI_PID=$!
+          ok=""
+          for i in $(seq 1 60); do
+            if curl -s -m 2 http://127.0.0.1:8765/api/health | grep -q '"ok"'; then ok=1; break; fi
+            sleep 2
+          done
+          if [ -n "$ok" ]; then
+            curl -s -m 5 http://127.0.0.1:8765/api/config/defaults | grep -q "yolo_sizes" || ok=""
+          fi
+          kill $GUI_PID 2>/dev/null || true
+          if [ -z "$ok" ]; then
+            echo "GUI backend did not come up; log follows:"
+            cat gui_probe.log
+            exit 1
+          fi
       - name: Archive build
         shell: bash
         run: |
@@ -109,9 +159,17 @@ jobs:
             shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
           fi
       - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
             ${{ matrix.artifact }}.*
           draft: true
           generate_release_notes: true
+      - name: Upload workflow artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.*
+          retention-days: 7
