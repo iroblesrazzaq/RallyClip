@@ -1,0 +1,260 @@
+{
+  "segments": [
+    {
+      "start_time": 6.683,
+      "end_time": 10.253,
+      "label": "in_play"
+    },
+    {
+      "start_time": 15.409,
+      "end_time": 29.455,
+      "label": "in_play"
+    },
+    {
+      "start_time": 52.116,
+      "end_time": 54.899,
+      "label": "in_play"
+    },
+    {
+      "start_time": 61.663,
+      "end_time": 66.848,
+      "label": "in_play"
+    },
+    {
+      "start_time": 81.784,
+      "end_time": 95.35,
+      "label": "in_play"
+    },
+    {
+      "start_time": 111.574,
+      "end_time": 121.296,
+      "label": "in_play"
+    },
+    {
+      "start_time": 152.479,
+      "end_time": 169.903,
+      "label": "in_play"
+    },
+    {
+      "start_time": 194.905,
+      "end_time": 198.195,
+      "label": "in_play"
+    },
+    {
+      "start_time": 214.597,
+      "end_time": 221.945,
+      "label": "in_play"
+    },
+    {
+      "start_time": 242.042,
+      "end_time": 246.979,
+      "label": "in_play"
+    },
+    {
+      "start_time": 266.17,
+      "end_time": 268.949,
+      "label": "in_play"
+    },
+    {
+      "start_time": 284.101,
+      "end_time": 287.206,
+      "label": "in_play"
+    },
+    {
+      "start_time": 305.088,
+      "end_time": 307.932,
+      "label": "in_play"
+    },
+    {
+      "start_time": 314.808,
+      "end_time": 326.411,
+      "label": "in_play"
+    },
+    {
+      "start_time": 354.629,
+      "end_time": 359.899,
+      "label": "in_play"
+    },
+    {
+      "start_time": 384.814,
+      "end_time": 389.167,
+      "label": "in_play"
+    },
+    {
+      "start_time": 403.391,
+      "end_time": 440.472,
+      "label": "in_play"
+    },
+    {
+      "start_time": 474.245,
+      "end_time": 496.815,
+      "label": "in_play"
+    },
+    {
+      "start_time": 505.721,
+      "end_time": 515.105,
+      "label": "in_play"
+    },
+    {
+      "start_time": 542.791,
+      "end_time": 557.062,
+      "label": "in_play"
+    },
+    {
+      "start_time": 567.643,
+      "end_time": 575.52,
+      "label": "in_play"
+    },
+    {
+      "start_time": 591.934,
+      "end_time": 598.766,
+      "label": "in_play"
+    },
+    {
+      "start_time": 614.33,
+      "end_time": 620.208,
+      "label": "in_play"
+    },
+    {
+      "start_time": 636.317,
+      "end_time": 646.066,
+      "label": "in_play"
+    },
+    {
+      "start_time": 676.522,
+      "end_time": 679.571,
+      "label": "in_play"
+    },
+    {
+      "start_time": 687.538,
+      "end_time": 703.463,
+      "label": "in_play"
+    },
+    {
+      "start_time": 729.59,
+      "end_time": 744.17,
+      "label": "in_play"
+    },
+    {
+      "start_time": 770.249,
+      "end_time": 773.116,
+      "label": "in_play"
+    },
+    {
+      "start_time": 786.849,
+      "end_time": 794.525,
+      "label": "in_play"
+    },
+    {
+      "start_time": 812.055,
+      "end_time": 823.777,
+      "label": "in_play"
+    },
+    {
+      "start_time": 853.243,
+      "end_time": 856.898,
+      "label": "in_play"
+    },
+    {
+      "start_time": 866.04,
+      "end_time": 868.852,
+      "label": "in_play"
+    },
+    {
+      "start_time": 874.577,
+      "end_time": 888.655,
+      "label": "in_play"
+    },
+    {
+      "start_time": 908.569,
+      "end_time": 914.443,
+      "label": "in_play"
+    },
+    {
+      "start_time": 926.284,
+      "end_time": 931.932,
+      "label": "in_play"
+    },
+    {
+      "start_time": 950.416,
+      "end_time": 953.024,
+      "label": "in_play"
+    },
+    {
+      "start_time": 959.075,
+      "end_time": 964.528,
+      "label": "in_play"
+    },
+    {
+      "start_time": 986.875,
+      "end_time": 990.856,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1004.847,
+      "end_time": 1012.126,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1031.865,
+      "end_time": 1038.913,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1068.113,
+      "end_time": 1071.069,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1079.232,
+      "end_time": 1099.342,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1126.981,
+      "end_time": 1129.659,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1136.958,
+      "end_time": 1156.137,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1181.909,
+      "end_time": 1185.772,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1206.992,
+      "end_time": 1243.369,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1267.708,
+      "end_time": 1270.694,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1279.157,
+      "end_time": 1309.608,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1342.722,
+      "end_time": 1354.0,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1381.393,
+      "end_time": 1384.143,
+      "label": "in_play"
+    },
+    {
+      "start_time": 1399.508,
+      "end_time": 1426.121,
+      "label": "in_play"
+    }
+  ],
+  "metadata": {}
+}
