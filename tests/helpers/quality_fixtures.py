@@ -27,7 +27,7 @@ def resolve_artifact_dir() -> Path | None:
     raw = os.environ.get("RALLYCLIP_EVAL_ARTIFACT_DIR")
     if not raw:
         return None
-    path = Path(raw).expanduser()
-    if not path.is_dir():
-        raise FileNotFoundError(f"RALLYCLIP_EVAL_ARTIFACT_DIR is not a directory: {path}")
-    return path
+    # No existence check here: this runs at pytest collection time (module
+    # level), where raising would break the whole session. A bad path fails
+    # loudly inside the test via the CLI's own asset resolution instead.
+    return Path(raw).expanduser()
