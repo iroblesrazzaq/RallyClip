@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler
 import joblib
 
 from training.dataset.splits import SplitConfig, split_videos, temporal_split_indices
+from training.io.videos import is_flipped_video
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,10 @@ class DatasetBuilder:
 
                 if split_strategy == "within_video":
                     ranges = temporal_split_indices(features.shape[0], self.cfg.split.val_ratio, self.cfg.split.test_ratio)
+                    if is_flipped_video(video_name):
+                        # mirror_train: flipped variants augment train only; their
+                        # val/test slices would mirror-duplicate original-footage eval data.
+                        ranges = {"train": ranges["train"]}
                     for split_name, (start, end) in ranges.items():
                         seqs, labels, seq_frame_idx, seq_times = _make_sequences(
                             features[start:end],

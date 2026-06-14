@@ -1,0 +1,90 @@
+# YOLO26n-pose retrain of the v0.3.1 prod recipe (fps5 / seq20 / within_video / mirror).
+# Extraction samples at 10fps so a 10fps model can be tested later without re-extracting;
+# preprocess downsamples to the 5fps contract.
+data_root: /Users/ismaelrobles-razzaq/cs_projects/RallyClip/data
+run_id: prod_yolo26n960_fps5_seq20_mirror_v1
+steps:
+  - extract
+  - preprocess
+  - features
+  - dataset
+  - train
+  - eval
+videos: []
+overwrite_all: false
+
+yolo:
+  model: yolo26n-pose.pt
+  conf: 0.25
+  imgsz: 960
+  model_dir: models
+  device: mps
+  batch_size: 8
+
+extract:
+  mode: annotated
+  videos: []
+  start_time: 0
+  duration: null
+  sampling_mode: downsample_then_extract
+  sample_fps: 10
+  overwrite: false
+  resume: true
+
+preprocess:
+  target_fps: 5
+  save_court_masks: true
+  mode: annotated
+  videos: []
+  overwrite: false
+
+court:
+  model_path: null
+  target_time: 60
+  force: false
+
+features:
+  feature_set: v1
+  mode: annotated
+  videos: []
+  overwrite: false
+
+dataset:
+  seq_len_seconds: 20
+  overlap_seconds: 10
+  split:
+    strategy: within_video
+    seed: 67
+    test_videos: []
+    val_ratio: 0.1
+    test_ratio: 0.0
+  mode: annotated
+  videos: []
+
+train:
+  batch_size: 8
+  train_batch_size: 8
+  eval_batch_size: 8
+  grad_accum_steps: 1
+  num_workers: 0
+  epochs: 30
+  lr: 0.001
+  weight_decay: 0.01
+  pos_weight: 3.0
+  device: mps
+  threshold: 0.5
+  early_stopping_patience: 5
+  early_stopping_min_delta: 0.001
+  save_every_n: 0
+  segment_eval:
+    low: 0.45
+    high: 0.8
+    sigma: 1.5
+    min_dur_sec: 0.5
+
+wandb:
+  enabled: false
+  project: rallyclip-cv
+  entity: isi_uchicago_neurotech
+  group: null
+  tags: []

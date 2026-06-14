@@ -66,6 +66,10 @@ def flipped_video_name(video_name: str, suffix: str = "__flip_h") -> str:
     return f"{path.stem}{suffix}{path.suffix}"
 
 
+def is_flipped_video(video_name: str, suffix: str = "__flip_h") -> bool:
+    return Path(video_name).stem.endswith(suffix)
+
+
 def flipped_video_output_path(
     video_path: Path,
     *,

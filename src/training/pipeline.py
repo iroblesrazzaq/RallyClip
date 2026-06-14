@@ -652,6 +652,9 @@ def _run_eval(config: Dict[str, Any]) -> None:
     dataset_dir = datasets_dir(data_root) / config.get("run_id", "default")
     checkpoint_path = run_dir / "checkpoints" / "best.pth"
     test_path = dataset_dir / "test.h5"
+    if not test_path.exists():
+        logger.info("No test split at %s (test_ratio=0?); skipping eval", test_path)
+        return
 
     seg_cfg = train_cfg.get("segment_eval", {})
     segment_cfg = SegmentEvalConfig(
