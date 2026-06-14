@@ -1,0 +1,217 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xcolor}
+
+\newcommand{\iou}{\mathrm{IoU}}
+\newcommand{\diou}{\mathrm{DIoU}}
+
+\title{RallyClip: Segment-Level Evaluation Metrics \\ and an End-to-End Loss Function}
+\author{(spec only --- not implemented yet)}
+\date{June 2026}
+
+\begin{document}
+\maketitle
+
+\section*{Motivation}
+
+The product objective is ``good clips'': a predicted point should start a little before
+the actual point and end a little after it. We care about \textbf{absolute boundary
+distance in seconds}, not IoU's relative scaling --- a 0.5\,s late start is equally bad on
+a 3\,s point and a 30\,s point. IoU is used only for matching and as a coarse gate for the
+lower tiers. This complements (does not replace) the existing frame-level metrics
+(balanced accuracy, frame F1, AUROC).
+
+\section{Definitions}
+
+Ground-truth (GT) point $G = [g_s, g_e]$ and predicted segment $P = [p_s, p_e]$, in seconds.
+For a matched pair, define signed boundary errors
+\[
+e_s = p_s - g_s, \qquad e_e = p_e - g_e .
+\]
+Negative $e_s$ (early start) and positive $e_e$ (late end) add \emph{extra footage} around
+the point: the \textbf{outside} direction, mildly penalized. Positive $e_s$ and negative
+$e_e$ \emph{cut into} the point: the \textbf{inside} direction, strictly penalized.
+
+\section{Evaluation metric: the 6-bin proportion}
+
+\subsection{Flow}
+
+\begin{enumerate}[nosep]
+  \item \textbf{IoU cross-matrix} between every prediction and every GT point.
+  \item \textbf{Falses.} A prediction with $\max_G \iou(P,G) < 0.1$ is a
+        \emph{false positive}; a GT point with $\max_P \iou(P,G) < 0.1$ is a
+        \emph{false negative}. Both are removed before matching.
+  \item \textbf{Resolve to a 1-to-1 mapping.} Remaining entities may form many-to-one
+        mappings (two predictions on one GT = split; one prediction spanning two GTs =
+        merge). When this happens the outcome is definitely not a correct
+        classification, regardless of resolution. Heuristic:
+        \begin{enumerate}[nosep]
+          \item Match pairs with $\iou \ge 0.1$ \textbf{greedily by descending IoU},
+                each prediction and each GT used at most once.
+          \item Leftover \emph{predictions} (duplicates/fragments from a split)
+                $\rightarrow$ counted as \textbf{false positives} (an extra clip the
+                user must delete).
+          \item Leftover \emph{GT points} (losing side of a merge) $\rightarrow$
+                \textbf{false negatives} (that point gets no clip of its own).
+          \item The winning pair is tiered normally: its boundary errors are large by
+                construction, so the tolerances naturally demote it out of Good/Decent.
+        \end{enumerate}
+  \item \textbf{Tier the matched pairs} (each pair gets the best tier it satisfies).
+\end{enumerate}
+
+\subsection{Tiers}
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+\# & Tier & Condition & \\
+\midrule
+1 & Good & $-0.5 \le e_s \le +0.2$ \ and \ $-0.2 \le e_e \le +0.5$ & \\
+2 & Decent & $-1.5 \le e_s \le +0.5$ \ and \ $-0.5 \le e_e \le +1.5$ & (and not Good) \\
+3 & Recognized, bad segmentation & $\iou \ge 0.5$, outside Decent tolerances & \\
+4 & Poor point recognition & $0.1 \le \iou < 0.5$ & \\
+5 & False positive & prediction, $\max_G \iou < 0.1$ (or unmatched leftover) & \\
+6 & False negative & GT point, $\max_P \iou < 0.1$ (or unmatched leftover) & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Tolerance convention per boundary: \emph{outside / inside}. Good = 0.5\,s outside,
+0.2\,s inside; Decent = 1.5\,s outside, 0.5\,s inside.
+
+\subsection{Main description}
+
+Every prediction and every GT point lands in exactly one group occurrence (a matched pair
+counts once). With $n_{\text{events}} = n_{\text{matched}} + n_{\mathrm{FP}} + n_{\mathrm{FN}}$,
+report
+\[
+\mathrm{share}(g) = \frac{\mathrm{count}(g)}{n_{\text{events}}}, \qquad g \in \{1,\dots,6\}.
+\]
+Ideally everything is in Good, maybe Decent. \textbf{Optimization order} (worst first):
+(1) minimize falses (FP/FN), (2) poor point recognition, (3) bad segmentation,
+(4) move Decent $\rightarrow$ Good.
+
+\subsection{Secondary metrics}
+
+False positives per hour (FPs have no GT denominator); mean/median/p90 of signed
+$e_s, e_e$ over matched pairs (systematic early/late bias informs postprocess tuning);
+per-video breakdown. If splits/merges are frequent, add diagnostic counters
+$n_{\text{split}}, n_{\text{merge}}$ without changing the taxonomy.
+
+\section{Loss function (end-to-end segment prediction)}
+
+For a future e2e model that predicts segments directly, replacing hysteresis filtering.
+Kept strictly separate from the metric: the \emph{metric} is thresholded and
+interpretable; the \emph{loss} is a continuous relaxation. It must \textbf{not} replicate
+the metric's bin thresholds --- hard thresholds create zero-gradient plateaus inside bins
+and cliffs at edges. The only intentional flat region is the Good zone itself. The 0.1
+IoU cutoff exists \emph{only in the metric}: in the loss, a 0.09-IoU near-miss naturally
+incurs less loss than a zero-overlap miss, with no special casing.
+
+\subsection{Prerequisite: segment-predicting head}
+
+The model must output tuples $(\hat{c}, \hat{p}_s, \hat{p}_e)$ --- confidence, start, end.
+Two candidate designs (decision deferred): \textbf{(a)} DETR-style set prediction with $K$
+learnable queries, NMS-free; \textbf{(b)} anchor-free per-frame regression
+(ActionFormer-style): each frame predicts $(\text{pointness}_t,\ d^{\text{start}}_t,\
+d^{\text{end}}_t)$ on top of the existing BiLSTM. The loss below is written in form (a);
+it translates to (b) with the boundary hinge applied to offset regressions of in-point
+frames and confidence terms becoming per-frame focal loss.
+
+\subsection{Matching (training time)}
+
+Hungarian matching between the $K$ predictions and the $n$ GT points with cost
+$-w_c \hat{c} + \text{boundary cost} + \text{IoU cost}$. With $K \ge n_{\mathrm{gt}}$,
+\textbf{every GT point is matched}. This is the mechanism that makes false negatives
+punishable: a missed point is not a separate loss term but a matched pair with large
+boundary/IoU loss plus a confidence term pulling that slot up --- the gradient always has
+a prediction to flow into.
+
+\subsection{Component 1: boundary loss --- asymmetric two-knee hinge}
+
+Zero loss inside the Good zone, slope $\lambda_1$ until the Decent edge, slope
+$\lambda_2$ beyond. For one boundary with Good zone $[-g_{\text{out}},\, +g_{\text{in}}]$
+and Decent zone $[-d_{\text{out}},\, +d_{\text{in}}]$, define the one-sided violations
+\[
+u = \max(-e - g_{\text{out}},\, 0) \quad \text{(outside)}, \qquad
+v = \max(e - g_{\text{in}},\, 0) \quad \text{(inside)},
+\]
+and
+\[
+L_b(e) =
+\underbrace{\lambda_1 \min(u,\, \Delta_{\text{out}})
+ + \lambda_2 \max(u - \Delta_{\text{out}},\, 0)}_{\text{outside branch}}
+\;+\;
+\underbrace{\mu_1 \min(v,\, \Delta_{\text{in}})
+ + \mu_2 \max(v - \Delta_{\text{in}},\, 0)}_{\text{inside branch}}
+\]
+where $\Delta_{\text{out}} = d_{\text{out}} - g_{\text{out}}$ and
+$\Delta_{\text{in}} = d_{\text{in}} - g_{\text{in}}$. For the start boundary
+$g_{\text{out}}{=}0.5$, $g_{\text{in}}{=}0.2$, $d_{\text{out}}{=}1.5$,
+$d_{\text{in}}{=}0.5$; the end boundary is mirrored. Constraints:
+$\lambda_1 < \lambda_2$, $\mu_1 < \mu_2$, and $\mu \ge \lambda$ (cutting off part of the
+point is worse than extra footage). $L_b$ is continuous, convex, piecewise-linear; kinks
+are ReLU-like and SGD-safe (optionally Huber-smoothed). Total per pair:
+$L_{\text{boundary}} = L_b(e_s) + L_b(e_e)$.
+
+\subsection{Component 2: IoU --- 1D DIoU}
+
+\[
+L_{\iou} = 1 - \diou(P, G), \qquad
+\diou = \iou - \left( \frac{|c_P - c_G|}{\ell_{\text{enclose}}} \right)^{\!2},
+\]
+with $c_P, c_G$ the segment centers and $\ell_{\text{enclose}}$ the length of the smallest
+interval containing both. Plain $1-\iou$ has \textbf{zero gradient at zero overlap} (a
+prediction 1\,s away and 50\,s away both score $\iou = 0$) --- it stops pointing in the
+right direction exactly where it matters most. The center-distance term keeps a nonzero
+gradient toward the GT at any distance and yields the graded $0$-vs-$0.09$ behavior
+automatically. Weight $\beta$ small: the hinges already carry the absolute-time
+objective; DIoU covers the far-miss regime.
+
+\subsection{Component 3: confidence}
+
+Focal/BCE on each slot's confidence $\hat{c}$: matched slots target 1 with weight
+$w_{\text{pos}}$ (set high --- an unconfident matched slot on a real point is an incipient
+\textbf{false negative}, the biggest sin); unmatched slots target 0 with weight
+$w_{\text{neg}}$ --- this is the \textbf{false-positive} penalty. Unmatched predictions
+get no boundary gradient (nothing legitimate to regress toward); confidence suppression
+is the correct and only gradient.
+
+\subsection{Total}
+
+\[
+L = \sum_{\text{matched}} \Big[ \alpha \, L_{\text{boundary}} + \beta \, L_{\iou}
+    + w_{\text{pos}} \, \mathrm{FL}(\hat{c}, 1) \Big]
+  \;+\; \sum_{\text{unmatched}} w_{\text{neg}} \, \mathrm{FL}(\hat{c}, 0).
+\]
+Weight ordering mirrors the metric's optimization order:
+$w_{\text{pos}} \ (\mathrm{FN}) \;\ge\; w_{\text{neg}} \ (\mathrm{FP}) \;>\; \beta$,
+with the hinge slopes $(\lambda, \mu)$ shaping the segmentation-quality tail.
+
+\subsection{Gradient sanity checklist}
+
+\begin{itemize}[nosep]
+  \item No zero-overlap dead zone: DIoU distance term and boundary hinges give gradients
+        at arbitrary distance.
+  \item No bin cliffs: every threshold in the loss is a hinge knee (continuous), never a
+        step function.
+  \item Intentional flat region: exactly the Good zone, nowhere else (no pressure toward
+        the GT center once inside --- any position in the zone is equally acceptable).
+  \item FN gradient path: forced matching $\Rightarrow$ every GT injects gradient into
+        some slot.
+  \item FP gradient path: confidence suppression on unmatched slots.
+\end{itemize}
+
+\subsection{Open implementation questions}
+
+Head choice (set prediction vs.\ per-frame regression) and $K$; window truncation
+(20\,s training sequences cut points at window edges --- train on full videos via the
+BiLSTM, or mask/clip boundary targets at edges); exact coefficients
+$(\lambda_1, \lambda_2, \mu_1, \mu_2, \alpha, \beta, w_{\text{pos}}, w_{\text{neg}})$,
+tuned against the 6-bin metric; Huber smoothing of hinge knees and focal-loss $\gamma$.
+
+\end{document}
