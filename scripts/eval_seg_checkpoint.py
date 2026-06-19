@@ -50,6 +50,8 @@ def main() -> int:
     parser.add_argument("--fps", type=float, default=5.0)
     parser.add_argument("--thresholds", default="0.4,0.5,0.6,0.7")
     parser.add_argument("--votes", default="mean,median")
+    parser.add_argument("--offset-weights", default="uniform,prob,inwindow,prob_inwindow")
+    parser.add_argument("--gamma", type=float, default=0.1)
     args = parser.parse_args()
 
     run_dir = Path(args.run_dir).expanduser()
@@ -68,27 +70,31 @@ def main() -> int:
 
     thresholds = [float(t) for t in args.thresholds.split(",")]
     votes = [v.strip() for v in args.votes.split(",")]
+    offset_weights = [w.strip() for w in args.offset_weights.split(",")]
 
-    print(f"run={run_dir.name} ckpt={args.checkpoint} epoch={ckpt.get('epoch')} head={head}")
-    print(f"{'thr':>4} {'vote':>7} | {'good':>6} {'decent':>6} {'bad':>6} {'poor':>6} {'fp':>6} {'fn':>6} | {'g+d':>6} {'2g+d':>6}")
+    print(f"run={run_dir.name} ckpt={args.checkpoint} epoch={ckpt.get('epoch')} head={head} gamma={args.gamma}")
+    print(f"{'oweight':>14} {'thr':>4} {'vote':>7} | {'good':>6} {'decent':>6} {'bad':>6} {'poor':>6} {'fp':>6} {'fn':>6} | {'g+d':>6} {'2g+d':>6}")
     best = None
-    for vote in votes:
-        for thr in thresholds:
-            metrics, _ = evaluate_seg_model(
-                model, val_h5, torch.device("cpu"), criterion,
-                DecodeConfig(threshold=thr, vote=vote), six_bin_cfg,
-            )
-            g = metrics["share_good"]
-            d = metrics["share_decent"]
-            gw = 2 * g + d
-            row = " ".join(f"{metrics[k]:>6.3f}" for k in SHARE_KEYS)
-            print(f"{thr:>4} {vote:>7} | {row} | {g + d:>6.3f} {gw:>6.3f}")
-            if best is None or gw > best[0]:
-                best = (gw, thr, vote, dict(metrics))
+    for ow in offset_weights:
+        for vote in votes:
+            for thr in thresholds:
+                metrics, _ = evaluate_seg_model(
+                    model, val_h5, torch.device("cpu"), criterion,
+                    DecodeConfig(threshold=thr, vote=vote, offset_weight=ow, extrapolation_gamma=args.gamma),
+                    six_bin_cfg,
+                )
+                g = metrics["share_good"]
+                d = metrics["share_decent"]
+                gw = 2 * g + d
+                row = " ".join(f"{metrics[k]:>6.3f}" for k in SHARE_KEYS)
+                print(f"{ow:>14} {thr:>4} {vote:>7} | {row} | {g + d:>6.3f} {gw:>6.3f}")
+                if best is None or gw > best[0]:
+                    best = (gw, ow, thr, vote, dict(metrics))
 
-    gw, thr, vote, m = best
-    print(f"\nBEST: thr={thr} vote={vote} | good={m['share_good']:.3f} g+d={m['share_good']+m['share_decent']:.3f} "
-          f"2g+d={gw:.3f} fp={m['share_false_positive']:.3f} fn={m['share_false_negative']:.3f} bal_acc={m['balanced_accuracy']:.3f}")
+    gw, ow, thr, vote, m = best
+    print(f"\nBEST: offset_weight={ow} thr={thr} vote={vote} | good={m['share_good']:.3f} "
+          f"g+d={m['share_good']+m['share_decent']:.3f} 2g+d={gw:.3f} "
+          f"fp={m['share_false_positive']:.3f} fn={m['share_false_negative']:.3f} bal_acc={m['balanced_accuracy']:.3f}")
     return 0
 
 

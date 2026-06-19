@@ -21,6 +21,15 @@ Interval = Tuple[float, float]
 class DecodeConfig:
     threshold: float = 0.5
     vote: str = "mean"  # "mean" | "median" (probability-weighted)
+    # Cross-window offset aggregation (Step 1). "uniform" == plain mean (parity with
+    # the original stitch). Others weight each window's d_start/d_end contribution for
+    # a frame; the gate probability stays a plain mean regardless.
+    #   prob          -> weight by that window's pointness prob for the frame
+    #   inwindow      -> downweight (by extrapolation_gamma) windows where the predicted
+    #                    boundary t +/- offset falls outside the window's own time span
+    #   prob_inwindow -> product of the two
+    offset_weight: str = "uniform"  # uniform | prob | inwindow | prob_inwindow
+    extrapolation_gamma: float = 0.1  # weight for out-of-window (extrapolated) estimates
 
 
 def _weighted_median(values: np.ndarray, weights: np.ndarray) -> float:
@@ -94,6 +103,29 @@ def gt_segments_from_targets(targets: np.ndarray, timestamps: np.ndarray) -> Lis
     return segments
 
 
+def _offset_weight(
+    prob: float,
+    pred_start: float,
+    pred_end: float,
+    win_lo: float,
+    win_hi: float,
+    mode: str,
+    gamma: float,
+) -> float:
+    """Weight for one window's offset estimate of one frame. The gate prob is always
+    a plain mean; only the d_start/d_end tracks use this."""
+    if mode == "uniform":
+        return 1.0
+    in_window = (pred_start >= win_lo - 1e-9) and (pred_end <= win_hi + 1e-9)
+    if mode == "prob":
+        return float(prob)
+    if mode == "inwindow":
+        return 1.0 if in_window else gamma
+    if mode == "prob_inwindow":
+        return float(prob) * (1.0 if in_window else gamma)
+    raise ValueError(f"Unknown offset_weight mode: {mode}")
+
+
 def _stitch_videos(
     video_idx: np.ndarray,
     frame_idx: np.ndarray,
@@ -102,24 +134,38 @@ def _stitch_videos(
     probs: np.ndarray,
     d_start: np.ndarray,
     d_end: np.ndarray,
+    offset_weight: str = "uniform",
+    extrapolation_gamma: float = 0.1,
 ) -> Dict[int, Dict[str, np.ndarray]]:
-    """Average per-frame outputs across overlapping windows, keyed by
-    (video, native frame index), and return per-video sorted timelines."""
+    """Aggregate per-frame outputs across overlapping windows, keyed by
+    (video, native frame index), and return per-video sorted timelines. The gate
+    probability is a plain mean; d_start/d_end are a weighted mean per offset_weight.
+    With offset_weight="uniform" this is identical to a plain mean of all tracks."""
+    # acc = [ts, target, sum_prob, sum_w*d_start, sum_w*d_end, count, sum_w]
     videos: Dict[int, Dict[int, List]] = {}
     n_seq, seq_len = targets.shape
     for s in range(n_seq):
         vid = int(video_idx[s])
         frames = videos.setdefault(vid, {})
+        win_lo = float(timestamps[s, 0])
+        win_hi = float(timestamps[s, seq_len - 1])
         for t in range(seq_len):
             key = int(frame_idx[s, t])
+            p = float(probs[s, t])
+            ds = float(d_start[s, t])
+            de = float(d_end[s, t])
+            w = _offset_weight(
+                p, timestamps[s, t] - ds, timestamps[s, t] + de, win_lo, win_hi, offset_weight, extrapolation_gamma
+            )
             acc = frames.get(key)
             if acc is None:
-                frames[key] = [timestamps[s, t], targets[s, t], probs[s, t], d_start[s, t], d_end[s, t], 1]
+                frames[key] = [timestamps[s, t], targets[s, t], p, w * ds, w * de, 1, w]
             else:
-                acc[2] += probs[s, t]
-                acc[3] += d_start[s, t]
-                acc[4] += d_end[s, t]
+                acc[2] += p
+                acc[3] += w * ds
+                acc[4] += w * de
                 acc[5] += 1
+                acc[6] += w
 
     out: Dict[int, Dict[str, np.ndarray]] = {}
     for vid, frames in videos.items():
@@ -127,9 +173,13 @@ def _stitch_videos(
         ts = np.array([frames[k][0] for k in keys], dtype=np.float64)
         tg = np.array([frames[k][1] for k in keys], dtype=np.float32)
         counts = np.array([frames[k][5] for k in keys], dtype=np.float64)
+        sum_w = np.array([frames[k][6] for k in keys], dtype=np.float64)
+        # Fall back to a plain count-mean for any frame whose total offset weight
+        # vanished (e.g. prob-weighting where every window saw it as off-point).
+        denom = np.where(sum_w > 1e-9, sum_w, counts)
         pr = np.array([frames[k][2] for k in keys], dtype=np.float64) / counts
-        ds = np.array([frames[k][3] for k in keys], dtype=np.float64) / counts
-        de = np.array([frames[k][4] for k in keys], dtype=np.float64) / counts
+        ds = np.array([frames[k][3] for k in keys], dtype=np.float64) / denom
+        de = np.array([frames[k][4] for k in keys], dtype=np.float64) / denom
         out[vid] = {"timestamps": ts, "targets": tg, "probs": pr, "d_start": ds, "d_end": de}
     return out
 
@@ -177,7 +227,11 @@ def evaluate_seg_model(
         targets.reshape(-1), probs.reshape(-1).astype(np.float64), threshold=decode_cfg.threshold
     )
 
-    stitched = _stitch_videos(video_idx, frame_idx, timestamps, targets, probs, d_start, d_end)
+    stitched = _stitch_videos(
+        video_idx, frame_idx, timestamps, targets, probs, d_start, d_end,
+        offset_weight=decode_cfg.offset_weight,
+        extrapolation_gamma=decode_cfg.extrapolation_gamma,
+    )
     per_video = []
     for vid, tl in stitched.items():
         gt_segs = gt_segments_from_targets(tl["targets"], tl["timestamps"])

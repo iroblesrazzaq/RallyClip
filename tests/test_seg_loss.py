@@ -9,7 +9,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from training.eval.seg_evaluator import decode_segments, gt_segments_from_targets
+from training.eval.seg_evaluator import _stitch_videos, decode_segments, gt_segments_from_targets
 from training.metrics.segments6 import SixBinConfig, compute_six_bin
 from training.train.seg_loss import (
     E2ESegLoss,
@@ -135,6 +135,28 @@ def test_six_bin_poor_recognition_and_split():
     assert result["n_split"] == 1
     # winner: iou = 8.5/20.5 < 0.5 -> poor recognition
     assert result["n_poor_recognition"] == 1
+
+
+def test_stitch_offset_weighting():
+    # one video, two windows overlapping on frame index 1, with conflicting offsets.
+    video_idx = np.array([0, 0])
+    frame_idx = np.array([[0, 1, 2], [1, 2, 3]])
+    timestamps = np.array([[0.0, 0.2, 0.4], [0.2, 0.4, 0.6]])
+    targets = np.ones((2, 3), dtype=np.float32)
+    # frame 1: window A sees prob 0.9 / d_start 1.0; window B sees prob 0.1 / d_start 3.0
+    probs = np.array([[0.5, 0.9, 0.5], [0.1, 0.5, 0.5]])
+    d_start = np.array([[0.0, 1.0, 0.0], [3.0, 0.0, 0.0]])
+    d_end = np.zeros((2, 3))
+
+    uni = _stitch_videos(video_idx, frame_idx, timestamps, targets, probs, d_start, d_end, offset_weight="uniform")
+    # frame 1 is keys index 1 in sorted order [0,1,2,3]; seen as prob 0.9 (win A) and 0.1 (win B)
+    assert uni[0]["d_start"][1] == pytest.approx((1.0 + 3.0) / 2)  # plain mean
+    # gate prob is always a plain mean regardless of weighting
+    assert uni[0]["probs"][1] == pytest.approx((0.9 + 0.1) / 2)
+
+    pw = _stitch_videos(video_idx, frame_idx, timestamps, targets, probs, d_start, d_end, offset_weight="prob")
+    assert pw[0]["d_start"][1] == pytest.approx((0.9 * 1.0 + 0.1 * 3.0) / (0.9 + 0.1))
+    assert pw[0]["probs"][1] == pytest.approx((0.9 + 0.1) / 2)  # gate unchanged
 
 
 def test_decode_and_gt_segments():
