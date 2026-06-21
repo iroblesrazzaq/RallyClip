@@ -308,6 +308,22 @@ tbody tr:last-child td {
     margin-top: 12px;
 }
 
+/* Updates */
+.update-entry {
+    padding: 18px 20px;
+    background-color: rgba(255, 255, 255, 0.025);
+    border: 1px solid rgba(204, 255, 0, 0.14);
+    border-radius: 8px;
+}
+
+.update-entry h3 {
+    margin-top: 0;
+}
+
+.update-entry p {
+    color: #b4c0d0;
+}
+
 /* Lists */
 ul {
     margin: 16px 0;

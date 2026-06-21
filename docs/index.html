@@ -26,6 +26,7 @@
 
         <nav class="nav">
             <a href="#about">About</a>
+            <a href="#updates">Updates</a>
             <a href="#motivation">Motivation</a>
             <a href="#how-it-works">How It Works</a>
             <a href="#challenges">Challenges</a>
@@ -39,6 +40,20 @@
                 <h2>What It Does</h2>
                 <p>RallyClip takes a full tennis match recording and extracts only the points, removing the dead time between rallies. Drop in a 2-hour match video, get back a condensed video containing just the action, plus an optional CSV with timestamps for each point.</p>
                 <p>It works through a pipeline of computer vision and deep learning: court detection, pose estimation with YOLOv8, feature engineering, and a bidirectional LSTM that predicts frame-by-frame whether play is happening. The result is a segmented video with only the rallies, ready for review.</p>
+            </section>
+
+            <!-- Updates -->
+            <section id="updates">
+                <h2>Updates</h2>
+                <article class="update-entry">
+                    <h3>June 21, 2026</h3>
+                    <p>Starting a tiny blog about updates on RallyClip! This is a very informal log of what I've been working on in the app, what's to come, and my other RallyClip related musings.</p>
+                    <p>I've been working on the first release, which is going to be a mac desktop app.</p>
+                    <p>The GUI is all Claude Code/Codex, so it doesn't meet my taste yet, but that's to refine later. It will have super basic functionality of doing the rally segmentation then saving the video. Nothing crazy at all.</p>
+                    <p>I've also been working on a new model! It's a modification of my old model. Instead of just training the LSTM on the per-frame in vs out of point objective with BCE loss, I added two additional heads on top of the hidden state. They predict the delta time in seconds from the current frame to the start and end of the point. That is, for a given frame, the model will predict that the start of the point was 5s before and the end is in 3s. This came from my dissatisfaction with the previous hysteresis filtering, and my desire for an end-to-end deep learning solution. I may release the first iteration of this one soon.</p>
+                    <p>That brings me to my next topic - data! I have significantly increased my data, so I am going to train my models on more than 10 hours of footage! This is probably the greatest lever for the models to improve.</p>
+                    <p>I've also been thinking about the broader environment of open-source tennis. I want to have a community where software, ideas, and data (especially data!) are freely shared, allowing developers to create useful tennis software easily, and amateur tennis players around the world to freely access these tools. I would call it OpenTennis.</p>
+                </article>
             </section>
 
             <!-- Motivation -->
