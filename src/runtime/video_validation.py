@@ -54,16 +54,21 @@ def probe_video(path) -> VideoInfo:
         stream = next((s for s in container.streams if s.type == "video"), None)
         if stream is None:
             raise VideoValidationError(f"'{name}' has no video stream.")
-        cc = stream.codec_context
-        width = int(getattr(cc, "width", 0) or 0)
-        height = int(getattr(cc, "height", 0) or 0)
-        rate = stream.average_rate or stream.base_rate
-        fps = float(rate) if rate else 0.0
-        duration_s = 0.0
-        if stream.duration is not None and stream.time_base is not None:
-            duration_s = float(stream.duration * stream.time_base)
-        elif container.duration is not None:
-            duration_s = float(container.duration) * float(av.time_base)
+        try:
+            cc = stream.codec_context
+            width = int(getattr(cc, "width", 0) or 0)
+            height = int(getattr(cc, "height", 0) or 0)
+            rate = stream.average_rate or stream.base_rate
+            fps = float(rate) if rate else 0.0
+            duration_s = 0.0
+            if stream.duration is not None and stream.time_base is not None:
+                duration_s = float(stream.duration * stream.time_base)
+            elif container.duration is not None:
+                duration_s = float(container.duration) * float(av.time_base)
+        except VideoValidationError:
+            raise
+        except Exception as exc:
+            raise VideoValidationError(f"'{name}' could not be read: {exc}") from exc
     finally:
         container.close()
     return VideoInfo(width=width, height=height, fps=fps, duration_s=duration_s)
