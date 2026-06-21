@@ -16,7 +16,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 from make_smoke_clip import make_clip  # noqa: E402
 
 from preprocessing.data_preprocessor import rescale_player_to_reference  # noqa: E402
-from runtime.video_validation import VideoValidationError, validate_video  # noqa: E402
+from runtime.video_validation import VideoValidationError, probe_video, validate_video  # noqa: E402
 
 SEQ_LEN, FPS = 100, 5.0  # -> 20s minimum
 
@@ -38,6 +38,36 @@ def test_unreadable_file_rejected(tmp_path):
     with pytest.raises(VideoValidationError) as ei:
         validate_video(bad, seq_len=SEQ_LEN, fps=FPS)
     assert "could not be opened" in str(ei.value).lower()
+
+
+def test_probe_video_wraps_metadata_errors(tmp_path, monkeypatch):
+    import runtime.video_validation as vv
+
+    class BadStream:
+        type = "video"
+
+        @property
+        def codec_context(self):
+            raise RuntimeError("codec metadata unavailable")
+
+    class BadContainer:
+        streams = [BadStream()]
+        duration = None
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    container = BadContainer()
+    clip = tmp_path / "bad-meta.mp4"
+    clip.write_bytes(b"fake")
+    monkeypatch.setattr(vv.av, "open", lambda _: container)
+
+    with pytest.raises(VideoValidationError) as ei:
+        probe_video(clip)
+
+    assert "could not be read" in str(ei.value).lower()
+    assert container.closed
 
 
 def test_sub_720p_rejected(tmp_path):

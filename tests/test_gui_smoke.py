@@ -38,6 +38,8 @@ def test_gui_health_and_defaults(tmp_path, monkeypatch):
     assert payload["defaults"]["feature_set"] == "v1"
     assert "available_devices" in payload
     assert "auto_device" in payload
+    assert "output_dir" not in payload["defaults"]
+    assert "csv_output_dir" not in payload["defaults"]
 
 
 def test_gui_index_served(tmp_path, monkeypatch):
@@ -73,3 +75,35 @@ def test_default_config_excludes_ui_metadata():
     normalized = gui_app._normalize_config({})
     assert "available_devices" not in normalized
     assert "auto_device" not in normalized
+
+
+def test_persist_library_item_cleans_up_on_failure(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    upload = tmp_path / "source.mp4"
+    upload.write_bytes(b"fake video")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+
+    def fake_write_segments_csv(segments, output_csv_path, fps, overwrite):
+        Path(output_csv_path).write_text("start_time,end_time\n", encoding="utf-8")
+
+    def fail_segment_video(input_video, intervals_sec, output_video):
+        raise RuntimeError("segment failed")
+
+    monkeypatch.setattr(gui_app, "write_segments_csv", fake_write_segments_csv)
+    monkeypatch.setattr(gui_app, "segment_video", fail_segment_video)
+    job = gui_app._new_job_state("job-1", gui_app._normalize_config({}))
+
+    with pytest.raises(RuntimeError, match="segment failed"):
+        gui_app._persist_library_item(
+            upload_path=upload,
+            base_name="Match",
+            segments=[(0, 10)],
+            intervals_sec=[(0.0, 2.0)],
+            fps=5.0,
+            job=job,
+        )
+
+    assert library.exists()
+    assert list(library.iterdir()) == []

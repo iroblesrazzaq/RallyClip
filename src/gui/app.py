@@ -293,6 +293,42 @@ def _read_library_items() -> list[Dict[str, Any]]:
     return items
 
 
+def _persist_library_item(
+    *,
+    upload_path: Path,
+    base_name: str,
+    segments: list[tuple[int, int]],
+    intervals_sec: list[tuple[float, float]],
+    fps: float,
+    job: JobDict,
+) -> tuple[str, Path, Path]:
+    """Write one saved match folder, removing it again if any write fails."""
+    library_id = _new_library_id()
+    item_dir = _library_item_dir(library_id)
+    item_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        csv_out = item_dir / "segments.csv"
+        write_segments_csv(segments, str(csv_out), fps=fps, overwrite=True)
+        video_out = item_dir / "video.mp4"
+        segment_video(str(upload_path), intervals_sec, str(video_out))
+        _set_step(job, "output", "in_progress", 70)
+        _write_thumbnail(video_out, item_dir / "thumb.jpg")
+        meta = {
+            "id": library_id,
+            "name": base_name,
+            "source_name": upload_path.name,
+            "created": datetime.now().isoformat(timespec="seconds"),
+            "created_ts": time.time(),
+            "duration_s": round(sum(e - s for s, e in intervals_sec), 2),
+            "n_segments": len(segments),
+        }
+        (item_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        return library_id, video_out, csv_out
+    except Exception:
+        shutil.rmtree(item_dir, ignore_errors=True)
+        raise
+
+
 def _new_job_state(job_id: str, cfg: Dict[str, Any]) -> JobDict:
     return {
         "id": job_id,
@@ -512,6 +548,7 @@ def _run_pipeline(job_id: str) -> None:
         )
         _check_cancel(job)
         _set_step(job, "pose", "in_progress", 1)
+        _check_cancel(job)
         court_mask, _ = pre.compute_court_mask(str(upload_path))
         # Court mask detection has no inner progress hooks; tick so the bar
         # visibly moves before pose extraction starts reporting.
@@ -630,25 +667,14 @@ def _run_pipeline(job_id: str) -> None:
         # nothing worth saving, so no item is created.
         library_id = None
         if intervals_sec:
-            library_id = _new_library_id()
-            item_dir = LIBRARY_DIR / library_id
-            item_dir.mkdir(parents=True, exist_ok=True)
-            csv_out = item_dir / "segments.csv"
-            write_segments_csv(segments, str(csv_out), fps=float(cfg["fps"]), overwrite=True)
-            video_out = item_dir / "video.mp4"
-            segment_video(str(upload_path), intervals_sec, str(video_out))
-            _set_step(job, "output", "in_progress", 70)
-            _write_thumbnail(video_out, item_dir / "thumb.jpg")
-            meta = {
-                "id": library_id,
-                "name": base_name,
-                "source_name": upload_path.name,
-                "created": datetime.now().isoformat(timespec="seconds"),
-                "created_ts": time.time(),
-                "duration_s": round(sum(e - s for s, e in intervals_sec), 2),
-                "n_segments": len(segments),
-            }
-            (item_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+            library_id, video_out, csv_out = _persist_library_item(
+                upload_path=upload_path,
+                base_name=base_name,
+                segments=segments,
+                intervals_sec=intervals_sec,
+                fps=float(cfg["fps"]),
+                job=job,
+            )
             job["paths"]["video"] = str(video_out)
             job["paths"]["csv"] = str(csv_out)
         job["library_id"] = library_id
