@@ -163,8 +163,6 @@ def _load_default_config() -> Dict[str, Any]:
             "start_time": 0,
             "duration": 999999,
         }
-    cfg["output_dir"] = str(DEFAULT_OUTPUT_DIR)
-    cfg["csv_output_dir"] = str(DEFAULT_CSV_DIR)
     cfg["output_name"] = None
     # scaler_path is resolved fresh at job-run time via resolve_asset;
     # model_path is retained from build_gui_defaults as a validated startup hint.
@@ -362,13 +360,8 @@ def _safe_open_browser(port: int) -> None:
 # Keys the browser may override. Everything else (manifest-pinned inference
 # params, model/artifact paths) keeps the server-side default even though the
 # frontend round-trips the full defaults payload.
-# output_dir/csv_output_dir are intentionally free-form: this is a local
-# single-user app and choosing where outputs land is a feature (e.g. external
-# drives). Cross-origin abuse is blocked by _reject_cross_origin_writes.
 _CLIENT_KEYS = {
     "output_name",
-    "output_dir",
-    "csv_output_dir",
     "yolo_size",
     "yolo_device",
     "write_csv",

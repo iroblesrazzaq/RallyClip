@@ -16,6 +16,7 @@ import pytest
 from helpers.court_fixtures import FIX_DIR, fixture_ids, iou
 
 cv2 = pytest.importorskip("cv2")
+np = pytest.importorskip("numpy")
 
 DET_TOL = 1e-3  # numerical tolerance: IoU must be >= 1 - DET_TOL
 FIXTURE_IDS = fixture_ids()
@@ -31,6 +32,20 @@ def _detector(monkeypatch, frame):
 
 def test_fixture_set_present():
     assert len(FIXTURE_IDS) >= 11, f"expected >=11 court fixtures, got {len(FIXTURE_IDS)}"
+
+
+def test_draw_court_lines_handles_missing_baseline(monkeypatch):
+    frame = np.zeros((120, 160, 3), dtype=np.uint8)
+    det = _detector(monkeypatch, frame)
+
+    rendered = det.draw_court_lines(
+        frame,
+        baseline=None,
+        left_doubles_sideline=[[20, 110, 45, 10]],
+        right_doubles_sideline=[[140, 110, 115, 10]],
+    )
+
+    assert rendered.shape == frame.shape
 
 
 @pytest.mark.parametrize("fixture_id", FIXTURE_IDS)
