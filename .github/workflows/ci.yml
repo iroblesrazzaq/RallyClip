@@ -17,3 +17,29 @@ jobs:
         run: pip install ".[dev]"
       - name: Run tests
         run: pytest -m "not slow and not e2e"
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: pip install ".[dev,e2e-ui]"
+      - name: Install OpenCV runtime libs
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
+      - name: Install Playwright browser (L2 UI)
+        run: python -m playwright install --with-deps chromium
+      - name: Fetch YOLO weights
+        run: |
+          python - <<'PY'
+          from ultralytics import YOLO
+          # Auto-downloads nano pose weights into the Ultralytics cache for the
+          # real pipeline run; the L1 e2e drives pose -> ... -> ONNX end to end.
+          YOLO("yolov8n-pose.pt")
+          print("YOLO weights downloaded.")
+          PY
+      - name: Run e2e (L1 backend + L2 browser UI)
+        # Golden-clip tests self-skip here (private footage lives only locally).
+        run: pytest -m e2e
