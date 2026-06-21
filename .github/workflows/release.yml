@@ -10,17 +10,37 @@ permissions:
   contents: write
 
 jobs:
+  tests:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install package
+        shell: bash
+        run: pip install ".[dev,e2e-ui]"
+      - name: Install Playwright browser
+        shell: bash
+        run: python -m playwright install chromium
+      - name: Fetch YOLO weights
+        shell: bash
+        run: python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt')"
+      - name: Run fast tests
+        shell: bash
+        run: pytest -m "not slow and not e2e"
+      - name: Run e2e tests
+        shell: bash
+        run: pytest -m e2e
+
   build:
+    needs: tests
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
             artifact: RallyClip-macos
-          - os: windows-latest
-            artifact: RallyClip-windows
-          - os: ubuntu-latest
-            artifact: RallyClip-linux
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
