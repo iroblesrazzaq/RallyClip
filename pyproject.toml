@@ -30,6 +30,14 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest",
+  "requests",
+]
+# Browser-driven L2 e2e (frontend journey). Heavy (downloads a browser); kept
+# separate so the core dev/test install stays light. Install the browser with
+# `playwright install chromium` after `pip install .[e2e-ui]`.
+e2e-ui = [
+  "playwright>=1.40",
+  "pytest-playwright>=0.4",
 ]
 desktop = [
   "PySide6>=6.6",
@@ -44,6 +52,7 @@ rallyclip = "cli:main"
 rallyclip-desktop = "gui.desktop:main"
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 markers = [
   "slow: long-running tests (heavy I/O or model loads)",
   "e2e: end-to-end tests needing source videos / model weights",
