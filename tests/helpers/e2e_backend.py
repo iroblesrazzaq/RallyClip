@@ -40,6 +40,9 @@ class BackendClient:
     def post(self, path: str, **kw: Any) -> requests.Response:
         return self.session.post(self.base_url + path, **kw)
 
+    def delete(self, path: str, **kw: Any) -> requests.Response:
+        return self.session.delete(self.base_url + path, **kw)
+
     def start_job(self, video_path: Path, config: Optional[Dict[str, Any]] = None) -> requests.Response:
         with open(video_path, "rb") as fh:
             files = {"video": (Path(video_path).name, fh, "video/mp4")}
@@ -72,28 +75,32 @@ class BackendClient:
 
 
 @contextmanager
-def running_backend(jobs_dir: Path, output_dir: Path, csv_dir: Path) -> Iterator[BackendClient]:
+def running_backend(
+    jobs_dir: Path, output_dir: Path, csv_dir: Path, library_dir: Path
+) -> Iterator[BackendClient]:
     """Start the real backend on a free port with isolated dirs; yield a client.
 
-    Redirects the module-level jobs/output/csv globals to the given temp dirs and
-    rebuilds ``DEFAULT_CONFIG`` so jobs never touch the repo. Restores them on exit.
-    The server runs in a daemon thread (cannot be force-stopped), so use one
-    backend per test module.
+    Redirects the module-level jobs/output/csv/library globals to the given temp
+    dirs and rebuilds ``DEFAULT_CONFIG`` so jobs never touch the repo. Restores
+    them on exit. The server runs in a daemon thread (cannot be force-stopped), so
+    use one backend per test module.
     """
     from gui import app as gui_app
 
-    for directory in (jobs_dir, output_dir, csv_dir):
+    for directory in (jobs_dir, output_dir, csv_dir, library_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
     saved = (
         gui_app.JOBS_DIR,
         gui_app.DEFAULT_OUTPUT_DIR,
         gui_app.DEFAULT_CSV_DIR,
+        gui_app.LIBRARY_DIR,
         gui_app.DEFAULT_CONFIG,
     )
     gui_app.JOBS_DIR = jobs_dir.resolve()
     gui_app.DEFAULT_OUTPUT_DIR = output_dir.resolve()
     gui_app.DEFAULT_CSV_DIR = csv_dir.resolve()
+    gui_app.LIBRARY_DIR = library_dir.resolve()
     gui_app.DEFAULT_CONFIG = gui_app._load_default_config()
 
     port = find_free_port()
@@ -117,5 +124,6 @@ def running_backend(jobs_dir: Path, output_dir: Path, csv_dir: Path) -> Iterator
             gui_app.JOBS_DIR,
             gui_app.DEFAULT_OUTPUT_DIR,
             gui_app.DEFAULT_CSV_DIR,
+            gui_app.LIBRARY_DIR,
             gui_app.DEFAULT_CONFIG,
         ) = saved

@@ -76,12 +76,120 @@ h1 {
 }
 
 .workspace {
-    width: min(40rem, 100%);
-    margin: clamp(4rem, 12vh, 8rem) auto 0;
+    width: min(64rem, 100%);
+    margin: clamp(3rem, 9vh, 6rem) auto 0;
 }
 
 .run-card {
     width: 100%;
+}
+
+/* Upload + progress stay a comfortable reading width; the library spans wide. */
+#uploadView,
+#progress {
+    max-width: 40rem;
+    margin-inline: auto;
+}
+
+.back-link {
+    margin-bottom: 1rem;
+}
+
+.library-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.library-head h2 {
+    margin: 0;
+    font-size: 1.7rem;
+    letter-spacing: -0.03em;
+}
+
+.library-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 1.25rem;
+}
+
+.lib-card {
+    border: 1px solid var(--ink);
+    border-radius: var(--radius);
+    background: var(--white);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.lib-thumb {
+    aspect-ratio: 16 / 9;
+    background: #e9edf4;
+    display: grid;
+    place-items: center;
+}
+
+.lib-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.lib-info {
+    padding: 0.85rem 1rem 0.4rem;
+}
+
+.lib-name {
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.lib-meta {
+    margin-top: 0.2rem;
+    color: var(--ink-soft);
+    font-size: 0.85rem;
+}
+
+.lib-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem 1rem;
+    margin-top: auto;
+}
+
+.lib-actions .btn {
+    padding: 0.5rem 0.9rem;
+    font-size: 0.9rem;
+}
+
+.lib-delete {
+    color: var(--accent);
+    border: none;
+    margin-left: auto;
+}
+
+.library-empty {
+    text-align: center;
+    padding: 3rem 1.5rem;
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+}
+
+.empty-title {
+    margin: 0 0 0.35rem;
+    font-size: 1.7rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+}
+
+.empty-sub {
+    margin: 0 0 1.3rem;
+    color: var(--ink-soft);
 }
 
 .file-drop-zone {

@@ -22,7 +22,21 @@
         </header>
 
         <main class="workspace">
-            <section class="run-card" id="uploadView">
+            <section class="run-card library-view" id="libraryView" hidden>
+                <div class="library-head">
+                    <h2>Saved matches</h2>
+                    <button type="button" class="btn btn-primary" id="newMatchBtn">New match</button>
+                </div>
+                <div class="library-empty" id="libraryEmpty" hidden>
+                    <p class="empty-title">No matches yet</p>
+                    <p class="empty-sub">Drop in a full match and RallyClip saves just the points here.</p>
+                    <button type="button" class="btn btn-primary" id="emptyNewMatchBtn">Process a match</button>
+                </div>
+                <div class="library-grid" id="libraryGrid"></div>
+            </section>
+
+            <section class="run-card" id="uploadView" hidden>
+                <button type="button" class="text-button back-link" id="backToLibrary">← Saved matches</button>
                 <div class="file-drop-zone" id="dropZone">
                     <p class="drop-title">Drop a match video</p>
                     <p class="drop-sub"><button type="button" class="text-button" id="browseBtn">Browse files</button></p>
@@ -55,16 +69,8 @@
                     </div>
                     <div class="advanced-grid">
                         <label class="field">
-                            <span>Output name</span>
+                            <span>Match name</span>
                             <input type="text" id="outputName" placeholder="Defaults to video name">
-                        </label>
-                        <label class="field">
-                            <span>Output folder</span>
-                            <input type="text" id="outputDir" placeholder="Uses app default if empty">
-                        </label>
-                        <label class="field">
-                            <span>CSV folder</span>
-                            <input type="text" id="csvOutputDir" placeholder="Uses app default if empty">
                         </label>
                         <label class="field">
                             <span>Pose model</span>
@@ -133,13 +139,6 @@
                 </details>
             </section>
 
-            <section class="run-card" id="results" hidden>
-                <div class="result-actions">
-                    <button type="button" class="btn btn-primary" id="downloadVideoBtn">Save video</button>
-                    <button type="button" class="btn btn-secondary" id="downloadCsvBtn">Save timestamps (CSV)</button>
-                    <button type="button" class="btn btn-ghost" id="newAnalysisBtn">New match</button>
-                </div>
-            </section>
         </main>
     </div>
 
