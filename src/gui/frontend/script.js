@@ -1,3 +1,6 @@
+const WELCOME_SEEN_KEY = "rallyclip_welcome_seen";
+const JOB_ID_KEY = "rallyclip_job_id";
+
 class RallyClipApp {
     constructor() {
         this.selectedFile = null;
@@ -11,14 +14,30 @@ class RallyClipApp {
         this.autoDevice = "cpu";
         this.weights = null;
         this.etaSeconds = null;
+        this.steps = ["pose", "preprocess", "feature", "inference", "output"];
+        this.stepLabels = {
+            pose: "Extracting pose",
+            preprocess: "Preprocessing",
+            feature: "Building features",
+            inference: "Finding points",
+            output: "Writing outputs",
+        };
 
         this.cacheElements();
         this.bindEvents();
         this.loadDefaults();
-        this.restoreJobIfAny();
+        this.restoreJobIfAny().then((restored) => {
+            if (restored) return;
+            if (this.hasSeenWelcome()) this.showView("upload");
+            else this.showWelcome();
+        });
     }
 
     cacheElements() {
+        this.welcomeScreen = document.getElementById("welcomeScreen");
+        this.welcomeStartBtn = document.getElementById("welcomeStartBtn");
+        this.appShell = document.getElementById("appShell");
+        this.uploadView = document.getElementById("uploadView");
         this.dropZone = document.getElementById("dropZone");
         this.fileInput = document.getElementById("fileInput");
         this.browseBtn = document.getElementById("browseBtn");
@@ -43,13 +62,13 @@ class RallyClipApp {
         this.lowWarning = document.getElementById("lowWarning");
         this.highWarning = document.getElementById("highWarning");
         this.minDurWarning = document.getElementById("minDurWarning");
-        this.statusBadge = document.getElementById("statusBadge");
-        this.statusBadgeText = document.getElementById("statusBadgeText");
         this.progressCard = document.getElementById("progress");
         this.resultsCard = document.getElementById("results");
+        this.stageText = document.getElementById("stageText");
         this.overallFill = document.getElementById("overallFill");
         this.overallPercentage = document.getElementById("overallPercentage");
         this.etaText = document.getElementById("etaText");
+        this.progressDetails = document.querySelector(".progress-details");
         this.downloadVideoBtn = document.getElementById("downloadVideoBtn");
         this.downloadCsvBtn = document.getElementById("downloadCsvBtn");
         this.newAnalysisBtn = document.getElementById("newAnalysisBtn");
@@ -65,6 +84,7 @@ class RallyClipApp {
     }
 
     bindEvents() {
+        this.welcomeStartBtn.addEventListener("click", () => this.dismissWelcome());
         this.dropZone.addEventListener("dragover", (e) => {
             e.preventDefault();
             this.dropZone.classList.add("dragover");
@@ -97,12 +117,38 @@ class RallyClipApp {
         this.downloadCsvBtn.addEventListener("click", () => this.downloadCsv());
         this.newAnalysisBtn.addEventListener("click", () => this.startNewAnalysis());
         this.yoloDevice.addEventListener("change", () => this.updateDeviceNote());
-        document.querySelectorAll("[data-scroll]").forEach((btn) => {
-            btn.addEventListener("click", () => {
-                const target = document.getElementById(btn.dataset.scroll);
-                if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
-            });
-        });
+    }
+
+    hasSeenWelcome() {
+        try {
+            return localStorage.getItem(WELCOME_SEEN_KEY) === "1";
+        } catch (_) {
+            return true;
+        }
+    }
+
+    markWelcomeSeen() {
+        try {
+            localStorage.setItem(WELCOME_SEEN_KEY, "1");
+        } catch (_) {}
+    }
+
+    dismissWelcome() {
+        this.markWelcomeSeen();
+        this.showView("upload");
+    }
+
+    showWelcome() {
+        this.welcomeScreen.hidden = false;
+        this.appShell.hidden = true;
+    }
+
+    showView(viewName) {
+        this.welcomeScreen.hidden = true;
+        this.appShell.hidden = false;
+        this.uploadView.hidden = viewName !== "upload";
+        this.progressCard.hidden = viewName !== "processing";
+        this.resultsCard.hidden = viewName !== "done";
     }
 
     async loadDefaults() {
@@ -193,7 +239,7 @@ class RallyClipApp {
         this.dropZone.hidden = true;
         this.selectedFileDiv.hidden = false;
         this.startBtn.disabled = false;
-        this.setStatus("Ready", "ready");
+        this.showView("upload");
     }
 
     removeFile() {
@@ -203,13 +249,13 @@ class RallyClipApp {
         this.selectedFileDiv.hidden = true;
         this.startBtn.disabled = true;
         this.resetProgress();
-        this.setStatus("Ready", "ready");
+        this.showView("upload");
     }
 
     formatFileSize(bytes) {
         const units = ["Bytes", "KB", "MB", "GB"];
         if (bytes === 0) return "0 Bytes";
-        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
         return `${(bytes / 1024 ** i).toFixed(2)} ${units[i]}`;
     }
 
@@ -233,23 +279,24 @@ class RallyClipApp {
 
     async startAnalysis() {
         if (!this.selectedFile || this.isProcessing) return;
+        this.markWelcomeSeen();
+        this.resetProgress();
         this.isProcessing = true;
         this.startBtn.disabled = true;
         this.cancelBtn.disabled = false;
-        this.progressCard.hidden = false;
-        this.resultsCard.hidden = true;
-        this.setStatus("Processing", "processing");
+        this.stageText.textContent = "Preparing";
+        this.showView("processing");
 
         try {
             const jobId = await this.uploadFileAndStart();
             this.currentJobId = jobId;
-            try { localStorage.setItem("rallyclip_job_id", jobId); } catch (_) {}
+            try { localStorage.setItem(JOB_ID_KEY, jobId); } catch (_) {}
             this.startProgressMonitoring();
         } catch (error) {
             console.error(error);
             this.showToast("Failed to start segmentation.", "error");
             this.resetControls();
-            this.setStatus("Error", "error");
+            this.showView("upload");
         }
     }
 
@@ -280,24 +327,28 @@ class RallyClipApp {
 
     async restoreJobIfAny() {
         let storedId = null;
-        try { storedId = localStorage.getItem("rallyclip_job_id"); } catch (_) {}
-        if (!storedId) return;
+        try { storedId = localStorage.getItem(JOB_ID_KEY); } catch (_) {}
+        if (!storedId) return false;
+
+        this.markWelcomeSeen();
         this.currentJobId = storedId;
         this.isProcessing = true;
-        this.progressCard.hidden = false;
         this.startBtn.disabled = true;
         this.cancelBtn.disabled = false;
-        this.setStatus("Processing", "processing");
+        this.stageText.textContent = "Restoring";
+        this.showView("processing");
         this.startProgressMonitoring();
+
         try {
             await this.updateProgress();
+            return true;
         } catch (e) {
             console.warn("Could not restore job progress:", e);
             this.stopProgressMonitoring();
             this.resetControls();
             this.resetProgress();
-            this.setStatus("Ready", "ready");
-            try { localStorage.removeItem("rallyclip_job_id"); } catch (_) {}
+            try { localStorage.removeItem(JOB_ID_KEY); } catch (_) {}
+            return false;
         }
     }
 
@@ -316,13 +367,13 @@ class RallyClipApp {
     }
 
     displayProgress(progress) {
-        const steps = ["pose", "preprocess", "feature", "inference", "output"];
         let weightedSum = 0;
         let weightTotal = 0;
         let plainSum = 0;
+        const stepState = progress.steps || {};
 
-        steps.forEach((step) => {
-            const stepProgress = progress.steps[step] || { status: "waiting", progress: 0 };
+        this.steps.forEach((step) => {
+            const stepProgress = stepState[step] || { status: "waiting", progress: 0 };
             const elements = this.progressItems[step];
             elements.status.textContent = this.formatStatus(stepProgress.status);
             elements.fill.style.width = `${stepProgress.progress}%`;
@@ -333,24 +384,33 @@ class RallyClipApp {
             }
         });
 
-        const overall = weightTotal > 0 ? weightedSum / weightTotal : plainSum / steps.length;
+        const overall = weightTotal > 0 ? weightedSum / weightTotal : plainSum / this.steps.length;
+        this.stageText.textContent = this.currentStageLabel(stepState);
         this.overallFill.style.width = `${overall}%`;
         this.overallPercentage.textContent = `${Math.round(overall)}%`;
         this.updateEta(progress);
     }
 
+    currentStageLabel(stepState) {
+        const running = this.steps.find((step) => stepState[step]?.status === "in_progress");
+        if (running) return this.stepLabels[running];
+        const waiting = this.steps.find((step) => stepState[step]?.status === "waiting");
+        if (waiting) return waiting === "pose" ? "Starting" : this.stepLabels[waiting];
+        return "Finishing";
+    }
+
     updateEta(progress) {
         const eta = progress.eta_seconds ?? this.etaSeconds;
         if (eta == null) {
-            this.etaText.textContent = "Est. remaining: --";
+            this.etaText.textContent = "ETA: --";
             return;
         }
         const remaining = Math.max(0, Math.round(eta));
         const minutes = Math.floor(remaining / 60);
         const seconds = remaining % 60;
         this.etaText.textContent = minutes > 0
-            ? `Est. remaining: ~${minutes}m ${String(seconds).padStart(2, "0")}s`
-            : `Est. remaining: ~${seconds}s`;
+            ? `ETA: ~${minutes}m ${String(seconds).padStart(2, "0")}s`
+            : `ETA: ~${seconds}s`;
     }
 
     formatStatus(status) {
@@ -359,6 +419,7 @@ class RallyClipApp {
             in_progress: "Running",
             completed: "Done",
             failed: "Failed",
+            cancelled: "Cancelled",
         })[status] || status;
     }
 
@@ -378,7 +439,7 @@ class RallyClipApp {
             console.error("Cancel request failed:", err);
             this.showToast("Cancel request failed.", "error");
             this.resetControls();
-            this.setStatus("Ready", "ready");
+            this.showView("upload");
         }
     }
 
@@ -386,19 +447,20 @@ class RallyClipApp {
         this.stopProgressMonitoring();
         this.isProcessing = false;
         this.cancelBtn.disabled = true;
-        this.resultsCard.hidden = false;
-        this.setStatus("Done", "done");
+        this.stageText.textContent = "Done";
+        this.etaText.textContent = "ETA: 0s";
+        this.showView("done");
         this.showToast("Segmentation complete.", "success");
-        this.etaText.textContent = "Est. remaining: 0s";
-        try { localStorage.removeItem("rallyclip_job_id"); } catch (_) {}
+        try { localStorage.removeItem(JOB_ID_KEY); } catch (_) {}
     }
 
     onAnalysisError(error) {
         this.stopProgressMonitoring();
         this.resetControls();
+        this.resetProgress();
         this.showToast(error, "error");
-        this.setStatus("Error", "error");
-        try { localStorage.removeItem("rallyclip_job_id"); } catch (_) {}
+        this.showView("upload");
+        try { localStorage.removeItem(JOB_ID_KEY); } catch (_) {}
     }
 
     onAnalysisCancelled() {
@@ -406,8 +468,8 @@ class RallyClipApp {
         this.resetControls();
         this.resetProgress();
         this.showToast("Job cancelled.", "success");
-        this.setStatus("Ready", "ready");
-        try { localStorage.removeItem("rallyclip_job_id"); } catch (_) {}
+        this.showView("upload");
+        try { localStorage.removeItem(JOB_ID_KEY); } catch (_) {}
     }
 
     stopProgressMonitoring() {
@@ -425,15 +487,15 @@ class RallyClipApp {
     }
 
     resetProgress() {
-        this.progressCard.hidden = true;
-        this.resultsCard.hidden = true;
         Object.values(this.progressItems).forEach((item) => {
             item.status.textContent = "Waiting";
             item.fill.style.width = "0%";
         });
         this.overallFill.style.width = "0%";
         this.overallPercentage.textContent = "0%";
-        this.etaText.textContent = "Est. remaining: --";
+        this.stageText.textContent = "Ready";
+        this.etaText.textContent = "ETA: --";
+        if (this.progressDetails) this.progressDetails.open = false;
     }
 
     async downloadVideo() {
@@ -475,14 +537,10 @@ class RallyClipApp {
 
     startNewAnalysis() {
         this.stopProgressMonitoring();
+        this.currentJobId = null;
         this.removeFile();
-        this.resetProgress();
         this.resetControls();
-    }
-
-    setStatus(text, tone) {
-        this.statusBadgeText.textContent = text;
-        this.statusBadge.className = `status-badge ${tone}`;
+        this.showView("upload");
     }
 
     showToast(message, tone = "info") {
