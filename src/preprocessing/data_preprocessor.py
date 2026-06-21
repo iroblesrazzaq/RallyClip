@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from preprocessing.court_detector import CourtDetector
+from runtime.video_validation import probe_video
 
 
 def rescale_player_to_reference(player, src_width, src_height, ref_width, ref_height):
@@ -192,6 +193,16 @@ class DataPreprocessor:
             base = cv2.resize(base, (w, h), interpolation=cv2.INTER_NEAREST)
         return (base > 127).astype(np.uint8) * 255
 
+    def _source_frame_shape(self, video_path: str) -> tuple[int, int, int]:
+        """Return native video shape as (height, width, channels), falling back to reference size."""
+        try:
+            info = probe_video(video_path)
+            if info.width > 0 and info.height > 0:
+                return (int(info.height), int(info.width), 3)
+        except Exception as exc:
+            logging.warning("Could not probe video dimensions for %s: %s", video_path, exc)
+        return (self.screen_height, self.screen_width, 3)
+
     def compute_court_mask(self, video_path: str):
         """Front-loaded court detection with a default-mask fallback.
 
@@ -201,7 +212,7 @@ class DataPreprocessor:
         unmasked. Always returns (mask, metadata) with a usable mask (never None).
         """
         detector = CourtDetector(yolo_model_path=self.yolo_model_path, conf=self.conf, device=self.yolo_device)
-        frame_shape = (self.screen_height, self.screen_width)
+        frame_shape = self._source_frame_shape(video_path)
         for t in self._court_sample_times(video_path):
             try:
                 mask, clean_frame, _meta = detector.process_video(video_path, target_time=t)
@@ -267,12 +278,9 @@ class DataPreprocessor:
                 logging.info("Court mask: %s", getattr(mask, 'shape', None))
             else:
                 logging.info("No court mask available - processing without filtering")
-            # Native source resolution (court mask is generated at frame res). Used to
-            # rescale detections into the model's reference space; identity at 720p.
-            if mask is not None and getattr(mask, "shape", None) is not None and len(mask.shape) >= 2:
-                src_height, src_width = int(mask.shape[0]), int(mask.shape[1])
-            else:
-                src_height, src_width = self.screen_height, self.screen_width
+            # Native source resolution, independent of court-mask fallback shape.
+            # Used to rescale detections into the model's reference space; identity at 720p.
+            src_height, src_width, _ = self._source_frame_shape(video_path)
             all_frame_data, all_targets, all_near_players, all_far_players = [], [], [], []
             for frame_idx, frame_data in enumerate(pose_data):
                 annotation_status = frame_data.get('annotation_status', 0)

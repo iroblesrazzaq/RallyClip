@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import types
 
 import numpy as np
 import pytest
@@ -152,6 +153,43 @@ def test_compute_court_mask_falls_back_to_default(tmp_path, monkeypatch):
     assert mask is not None and mask.shape == (720, 1280)
     assert set(np.unique(mask)).issubset({0, 255})
     assert np.any(mask) and not np.all(mask)  # a real court envelope, not all-in / all-out
+
+
+def test_compute_court_mask_fallback_uses_native_video_shape(tmp_path, monkeypatch):
+    pytest.importorskip("cv2")
+    module = import_data_preprocessor_with_stubs(monkeypatch)
+    monkeypatch.setattr(module, "probe_video", lambda _: types.SimpleNamespace(width=1920, height=1080))
+
+    class BrokenDetector:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def process_video(self, video_path, target_time=60):
+            raise RuntimeError("court detector failed")
+
+    monkeypatch.setattr(module, "CourtDetector", BrokenDetector)
+    pre = module.DataPreprocessor(save_court_masks=False)
+    mask, meta = pre.compute_court_mask(str(tmp_path / "input.mp4"))
+
+    assert meta["detected"] is False and meta["source"] == "default"
+    assert mask.shape == (1080, 1920)
+
+
+def test_preprocess_rescales_from_native_video_shape(tmp_path, monkeypatch):
+    preprocessor_module = import_data_preprocessor_with_stubs(monkeypatch)
+    DataPreprocessor = preprocessor_module.DataPreprocessor
+    _disable_court_detection(monkeypatch, DataPreprocessor)
+    monkeypatch.setattr(preprocessor_module, "probe_video", lambda _: types.SimpleNamespace(width=1920, height=1080))
+    raw_path = write_raw_pose_npz(tmp_path / "raw_pose.npz", [fake_yolo_result(0)])
+    output_path = tmp_path / "preprocessed.npz"
+
+    preprocessor = DataPreprocessor(save_court_masks=False)
+    assert preprocessor.preprocess_single_video(str(raw_path), str(tmp_path / "input.mp4"), str(output_path), overwrite=True)
+
+    with np.load(output_path, allow_pickle=True) as data:
+        near = data["near_players"][0]
+
+    np.testing.assert_allclose(near["box"], np.array([66.6667, 266.6667, 93.3333, 333.3333]), rtol=1e-4)
 
 
 def test_default_court_mask_resizes_to_frame(monkeypatch):
