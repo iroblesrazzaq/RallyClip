@@ -14,13 +14,14 @@ class RallyClipApp {
         this.autoDevice = "cpu";
         this.weights = null;
         this.etaSeconds = null;
+        this.libraryId = null;
         this.steps = ["pose", "preprocess", "feature", "inference", "output"];
         this.stepLabels = {
             pose: "Extracting pose",
             preprocess: "Preprocessing",
             feature: "Building features",
             inference: "Finding points",
-            output: "Writing outputs",
+            output: "Saving match",
         };
 
         this.cacheElements();
@@ -28,7 +29,7 @@ class RallyClipApp {
         this.loadDefaults();
         this.restoreJobIfAny().then((restored) => {
             if (restored) return;
-            if (this.hasSeenWelcome()) this.showView("upload");
+            if (this.hasSeenWelcome()) this.showLibrary();
             else this.showWelcome();
         });
     }
@@ -37,7 +38,15 @@ class RallyClipApp {
         this.welcomeScreen = document.getElementById("welcomeScreen");
         this.welcomeStartBtn = document.getElementById("welcomeStartBtn");
         this.appShell = document.getElementById("appShell");
+
+        this.libraryView = document.getElementById("libraryView");
+        this.libraryGrid = document.getElementById("libraryGrid");
+        this.libraryEmpty = document.getElementById("libraryEmpty");
+        this.newMatchBtn = document.getElementById("newMatchBtn");
+        this.emptyNewMatchBtn = document.getElementById("emptyNewMatchBtn");
+
         this.uploadView = document.getElementById("uploadView");
+        this.backToLibrary = document.getElementById("backToLibrary");
         this.dropZone = document.getElementById("dropZone");
         this.fileInput = document.getElementById("fileInput");
         this.browseBtn = document.getElementById("browseBtn");
@@ -51,8 +60,6 @@ class RallyClipApp {
         this.advancedPanel = document.getElementById("advancedPanel");
         this.resetAdvanced = document.getElementById("resetAdvanced");
         this.outputName = document.getElementById("outputName");
-        this.outputDir = document.getElementById("outputDir");
-        this.csvOutputDir = document.getElementById("csvOutputDir");
         this.yoloSize = document.getElementById("yoloSize");
         this.yoloDevice = document.getElementById("yoloDevice");
         this.deviceNote = document.getElementById("deviceNote");
@@ -62,16 +69,13 @@ class RallyClipApp {
         this.lowWarning = document.getElementById("lowWarning");
         this.highWarning = document.getElementById("highWarning");
         this.minDurWarning = document.getElementById("minDurWarning");
+
         this.progressCard = document.getElementById("progress");
-        this.resultsCard = document.getElementById("results");
         this.stageText = document.getElementById("stageText");
         this.overallFill = document.getElementById("overallFill");
         this.overallPercentage = document.getElementById("overallPercentage");
         this.etaText = document.getElementById("etaText");
         this.progressDetails = document.querySelector(".progress-details");
-        this.downloadVideoBtn = document.getElementById("downloadVideoBtn");
-        this.downloadCsvBtn = document.getElementById("downloadCsvBtn");
-        this.newAnalysisBtn = document.getElementById("newAnalysisBtn");
         this.toastStack = document.getElementById("toastStack");
 
         this.progressItems = {
@@ -85,6 +89,11 @@ class RallyClipApp {
 
     bindEvents() {
         this.welcomeStartBtn.addEventListener("click", () => this.dismissWelcome());
+        this.newMatchBtn.addEventListener("click", () => this.showUpload());
+        this.emptyNewMatchBtn.addEventListener("click", () => this.showUpload());
+        this.backToLibrary.addEventListener("click", () => this.showLibrary());
+        this.libraryGrid.addEventListener("click", (e) => this.onLibraryClick(e));
+
         this.dropZone.addEventListener("dragover", (e) => {
             e.preventDefault();
             this.dropZone.classList.add("dragover");
@@ -113,9 +122,6 @@ class RallyClipApp {
             this.applyDefaults();
             this.showToast("Advanced settings reset", "success");
         });
-        this.downloadVideoBtn.addEventListener("click", () => this.downloadVideo());
-        this.downloadCsvBtn.addEventListener("click", () => this.downloadCsv());
-        this.newAnalysisBtn.addEventListener("click", () => this.startNewAnalysis());
         this.yoloDevice.addEventListener("change", () => this.updateDeviceNote());
     }
 
@@ -135,7 +141,7 @@ class RallyClipApp {
 
     dismissWelcome() {
         this.markWelcomeSeen();
-        this.showView("upload");
+        this.showLibrary();
     }
 
     showWelcome() {
@@ -146,11 +152,142 @@ class RallyClipApp {
     showView(viewName) {
         this.welcomeScreen.hidden = true;
         this.appShell.hidden = false;
+        this.libraryView.hidden = viewName !== "library";
         this.uploadView.hidden = viewName !== "upload";
         this.progressCard.hidden = viewName !== "processing";
-        this.resultsCard.hidden = viewName !== "done";
     }
 
+    showLibrary() {
+        this.showView("library");
+        this.loadLibrary();
+    }
+
+    showUpload() {
+        this.removeFile();
+        this.showView("upload");
+    }
+
+    // ----- Library --------------------------------------------------------- //
+    async loadLibrary() {
+        try {
+            const resp = await fetch("/api/library");
+            if (!resp.ok) throw new Error("Failed to load library");
+            const { items } = await resp.json();
+            this.renderLibrary(items || []);
+        } catch (err) {
+            console.error(err);
+            this.renderLibrary([]);
+            this.showToast("Could not load saved matches", "error");
+        }
+    }
+
+    renderLibrary(items) {
+        this.libraryGrid.innerHTML = "";
+        this.libraryEmpty.hidden = items.length > 0;
+        items.forEach((item) => this.libraryGrid.appendChild(this.buildCard(item)));
+    }
+
+    buildCard(item) {
+        const card = document.createElement("div");
+        card.className = "lib-card";
+        card.dataset.id = item.id;
+
+        const thumb = document.createElement("div");
+        thumb.className = "lib-thumb";
+        if (item.has_thumbnail) {
+            const img = document.createElement("img");
+            img.src = `/api/library/${item.id}/thumbnail`;
+            img.alt = item.name || "match";
+            img.loading = "lazy";
+            thumb.appendChild(img);
+        }
+        card.appendChild(thumb);
+
+        const info = document.createElement("div");
+        info.className = "lib-info";
+        const name = document.createElement("div");
+        name.className = "lib-name";
+        name.textContent = item.name || item.id;
+        const meta = document.createElement("div");
+        meta.className = "lib-meta";
+        meta.textContent = this.cardMeta(item);
+        info.append(name, meta);
+        card.appendChild(info);
+
+        const actions = document.createElement("div");
+        actions.className = "lib-actions";
+        actions.appendChild(this.actionButton("Export video", "btn-primary", "export"));
+        if (item.has_csv) actions.appendChild(this.actionButton("CSV", "btn-secondary", "csv"));
+        actions.appendChild(this.actionButton("Delete", "btn-ghost lib-delete", "delete"));
+        card.appendChild(actions);
+
+        return card;
+    }
+
+    actionButton(label, extraClass, action) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `btn ${extraClass}`;
+        btn.textContent = label;
+        btn.dataset.action = action;
+        return btn;
+    }
+
+    cardMeta(item) {
+        const parts = [];
+        if (typeof item.n_segments === "number") {
+            parts.push(`${item.n_segments} point${item.n_segments === 1 ? "" : "s"}`);
+        }
+        if (typeof item.duration_s === "number") parts.push(`${Math.round(item.duration_s)}s`);
+        if (item.created) parts.push(this.formatDate(item.created));
+        return parts.join(" · ");
+    }
+
+    formatDate(iso) {
+        try {
+            return new Date(iso).toLocaleString();
+        } catch (_) {
+            return iso;
+        }
+    }
+
+    onLibraryClick(e) {
+        const btn = e.target.closest("button[data-action]");
+        if (!btn) return;
+        const card = btn.closest(".lib-card");
+        const id = card && card.dataset.id;
+        if (!id) return;
+        const action = btn.dataset.action;
+        if (action === "export") this.triggerDownload(`/api/library/${id}/video`);
+        else if (action === "csv") this.triggerDownload(`/api/library/${id}/csv`);
+        else if (action === "delete") this.deleteItem(id);
+    }
+
+    // A real navigation to an attachment URL: the browser downloads it, and in
+    // the desktop webview it fires QWebEngineProfile.downloadRequested (handled
+    // in desktop.py with a native Save dialog).
+    triggerDownload(url) {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+    }
+
+    async deleteItem(id) {
+        if (!window.confirm("Delete this match? This also deletes its CSV.")) return;
+        try {
+            const resp = await fetch(`/api/library/${id}`, { method: "DELETE" });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            this.showToast("Match deleted.", "success");
+            this.loadLibrary();
+        } catch (err) {
+            console.error(err);
+            this.showToast("Could not delete match.", "error");
+        }
+    }
+
+    // ----- Defaults / form ------------------------------------------------- //
     async loadDefaults() {
         try {
             const resp = await fetch("/api/config/defaults");
@@ -172,8 +309,6 @@ class RallyClipApp {
         this.populateSelect(this.yoloSize, this.yoloOptions, this.defaults.yolo_size || "small");
         this.populateDeviceSelect();
         this.outputName.value = "";
-        this.outputDir.value = this.defaults.output_dir || "";
-        this.csvOutputDir.value = this.defaults.csv_output_dir || "";
         this.low.value = this.defaults.low ?? 0.45;
         this.high.value = this.defaults.high ?? 0.7;
         this.minDurSec.value = this.defaults.min_dur_sec ?? 1.0;
@@ -224,10 +359,7 @@ class RallyClipApp {
     }
 
     processFile(file) {
-        if (file.type !== "video/mp4" && !file.name.toLowerCase().endsWith(".mp4")) {
-            this.showToast("Only MP4 videos are supported.", "error");
-            return;
-        }
+        // Accept any video; the backend validates by content (codec/resolution).
         const maxSize = 2 * 1024 * 1024 * 1024;
         if (file.size > maxSize) {
             this.showToast("File must be under 2GB.", "error");
@@ -239,7 +371,6 @@ class RallyClipApp {
         this.dropZone.hidden = true;
         this.selectedFileDiv.hidden = false;
         this.startBtn.disabled = false;
-        this.showView("upload");
     }
 
     removeFile() {
@@ -249,7 +380,6 @@ class RallyClipApp {
         this.selectedFileDiv.hidden = true;
         this.startBtn.disabled = true;
         this.resetProgress();
-        this.showView("upload");
     }
 
     formatFileSize(bytes) {
@@ -262,8 +392,6 @@ class RallyClipApp {
     buildConfigFromForm() {
         const cfg = { ...(this.defaults || {}) };
         cfg.output_name = this.outputName.value.trim() || null;
-        cfg.output_dir = this.outputDir.value.trim() || cfg.output_dir;
-        cfg.csv_output_dir = this.csvOutputDir.value.trim() || cfg.csv_output_dir;
         cfg.yolo_size = this.yoloSize.value || cfg.yolo_size;
         cfg.yolo_device = this.yoloDevice.value || null;
         cfg.write_csv = true;
@@ -277,9 +405,11 @@ class RallyClipApp {
         return cfg;
     }
 
+    // ----- Processing ------------------------------------------------------ //
     async startAnalysis() {
         if (!this.selectedFile || this.isProcessing) return;
         this.markWelcomeSeen();
+        this.libraryId = null;
         this.resetProgress();
         this.isProcessing = true;
         this.startBtn.disabled = true;
@@ -294,9 +424,18 @@ class RallyClipApp {
             this.startProgressMonitoring();
         } catch (error) {
             console.error(error);
-            this.showToast("Failed to start segmentation.", "error");
+            this.showToast(this.errorText(error) || "Failed to start segmentation.", "error");
             this.resetControls();
             this.showView("upload");
+        }
+    }
+
+    errorText(error) {
+        const msg = (error && error.message) || "";
+        try {
+            return JSON.parse(msg).error || msg;
+        } catch (_) {
+            return msg;
         }
     }
 
@@ -359,6 +498,7 @@ class RallyClipApp {
         const progress = await response.json();
         if (progress.weights) this.weights = progress.weights;
         this.etaSeconds = progress.eta_seconds ?? null;
+        if (progress.library_id) this.libraryId = progress.library_id;
         this.displayProgress(progress);
 
         if (progress.status === "completed") this.onAnalysisComplete();
@@ -429,8 +569,6 @@ class RallyClipApp {
             const response = await fetch(`/api/cancel/${this.currentJobId}`, { method: "POST" });
             if (response.ok) {
                 const payload = await response.json().catch(() => ({}));
-                // The job may have finished before the cancel landed; let the
-                // next progress poll surface the real terminal state.
                 if (payload.status === "cancelled") this.onAnalysisCancelled();
             } else {
                 this.showToast("Could not cancel job.", "error");
@@ -439,7 +577,7 @@ class RallyClipApp {
             console.error("Cancel request failed:", err);
             this.showToast("Cancel request failed.", "error");
             this.resetControls();
-            this.showView("upload");
+            this.showLibrary();
         }
     }
 
@@ -447,11 +585,14 @@ class RallyClipApp {
         this.stopProgressMonitoring();
         this.isProcessing = false;
         this.cancelBtn.disabled = true;
-        this.stageText.textContent = "Done";
-        this.etaText.textContent = "ETA: 0s";
-        this.showView("done");
-        this.showToast("Segmentation complete.", "success");
         try { localStorage.removeItem(JOB_ID_KEY); } catch (_) {}
+        const saved = Boolean(this.libraryId);
+        this.currentJobId = null;
+        this.selectedFile = null;
+        this.libraryId = null;
+        this.showLibrary();
+        if (saved) this.showToast("Saved to your matches.", "success");
+        else this.showToast("No tennis points detected in this video.", "info");
     }
 
     onAnalysisError(error) {
@@ -468,7 +609,7 @@ class RallyClipApp {
         this.resetControls();
         this.resetProgress();
         this.showToast("Job cancelled.", "success");
-        this.showView("upload");
+        this.showLibrary();
         try { localStorage.removeItem(JOB_ID_KEY); } catch (_) {}
     }
 
@@ -496,51 +637,6 @@ class RallyClipApp {
         this.stageText.textContent = "Ready";
         this.etaText.textContent = "ETA: --";
         if (this.progressDetails) this.progressDetails.open = false;
-    }
-
-    async downloadVideo() {
-        if (!this.currentJobId) return;
-        try {
-            const response = await fetch(`/api/download/video/${this.currentJobId}`);
-            if (!response.ok) return this.showToast("Video not ready.", "error");
-            const blob = await response.blob();
-            this.downloadBlob(blob, "rallyclip_segmented.mp4");
-        } catch (err) {
-            console.error("Video download failed:", err);
-            this.showToast("Video download failed.", "error");
-        }
-    }
-
-    async downloadCsv() {
-        if (!this.currentJobId) return;
-        try {
-            const response = await fetch(`/api/download/csv/${this.currentJobId}`);
-            if (!response.ok) return this.showToast("CSV not ready.", "error");
-            const blob = await response.blob();
-            this.downloadBlob(blob, "rallyclip_segments.csv");
-        } catch (err) {
-            console.error("CSV download failed:", err);
-            this.showToast("CSV download failed.", "error");
-        }
-    }
-
-    downloadBlob(blob, filename) {
-        const url = window.URL.createObjectURL(blob);
-        const anchor = document.createElement("a");
-        anchor.href = url;
-        anchor.download = filename;
-        document.body.appendChild(anchor);
-        anchor.click();
-        anchor.remove();
-        window.URL.revokeObjectURL(url);
-    }
-
-    startNewAnalysis() {
-        this.stopProgressMonitoring();
-        this.currentJobId = null;
-        this.removeFile();
-        this.resetControls();
-        this.showView("upload");
     }
 
     showToast(message, tone = "info") {

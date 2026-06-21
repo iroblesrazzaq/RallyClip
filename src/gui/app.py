@@ -99,6 +99,19 @@ def _default_csv_dir() -> Path:
     return (Path.cwd() / "output_csvs").resolve()
 
 
+def _default_library_dir() -> Path:
+    """Persistent library of segmented matches (one folder per match). Survives
+    restarts; the GUI's default view reads from here."""
+    frozen_root = _frozen_data_root()
+    if frozen_root is not None:
+        return frozen_root / "library"
+    for root in candidate_roots():
+        root_path = Path(root).resolve()
+        if (root_path / "models").exists() or (root_path / "gui").exists():
+            return (root_path / "RallyClipLibrary").resolve()
+    return (Path.cwd() / "RallyClipLibrary").resolve()
+
+
 def _keep_jobs() -> bool:
     return os.environ.get("RALLYCLIP_KEEP_JOBS", "").strip().lower() in {"1", "true", "yes"}
 
@@ -123,6 +136,7 @@ def _sweep_old_jobs(max_age_hours: int = 24) -> None:
 JOBS_DIR = _default_jobs_dir()
 DEFAULT_OUTPUT_DIR = _default_output_dir()
 DEFAULT_CSV_DIR = _default_csv_dir()
+LIBRARY_DIR = _default_library_dir()
 
 def _load_default_config() -> Dict[str, Any]:
     try:
@@ -224,6 +238,63 @@ def _ensure_job_dir(job_id: str) -> Path:
     return job_dir
 
 
+def _new_library_id() -> str:
+    """Sortable, unique library item id (timestamp + short random suffix)."""
+    return datetime.now().strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
+
+
+def _library_item_dir(item_id: str) -> Path:
+    """Resolve a library item folder, rejecting ids that escape LIBRARY_DIR."""
+    item_dir = (LIBRARY_DIR / item_id).resolve()
+    root = LIBRARY_DIR.resolve()
+    if root not in item_dir.parents:
+        raise ValueError(f"Invalid library id: {item_id!r}")
+    return item_dir
+
+
+def _write_thumbnail(video_path: Path, thumb_path: Path, max_width: int = 480) -> bool:
+    """Grab the first frame of the segmented video as a JPEG thumbnail. cv2 is
+    imported lazily (it's already loaded by court detection during a job)."""
+    try:
+        import cv2  # lazy: avoids the libGL import at GUI startup
+
+        with av.open(str(video_path)) as container:
+            stream = container.streams.video[0]
+            for frame in container.decode(stream):
+                arr = frame.to_ndarray(format="bgr24")
+                h, w = arr.shape[:2]
+                if w > max_width:
+                    arr = cv2.resize(arr, (max_width, max(1, int(h * max_width / w))))
+                cv2.imwrite(str(thumb_path), arr)
+                return True
+    except Exception:
+        logging.warning("Could not write thumbnail for %s", video_path, exc_info=True)
+    return False
+
+
+def _read_library_items() -> list[Dict[str, Any]]:
+    """List saved matches (newest first). An item needs meta.json + video.mp4."""
+    items: list[Dict[str, Any]] = []
+    if not LIBRARY_DIR.exists():
+        return items
+    for child in LIBRARY_DIR.iterdir():
+        if not child.is_dir():
+            continue
+        meta_path = child / "meta.json"
+        if not meta_path.exists() or not (child / "video.mp4").exists():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        meta["id"] = child.name  # trust the folder name, not the file contents
+        meta["has_csv"] = (child / "segments.csv").exists()
+        meta["has_thumbnail"] = (child / "thumb.jpg").exists()
+        items.append(meta)
+    items.sort(key=lambda m: m.get("created_ts", 0), reverse=True)
+    return items
+
+
 def _new_job_state(job_id: str, cfg: Dict[str, Any]) -> JobDict:
     return {
         "id": job_id,
@@ -240,6 +311,7 @@ def _new_job_state(job_id: str, cfg: Dict[str, Any]) -> JobDict:
         },
         "weights": None,
         "eta_seconds": None,
+        "library_id": None,
         "pose_t0": None,
         "paths": {
             "upload": None,
@@ -556,20 +628,37 @@ def _run_pipeline(job_id: str) -> None:
 
         _check_cancel(job)
         _set_step(job, "output", "in_progress", 5)
-        if cfg.get("write_csv"):
-            csv_out = Path(cfg["csv_output_dir"] or DEFAULT_CSV_DIR).expanduser() / f"{base_name}_segments.csv"
-            csv_out.parent.mkdir(parents=True, exist_ok=True)
+        intervals_sec = [
+            (start_idx / float(cfg["fps"]), end_idx / float(cfg["fps"]))
+            for start_idx, end_idx in segments
+        ]
+        # Persist a found match as one library item (video + csv + thumb + meta in
+        # a single folder): survives restarts, deletes atomically. No segments ->
+        # nothing worth saving, so no item is created.
+        library_id = None
+        if intervals_sec:
+            library_id = _new_library_id()
+            item_dir = LIBRARY_DIR / library_id
+            item_dir.mkdir(parents=True, exist_ok=True)
+            csv_out = item_dir / "segments.csv"
             write_segments_csv(segments, str(csv_out), fps=float(cfg["fps"]), overwrite=True)
+            video_out = item_dir / "video.mp4"
+            segment_video(str(upload_path), intervals_sec, str(video_out))
+            _set_step(job, "output", "in_progress", 70)
+            _write_thumbnail(video_out, item_dir / "thumb.jpg")
+            meta = {
+                "id": library_id,
+                "name": base_name,
+                "source_name": upload_path.name,
+                "created": datetime.now().isoformat(timespec="seconds"),
+                "created_ts": time.time(),
+                "duration_s": round(sum(e - s for s, e in intervals_sec), 2),
+                "n_segments": len(segments),
+            }
+            (item_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+            job["paths"]["video"] = str(video_out)
             job["paths"]["csv"] = str(csv_out)
-        video_out_path = None
-        if cfg.get("segment_video"):
-            video_out = Path(cfg["output_dir"] or DEFAULT_OUTPUT_DIR).expanduser() / f"{base_name}_segmented.mp4"
-            video_out.parent.mkdir(parents=True, exist_ok=True)
-            intervals_sec = [(start_idx / float(cfg["fps"]), end_idx / float(cfg["fps"])) for start_idx, end_idx in segments]
-            if intervals_sec:
-                segment_video(str(upload_path), intervals_sec, str(video_out))
-            video_out_path = str(video_out)
-        job["paths"]["video"] = video_out_path
+        job["library_id"] = library_id
         _set_step(job, "output", "completed", 100)
         job["status"] = "completed"
         job["eta_seconds"] = 0.0
@@ -734,6 +823,7 @@ def get_progress(job_id: str):
             "eta_seconds": job.get("eta_seconds"),
             "pose_eta_seconds": job.get("pose_eta_seconds"),
             "pose_throughput_fps": job.get("pose_throughput_fps"),
+            "library_id": job.get("library_id"),
         }
     ), 200
 
@@ -750,28 +840,55 @@ def cancel_job(job_id: str):
     return jsonify({"status": job["status"]}), 200
 
 
-@app.route("/api/download/video/<job_id>", methods=["GET"])
-def download_video(job_id: str):
-    with jobs_lock:
-        job = jobs.get(job_id)
-    if job is None:
-        return jsonify({"error": "Unknown job id"}), 404
-    video_path = job["paths"].get("video")
-    if not video_path or not os.path.exists(video_path):
+@app.route("/api/library", methods=["GET"])
+def library_list():
+    return jsonify({"items": _read_library_items()}), 200
+
+
+def _resolve_library_file(item_id: str, filename: str) -> Optional[Path]:
+    """Resolve a file inside a library item, or None if the id/file is invalid."""
+    try:
+        item_dir = _library_item_dir(item_id)
+    except ValueError:
+        return None
+    path = item_dir / filename
+    return path if path.exists() else None
+
+
+@app.route("/api/library/<item_id>/thumbnail", methods=["GET"])
+def library_thumbnail(item_id: str):
+    path = _resolve_library_file(item_id, "thumb.jpg")
+    if path is None:
+        return jsonify({"error": "Thumbnail not available"}), 404
+    return send_file(str(path), mimetype="image/jpeg")
+
+
+@app.route("/api/library/<item_id>/video", methods=["GET"])
+def library_video(item_id: str):
+    path = _resolve_library_file(item_id, "video.mp4")
+    if path is None:
         return jsonify({"error": "Video not available"}), 404
-    return send_file(video_path, as_attachment=True, download_name=f"{job_id}_segmented.mp4")
+    return send_file(str(path), as_attachment=True, download_name=f"{item_id}_segmented.mp4")
 
 
-@app.route("/api/download/csv/<job_id>", methods=["GET"])
-def download_csv(job_id: str):
-    with jobs_lock:
-        job = jobs.get(job_id)
-    if job is None:
-        return jsonify({"error": "Unknown job id"}), 404
-    csv_path = job["paths"].get("csv")
-    if not csv_path or not os.path.exists(csv_path):
+@app.route("/api/library/<item_id>/csv", methods=["GET"])
+def library_csv(item_id: str):
+    path = _resolve_library_file(item_id, "segments.csv")
+    if path is None:
         return jsonify({"error": "CSV not available"}), 404
-    return send_file(csv_path, as_attachment=True, download_name=f"{job_id}_segments.csv")
+    return send_file(str(path), as_attachment=True, download_name=f"{item_id}_segments.csv")
+
+
+@app.route("/api/library/<item_id>", methods=["DELETE"])
+def library_delete(item_id: str):
+    try:
+        item_dir = _library_item_dir(item_id)
+    except ValueError:
+        return jsonify({"error": "Invalid id"}), 400
+    if not item_dir.exists():
+        return jsonify({"error": "Unknown library id"}), 404
+    shutil.rmtree(item_dir, ignore_errors=True)
+    return jsonify({"status": "deleted"}), 200
 
 
 def _configure_gui_logging() -> None:

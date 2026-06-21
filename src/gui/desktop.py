@@ -56,7 +56,7 @@ def main() -> int:
     try:
         from PySide6.QtCore import Qt, QUrl
         from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
-        from PySide6.QtWidgets import QApplication, QMainWindow, QSplashScreen
+        from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QSplashScreen
         from PySide6.QtWebEngineWidgets import QWebEngineView
     except ImportError as exc:
         print(
@@ -96,6 +96,24 @@ def main() -> int:
     window.resize(1280, 840)
 
     view = QWebEngineView()
+
+    def _on_download_requested(download) -> None:
+        # QWebEngineView silently drops downloads unless one is accepted here.
+        # This is what makes "Export video" / "Download CSV" actually save a file
+        # in the desktop app (in a browser the page's download just works).
+        suggested = download.suggestedFileName() or "rallyclip_export"
+        downloads_dir = Path.home() / "Downloads"
+        base_dir = downloads_dir if downloads_dir.is_dir() else Path.home()
+        target, _ = QFileDialog.getSaveFileName(window, "Save", str(base_dir / suggested))
+        if not target:
+            download.cancel()
+            return
+        target_path = Path(target)
+        download.setDownloadDirectory(str(target_path.parent))
+        download.setDownloadFileName(target_path.name)
+        download.accept()
+
+    view.page().profile().downloadRequested.connect(_on_download_requested)
     view.load(QUrl(f"http://127.0.0.1:{port}/"))
     window.setCentralWidget(view)
     window.show()

@@ -3,13 +3,15 @@
 Boots the *real* Flask backend (the one the desktop webview drives) on a free
 localhost port and walks the full user journey over HTTP, no mocks:
 
-    upload-and-start  ->  poll progress to completion  ->  download CSV / video
+    upload-and-start  ->  poll progress to completion  ->  saved library item
 
 The pipeline (YOLO pose -> court mask -> features -> ONNX inference -> decode)
 runs for real on a synthetic clip, so assertions are structural: the job
-completes, progress advances monotonically, the CSV has the right header, the
-video output path behaves, bad inputs are rejected. Segment *values* are not
-asserted — a synthetic clip contains no real tennis points.
+completes, progress advances monotonically, bad inputs are rejected, and a
+points-free synthetic clip saves no library item. The library API (list /
+thumbnail / video / csv / delete) is exercised with fabricated items so it runs
+in CI without real footage; the real save->export path is covered by the golden
+tests. Segment *values* are only asserted on the golden clip.
 
 Marked ``e2e``+``slow``; deselected from the default run. Run explicitly:
 
@@ -85,11 +87,46 @@ def synthetic_clip(tmp_path_factory) -> Path:
 
 @pytest.fixture(scope="module")
 def backend(tmp_path_factory, monkeypatch_module) -> BackendClient:
-    """Real backend on a free port with isolated jobs/output/csv dirs."""
+    """Real backend on a free port with isolated jobs/output/csv/library dirs."""
     root = tmp_path_factory.mktemp("e2e_backend")
     monkeypatch_module.setenv("RALLYCLIP_KEEP_JOBS", "1")  # don't sweep/delete outputs mid-run
-    with running_backend(root / "jobs", root / "output", root / "csv") as client:
+    with running_backend(root / "jobs", root / "output", root / "csv", root / "library") as client:
         yield client
+
+
+@pytest.fixture
+def library_dir(backend: BackendClient) -> Path:
+    """The temp library dir the running backend writes to (redirected by the
+    backend fixture). Function-scoped: reads the live global after redirect."""
+    from gui import app as gui_app
+
+    return Path(gui_app.LIBRARY_DIR)
+
+
+def _fabricate_library_item(library_dir: Path, *, n_segments: int = 3, with_csv: bool = True, with_thumb: bool = True) -> str:
+    """Drop a fake library item on disk (no pipeline) so the library API can be
+    tested in CI without real footage. Returns the item id."""
+    import uuid
+
+    item_id = f"20990101-000000-{uuid.uuid4().hex[:6]}"
+    item_dir = library_dir / item_id
+    item_dir.mkdir(parents=True, exist_ok=True)
+    (item_dir / "video.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42fake-video-bytes")
+    if with_csv:
+        (item_dir / "segments.csv").write_text("start_time,end_time\n1.000,3.500\n", encoding="utf-8")
+    if with_thumb:
+        (item_dir / "thumb.jpg").write_bytes(b"\xff\xd8\xff\xe0fake-jpeg")
+    meta = {
+        "id": item_id,
+        "name": "Fabricated Match",
+        "source_name": "match.mp4",
+        "created": "2099-01-01T00:00:00",
+        "created_ts": time.time(),
+        "duration_s": 12.5,
+        "n_segments": n_segments,
+    }
+    (item_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    return item_id
 
 
 @pytest.fixture(scope="module")
@@ -106,9 +143,9 @@ def monkeypatch_module():
 
 @pytest.fixture(scope="module")
 def default_job(backend: BackendClient, synthetic_clip: Path):
-    """A real run with default thresholds, both outputs enabled — the realistic
-    happy path. A synthetic clip yields ~zero points, so the CSV is header-only
-    and no video file is produced; both download endpoints behave accordingly."""
+    """A real run with default thresholds — the realistic happy path. A synthetic
+    clip yields ~zero points, so no library item is saved (nothing worth keeping)
+    and progress reports library_id=None."""
     resp = backend.start_job(synthetic_clip, {"write_csv": True, "segment_video": True})
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["job_id"]
@@ -166,10 +203,66 @@ def test_progress_unknown_job_404(backend: BackendClient):
     assert resp.status_code == 404
 
 
-def test_download_unknown_job_404(backend: BackendClient):
-    missing = "00000000-0000-0000-0000-000000000000"
-    assert backend.get(f"/api/download/csv/{missing}").status_code == 404
-    assert backend.get(f"/api/download/video/{missing}").status_code == 404
+def test_library_unknown_item_404(backend: BackendClient):
+    missing = "does-not-exist"
+    assert backend.get(f"/api/library/{missing}/video").status_code == 404
+    assert backend.get(f"/api/library/{missing}/csv").status_code == 404
+    assert backend.get(f"/api/library/{missing}/thumbnail").status_code == 404
+
+
+def test_library_id_cannot_escape(backend: BackendClient, library_dir: Path):
+    # Defense in depth: even if a traversal id reached the handler, the resolver
+    # rejects anything escaping the library dir. (Werkzeug also normalizes the
+    # URL before routing, so this can't be hit over HTTP — hence the direct test.)
+    from gui import app as gui_app
+
+    with pytest.raises(ValueError):
+        gui_app._library_item_dir("../../etc/passwd")
+    assert gui_app._library_item_dir("ok-123").parent == library_dir
+
+
+# --------------------------------------------------------------------------- #
+# Library API tests (fabricated items — no pipeline, CI-safe)
+# --------------------------------------------------------------------------- #
+def test_library_lists_fabricated_item(backend: BackendClient, library_dir: Path):
+    item_id = _fabricate_library_item(library_dir, n_segments=4)
+    resp = backend.get("/api/library")
+    assert resp.status_code == 200
+    items = resp.json()["items"]
+    item = next((i for i in items if i["id"] == item_id), None)
+    assert item is not None, "fabricated item not listed"
+    assert item["n_segments"] == 4
+    assert item["has_csv"] and item["has_thumbnail"]
+
+
+def test_library_item_downloads(backend: BackendClient, library_dir: Path):
+    item_id = _fabricate_library_item(library_dir)
+    thumb = backend.get(f"/api/library/{item_id}/thumbnail")
+    assert thumb.status_code == 200 and thumb.content
+    video = backend.get(f"/api/library/{item_id}/video")
+    assert video.status_code == 200 and video.content
+    csv = backend.get(f"/api/library/{item_id}/csv")
+    assert csv.status_code == 200
+    assert csv.text.splitlines()[0].strip() == "start_time,end_time"
+
+
+def test_library_delete_removes_item(backend: BackendClient, library_dir: Path):
+    item_id = _fabricate_library_item(library_dir)
+    assert (library_dir / item_id).exists()
+    resp = backend.delete(f"/api/library/{item_id}")
+    assert resp.status_code == 200
+    assert not (library_dir / item_id).exists()
+    assert backend.get(f"/api/library/{item_id}/video").status_code == 404
+    items = backend.get("/api/library").json()["items"]
+    assert all(i["id"] != item_id for i in items)
+
+
+def test_library_item_without_csv_omits_flag(backend: BackendClient, library_dir: Path):
+    item_id = _fabricate_library_item(library_dir, with_csv=False)
+    items = backend.get("/api/library").json()["items"]
+    item = next(i for i in items if i["id"] == item_id)
+    assert item["has_csv"] is False
+    assert backend.get(f"/api/library/{item_id}/csv").status_code == 404
 
 
 # --------------------------------------------------------------------------- #
@@ -195,32 +288,12 @@ def test_progress_is_monotonic(default_job):
     assert body["status"] == "completed"
 
 
-def test_csv_download_has_header(backend: BackendClient, default_job):
-    job_id, _body, _snaps = default_job
-    resp = backend.get(f"/api/download/csv/{job_id}")
-    assert resp.status_code == 200, resp.text
-    first_line = resp.text.splitlines()[0].strip()
-    assert first_line == "start_time,end_time"
-
-
-def test_video_download_reflects_segments(backend: BackendClient, default_job, tmp_path: Path):
-    """Video download mirrors what the pipeline produced: a real, openable MP4 when
-    points were found, or an explicit 404 (no server error) when none were — which
-    is the synthetic-clip case. Forward-compatible with a real-match clip fixture.
-    The video *encode* path itself is covered directly by tests/test_segment.py."""
-    job_id, _body, _snaps = default_job
-    resp = backend.get(f"/api/download/video/{job_id}")
-    if resp.status_code == 200:
-        import av
-
-        assert resp.content, "empty video payload"
-        out = tmp_path / "downloaded_segmented.mp4"
-        out.write_bytes(resp.content)
-        with av.open(str(out)) as container:
-            assert container.streams.video, "downloaded file has no video stream"
-    else:
-        assert resp.status_code == 404
-        assert "not available" in resp.json()["error"].lower()
+def test_default_job_saves_no_library_item(default_job):
+    """A synthetic clip has no real points -> nothing worth saving. The job still
+    completes, but produces no library item (library_id is None)."""
+    _job_id, body, _snaps = default_job
+    assert body["status"] == "completed"
+    assert body.get("library_id") is None
 
 
 def test_cancel_stops_job(backend: BackendClient, synthetic_clip: Path):
@@ -259,21 +332,32 @@ def golden_points() -> list[tuple[float, float]]:
 
 @pytest.fixture(scope="module")
 def golden_job(backend: BackendClient):
-    """A real run on the golden clip (real points -> real CSV + segmented video)."""
+    """A real run on the golden clip -> a saved library item with detected
+    segments. Returns (library_id, body, detected_segments)."""
     resp = backend.start_job(GOLDEN_CLIP, {"write_csv": True, "segment_video": True})
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["job_id"]
     body, _snaps = backend.wait_for(job_id, timeout=GOLDEN_TIMEOUT)
-    csv_resp = backend.get(f"/api/download/csv/{job_id}")
-    assert csv_resp.status_code == 200, csv_resp.text
-    detected = _parse_csv_segments(csv_resp.text)
-    return job_id, body, detected
+    lib_id = body.get("library_id")
+    detected: list[tuple[float, float]] = []
+    if lib_id:
+        csv_resp = backend.get(f"/api/library/{lib_id}/csv")
+        assert csv_resp.status_code == 200, csv_resp.text
+        detected = _parse_csv_segments(csv_resp.text)
+    return lib_id, body, detected
 
 
 @golden
-def test_golden_job_completes(golden_job):
-    _job_id, body, _detected = golden_job
+def test_golden_job_saves_library_item(backend: BackendClient, golden_job):
+    """Real points -> the match is saved to the library and shows up in the list."""
+    lib_id, body, _detected = golden_job
     assert body["status"] == "completed", body.get("error")
+    assert lib_id, "real points should produce a library item"
+    items = backend.get("/api/library").json()["items"]
+    item = next((i for i in items if i["id"] == lib_id), None)
+    assert item is not None, "saved match not listed in the library"
+    assert item["n_segments"] >= 1
+    assert item["has_csv"] and item["has_thumbnail"]
 
 
 @golden
@@ -281,7 +365,7 @@ def test_golden_model_detects_labeled_points(golden_job, golden_points):
     """The pipeline should recover the labeled points with few false positives.
     These are training videos, so the model is optimistic — the floor is a loose
     regression bar (1-point margin), not a generalization measure."""
-    _job_id, _body, detected = golden_job
+    _lib_id, _body, detected = golden_job
     result = score_six_bin(detected, golden_points)
     n = len(golden_points)
     assert result["n_pred"] >= n - 1, f"model under-fired: {result}"
@@ -291,13 +375,14 @@ def test_golden_model_detects_labeled_points(golden_job, golden_points):
 
 
 @golden
-def test_golden_video_is_downloadable(backend: BackendClient, golden_job, tmp_path: Path):
-    """Real points were found, so a real segmented MP4 is produced and served —
-    the full ingest -> detect -> cut -> download path synthetic clips can't reach."""
+def test_golden_library_video_is_downloadable(backend: BackendClient, golden_job, tmp_path: Path):
+    """The saved match exports a real, openable MP4 — the full ingest -> detect ->
+    cut -> save -> export path synthetic clips can't reach."""
     import av
 
-    job_id, _body, detected = golden_job
-    resp = backend.get(f"/api/download/video/{job_id}")
+    lib_id, _body, detected = golden_job
+    assert lib_id
+    resp = backend.get(f"/api/library/{lib_id}/video")
     assert resp.status_code == 200, resp.text
     assert resp.content, "empty video payload"
     out = tmp_path / "golden_segmented.mp4"
@@ -305,8 +390,6 @@ def test_golden_video_is_downloadable(backend: BackendClient, golden_job, tmp_pa
     with av.open(str(out)) as container:
         assert container.streams.video, "downloaded file has no video stream"
         duration = float(container.duration) / 1e6 if container.duration else 0.0
-    # The cut concatenates the detected points; its length should be in the
-    # ballpark of their summed durations (loose: re-encode/keyframe slack).
     expected = sum(e - s for s, e in detected)
     assert duration > 0
     assert duration <= expected + 5.0, f"segmented video longer than detected points: {duration:.1f} vs ~{expected:.1f}"
