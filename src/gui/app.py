@@ -49,6 +49,7 @@ from runtime.device import (
     resolve_auto_device,
 )
 from runtime.paths import resolve_frontend_dir
+from runtime.video_validation import VideoValidationError, validate_video
 from segmentation.segment import segment_video
 
 JobDict = Dict[str, Any]
@@ -678,12 +679,12 @@ def upload_and_start():
     file = request.files["video"]
     if not file or file.filename == "":
         return jsonify({"error": "No file provided"}), 400
-    if not file.filename.lower().endswith(".mp4"):
-        return jsonify({"error": "Only MP4 files are supported"}), 400
-    filename = secure_filename(file.filename)
-    # secure_filename strips non-ASCII; don't reject those uploads, rename them.
-    if not filename.lower().endswith(".mp4") or filename.lower() == ".mp4":
-        filename = "input.mp4"
+    # Accept any container PyAV can decode; validate by content below, not by
+    # extension. secure_filename strips non-ASCII; the saved name's extension
+    # doesn't affect decoding, so just ensure a safe, non-empty filename.
+    filename = secure_filename(file.filename) or "input.mp4"
+    if "." not in filename:
+        filename = f"{filename}.mp4"
 
     try:
         cfg_raw = json.loads(request.form.get("config", "{}") or "{}")
@@ -699,6 +700,14 @@ def upload_and_start():
     job_dir.mkdir(parents=True, exist_ok=True)
     upload_path = job_dir / filename
     file.save(str(upload_path))
+
+    # Preflight before spawning the worker so bad input is rejected immediately,
+    # not surfaced as a "failed" job minutes later.
+    try:
+        validate_video(upload_path, seq_len=int(cfg["seq_len"]), fps=float(cfg["fps"]))
+    except VideoValidationError as exc:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        return jsonify({"error": str(exc)}), 400
 
     state = _new_job_state(job_id, cfg)
     state["paths"]["upload"] = str(upload_path)

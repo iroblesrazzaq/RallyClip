@@ -7,6 +7,33 @@ import numpy as np
 from preprocessing.court_detector import CourtDetector
 
 
+def rescale_player_to_reference(player, src_width, src_height, ref_width, ref_height):
+    """Map a player's box + keypoints from native source pixels into the model's
+    reference resolution (ref_width x ref_height).
+
+    The v1 features are raw-pixel and the model was trained only at the reference
+    resolution (1280x720), so non-reference input (e.g. 1080p/4K) must be linearly
+    rescaled to match the training distribution. Identity when source == reference,
+    so 720p input is unchanged. Returns a new player dict (or None)."""
+    if player is None:
+        return None
+    if src_width <= 0 or src_height <= 0:
+        return player
+    sx = ref_width / src_width
+    sy = ref_height / src_height
+    if sx == 1.0 and sy == 1.0:
+        return player
+    box = np.asarray(player["box"], dtype=np.float32).copy()
+    box[0] *= sx
+    box[1] *= sy
+    box[2] *= sx
+    box[3] *= sy
+    keypoints = np.asarray(player["keypoints"], dtype=np.float32).copy()
+    keypoints[..., 0] *= sx
+    keypoints[..., 1] *= sy
+    return {**player, "box": box, "keypoints": keypoints}
+
+
 class DataPreprocessor:
     def __init__(self, screen_width: int = 1280, screen_height: int = 720, merge_iou_thresh: float = 0.6, save_court_masks: bool = False, yolo_model_path: str = "yolov8n-pose.pt", conf: float = 0.25, yolo_device: str | None = None) -> None:
         self.screen_width = screen_width
@@ -240,6 +267,12 @@ class DataPreprocessor:
                 logging.info("Court mask: %s", getattr(mask, 'shape', None))
             else:
                 logging.info("No court mask available - processing without filtering")
+            # Native source resolution (court mask is generated at frame res). Used to
+            # rescale detections into the model's reference space; identity at 720p.
+            if mask is not None and getattr(mask, "shape", None) is not None and len(mask.shape) >= 2:
+                src_height, src_width = int(mask.shape[0]), int(mask.shape[1])
+            else:
+                src_height, src_width = self.screen_height, self.screen_width
             all_frame_data, all_targets, all_near_players, all_far_players = [], [], [], []
             for frame_idx, frame_data in enumerate(pose_data):
                 annotation_status = frame_data.get('annotation_status', 0)
@@ -257,8 +290,10 @@ class DataPreprocessor:
                 filtered_frame_data = self.filter_frame_by_court(frame_data, mask)
                 all_frame_data.append(filtered_frame_data)
                 assigned_players = self.assign_players(filtered_frame_data)
-                all_near_players.append(assigned_players['near_player'])
-                all_far_players.append(assigned_players['far_player'])
+                all_near_players.append(rescale_player_to_reference(
+                    assigned_players['near_player'], src_width, src_height, self.screen_width, self.screen_height))
+                all_far_players.append(rescale_player_to_reference(
+                    assigned_players['far_player'], src_width, src_height, self.screen_width, self.screen_height))
                 if (frame_idx + 1) % 100 == 0:
                     logging.debug("Processed %s/%s frames", frame_idx + 1, len(pose_data))
             os.makedirs(os.path.dirname(output_npz_path), exist_ok=True)
