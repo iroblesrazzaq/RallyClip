@@ -7,41 +7,26 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="marquee" aria-hidden="true">
-        <div class="marquee-track">
-            <span>LOCAL DESKTOP RELEASE</span>
-            <span>POINT-ONLY CLIPS</span>
-            <span>MP4 IN · SEGMENTS OUT</span>
-            <span>LOCAL DESKTOP RELEASE</span>
-            <span>POINT-ONLY CLIPS</span>
-            <span>MP4 IN · SEGMENTS OUT</span>
+    <section class="welcome-screen" id="welcomeScreen" hidden>
+        <div class="welcome-card">
+            <div class="brand">RallyClip</div>
+            <h1>Drop in a full tennis match. Get back just the points.</h1>
+            <p>Recommended: 1080p MP4, minimum 720p.</p>
+            <button type="button" class="btn btn-primary" id="welcomeStartBtn">Get started</button>
         </div>
-    </div>
+    </section>
 
-    <header class="site-header">
-        <div class="brand">RallyClip</div>
-        <nav class="site-nav">
-            <button type="button" class="nav-link" data-scroll="upload">Upload</button>
-            <button type="button" class="nav-link" data-scroll="progress">Progress</button>
-            <button type="button" class="nav-link" data-scroll="results">Results</button>
-        </nav>
-    </header>
+    <div class="app-shell" id="appShell" hidden>
+        <header class="app-header">
+            <div class="brand">RallyClip</div>
+        </header>
 
-    <main class="hero">
-        <section class="hero-copy">
-            <p class="eyebrow">Accepting match videos</p>
-            <h1>Turn full tennis matches into point-only clips.</h1>
-            <p class="lede">
-                RallyClip runs locally on your machine. Drop an MP4, wait while pose and segmentation finish,
-                then download the condensed video and point timestamps.
-            </p>
-            <p class="hint">Recommended input: 1080p (minimum 720p) for best pose quality.</p>
-
-            <div class="upload-block" id="upload">
+        <main class="workspace">
+            <section class="run-card" id="uploadView">
                 <div class="file-drop-zone" id="dropZone">
-                    <p class="drop-title">Drop your match video here</p>
-                    <p class="drop-sub">or <button type="button" class="text-button" id="browseBtn">browse files</button></p>
-                    <p class="drop-meta">MP4 only · up to 2GB</p>
+                    <p class="drop-title">Drop a match video</p>
+                    <p class="drop-sub"><button type="button" class="text-button" id="browseBtn">Browse files</button></p>
+                    <p class="drop-meta">MP4 · up to 2GB</p>
                     <input type="file" id="fileInput" accept="video/mp4,video/*" hidden>
                 </div>
 
@@ -56,8 +41,7 @@
                 </div>
 
                 <div class="actions">
-                    <button type="button" class="btn btn-primary" id="startBtn" disabled>Start segmentation</button>
-                    <button type="button" class="btn btn-secondary" id="cancelBtn" disabled>Cancel</button>
+                    <button type="button" class="btn btn-primary" id="startBtn" disabled>Start</button>
                     <button type="button" class="btn btn-ghost" id="advancedToggle">Advanced</button>
                 </div>
 
@@ -108,58 +92,56 @@
                         </label>
                     </div>
                 </div>
-            </div>
-        </section>
+            </section>
 
-        <aside class="hero-panel">
-            <div class="status-badge" id="statusBadge">
-                <span id="statusBadgeText">Ready</span>
-            </div>
-            <div class="panel-card" id="progress" hidden>
-                <h2>Progress</h2>
+            <section class="run-card" id="progress" hidden>
                 <div class="overall">
                     <div class="overall-row">
-                        <span>Overall</span>
+                        <span id="stageText">Ready</span>
                         <span id="overallPercentage">0%</span>
                     </div>
                     <div class="bar"><div class="bar-fill overall-fill" id="overallFill"></div></div>
-                    <p class="eta" id="etaText">Est. remaining: --</p>
+                    <p class="eta" id="etaText">ETA: --</p>
                 </div>
-                <div class="steps" id="progressSection">
-                    <div class="step" data-step="pose">
-                        <div class="step-row"><span>Pose extraction</span><span id="poseStatus">Waiting</span></div>
-                        <div class="bar"><div class="bar-fill" id="poseFill"></div></div>
-                    </div>
-                    <div class="step" data-step="preprocess">
-                        <div class="step-row"><span>Preprocessing</span><span id="preprocessStatus">Waiting</span></div>
-                        <div class="bar"><div class="bar-fill" id="preprocessFill"></div></div>
-                    </div>
-                    <div class="step" data-step="feature">
-                        <div class="step-row"><span>Features</span><span id="featureStatus">Waiting</span></div>
-                        <div class="bar"><div class="bar-fill" id="featureFill"></div></div>
-                    </div>
-                    <div class="step" data-step="inference">
-                        <div class="step-row"><span>Inference</span><span id="inferenceStatus">Waiting</span></div>
-                        <div class="bar"><div class="bar-fill" id="inferenceFill"></div></div>
-                    </div>
-                    <div class="step" data-step="output">
-                        <div class="step-row"><span>Output</span><span id="outputStatus">Waiting</span></div>
-                        <div class="bar"><div class="bar-fill" id="outputFill"></div></div>
-                    </div>
-                </div>
-            </div>
 
-            <div class="panel-card" id="results" hidden>
-                <h2>Results</h2>
-                <p class="lede small">Your segmented video and point timestamps are ready.</p>
+                <button type="button" class="btn btn-secondary" id="cancelBtn" disabled>Cancel</button>
+
+                <details class="progress-details">
+                    <summary>Details</summary>
+                    <div class="steps" id="progressSection">
+                        <div class="step" data-step="pose">
+                            <div class="step-row"><span>Pose extraction</span><span id="poseStatus">Waiting</span></div>
+                            <div class="bar"><div class="bar-fill" id="poseFill"></div></div>
+                        </div>
+                        <div class="step" data-step="preprocess">
+                            <div class="step-row"><span>Preprocessing</span><span id="preprocessStatus">Waiting</span></div>
+                            <div class="bar"><div class="bar-fill" id="preprocessFill"></div></div>
+                        </div>
+                        <div class="step" data-step="feature">
+                            <div class="step-row"><span>Features</span><span id="featureStatus">Waiting</span></div>
+                            <div class="bar"><div class="bar-fill" id="featureFill"></div></div>
+                        </div>
+                        <div class="step" data-step="inference">
+                            <div class="step-row"><span>Inference</span><span id="inferenceStatus">Waiting</span></div>
+                            <div class="bar"><div class="bar-fill" id="inferenceFill"></div></div>
+                        </div>
+                        <div class="step" data-step="output">
+                            <div class="step-row"><span>Output</span><span id="outputStatus">Waiting</span></div>
+                            <div class="bar"><div class="bar-fill" id="outputFill"></div></div>
+                        </div>
+                    </div>
+                </details>
+            </section>
+
+            <section class="run-card" id="results" hidden>
                 <div class="result-actions">
-                    <button type="button" class="btn btn-primary" id="downloadVideoBtn">Download MP4</button>
-                    <button type="button" class="btn btn-secondary" id="downloadCsvBtn">Download CSV</button>
+                    <button type="button" class="btn btn-primary" id="downloadVideoBtn">Save video</button>
+                    <button type="button" class="btn btn-secondary" id="downloadCsvBtn">Save timestamps (CSV)</button>
                     <button type="button" class="btn btn-ghost" id="newAnalysisBtn">New match</button>
                 </div>
-            </div>
-        </aside>
-    </main>
+            </section>
+        </main>
+    </div>
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
     <script src="script.js"></script>
