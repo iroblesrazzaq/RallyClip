@@ -140,7 +140,9 @@ def test_config_defaults_contract(backend: BackendClient):
         assert leaked not in defaults
 
 
-def test_upload_rejects_non_mp4(backend: BackendClient, tmp_path: Path):
+def test_upload_rejects_non_video(backend: BackendClient, tmp_path: Path):
+    # Policy: accept any decodable container, reject by content (not extension).
+    # A non-video file is rejected cleanly at upload, before any job spawns.
     bad = tmp_path / "notes.txt"
     bad.write_text("not a video", encoding="utf-8")
     with open(bad, "rb") as fh:
@@ -150,7 +152,7 @@ def test_upload_rejects_non_mp4(backend: BackendClient, tmp_path: Path):
             data={"config": "{}"},
         )
     assert resp.status_code == 400
-    assert "MP4" in resp.json()["error"]
+    assert "could not be opened" in resp.json()["error"].lower()
 
 
 def test_upload_rejects_missing_field(backend: BackendClient):

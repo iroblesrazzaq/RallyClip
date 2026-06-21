@@ -25,6 +25,7 @@ from infer import (
     write_segments_csv,
 )
 from preprocessing.data_preprocessor import DataPreprocessor
+from runtime.video_validation import VideoValidationError, validate_video
 from segmentation.segment import segment_video
 
 try:  # Python 3.11+ ships tomllib; fall back to tomli otherwise.
@@ -254,6 +255,13 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
 def run_pipeline(cfg: RunConfig) -> int:
     if not cfg.video_path.exists():
         print(f"Error: video file not found at '{cfg.video_path}'")
+        return 1
+
+    # Preflight the input before the expensive pose/preprocess passes.
+    try:
+        validate_video(cfg.video_path, seq_len=int(cfg.seq_len), fps=float(cfg.fps))
+    except VideoValidationError as exc:
+        print(f"Error: {exc}")
         return 1
 
     # Fail fast, before the expensive pose/preprocess passes: only feature_set 'v1' is implemented.

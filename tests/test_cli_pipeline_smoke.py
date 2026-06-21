@@ -134,6 +134,10 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
     monkeypatch.setattr(cli_main, "gaussian_filter1d", lambda values, sigma: values)
     monkeypatch.setattr(cli_main, "write_segments_csv", fake_write_segments_csv)
     monkeypatch.setattr(cli_main, "segment_video", fake_segment_video)
+    # Stub the input preflight; this test stubs the video stages, so the fake
+    # video bytes aren't a real decodable file. Validation is covered by
+    # tests/test_video_validation.py.
+    monkeypatch.setattr(cli_main, "validate_video", lambda *a, **k: None)
 
     cfg = cli_main.RunConfig(
         video_path=video_path,
@@ -204,6 +208,9 @@ def test_unsupported_feature_set_fails_before_pose_extraction(tmp_path, monkeypa
             raise AssertionError("pose extraction must not run for an unsupported feature_set")
 
     monkeypatch.setattr(cli_main, "PoseExtractor", ExplodingPoseExtractor)
+    # Stub the input preflight (fake video bytes); we're asserting the feature_set
+    # guard fires before pose extraction, not video validation.
+    monkeypatch.setattr(cli_main, "validate_video", lambda *a, **k: None)
 
     cfg = cli_main.RunConfig(
         video_path=video_path,
