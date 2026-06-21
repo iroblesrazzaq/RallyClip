@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from runtime.assets import YOLO_SIZE_MAP, manifest_values, resolve_asset
-from runtime.device import detect_available_devices, resolve_auto_device
 
 
 def resolve_default_artifacts(
@@ -64,17 +63,12 @@ def build_gui_defaults(artifact_dir: Optional[str] = None) -> Dict[str, Any]:
     yolo_file = str(manifest.get("yolo_model") or "yolov8n-pose.pt")
     yolo_size = next((k for k, v in YOLO_SIZE_MAP.items() if v == yolo_file), "small")
 
-    auto_device = resolve_auto_device()
-    available = detect_available_devices()
-
     return {
         "write_csv": True,
         "segment_video": True,
         "yolo_size": yolo_size,
         "yolo_weights": yolo_file,
         "yolo_device": None,
-        "auto_device": auto_device,
-        "available_devices": available,
         "output_name": None,
         "model_path": str(model_path),
         "artifact_dir": str(model_path.parent),
