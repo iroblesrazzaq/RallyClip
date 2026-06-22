@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Updates | RallyClip</title>
+    <meta name="description" content="Informal updates and notes about RallyClip development.">
+    <link rel="icon" type="image/png" href="rallyclip_favicon_transparent2.png">
+    <link rel="apple-touch-icon" href="rallyclip_favicon_transparent2.png">
+    <link rel="stylesheet" href="styles.css?v=20260621">
+</head>
+<body>
+    <div class="page">
+        <header class="header">
+            <p class="byline">A project by <strong>Ismael Robles-Razzaq</strong></p>
+            <div class="logo-title-group">
+                <img src="rallyclip_logo_cropped.png" alt="RallyClip logo" class="header-logo">
+                <h1>Updates</h1>
+            </div>
+            <p class="tagline">Informal notes on RallyClip development, releases, models, data, and open-source tennis.</p>
+            <a href="index.html" class="github-link">Back to RallyClip</a>
+        </header>
+
+        <nav class="nav">
+            <a href="index.html#about">About</a>
+            <a href="updates.html" aria-current="page">Updates</a>
+            <a href="index.html#motivation">Motivation</a>
+            <a href="index.html#how-it-works">How It Works</a>
+            <a href="index.html#challenges">Challenges</a>
+            <a href="index.html#future">Future</a>
+            <a href="index.html#install">Install</a>
+        </nav>
+
+        <main class="content">
+            <section>
+                <article class="update-entry">
+                    <h2>June 21, 2026</h2>
+                    <p>Starting a tiny blog about updates on RallyClip! This is a very informal log of what I've been working on in the app, what's to come, and my other RallyClip related musings.</p>
+                    <p>I've been working on the first release, which is going to be a mac desktop app.</p>
+                    <p>The GUI is all Claude Code/Codex, so it doesn't meet my taste yet, but that's to refine later. It will have super basic functionality of doing the rally segmentation then saving the video. Nothing crazy at all.</p>
+                    <p>I've also been working on a new model! It's a modification of my old model. Instead of just training the LSTM on the per-frame in vs out of point objective with BCE loss, I added two additional heads on top of the hidden state. They predict the delta time in seconds from the current frame to the start and end of the point. That is, for a given frame, the model will predict that the start of the point was 5s before and the end is in 3s. This came from my dissatisfaction with the previous hysteresis filtering, and my desire for an end-to-end deep learning solution. I may release the first iteration of this one soon.</p>
+                    <p>That brings me to my next topic - data! I have significantly increased my data, so I am going to train my models on more than 10 hours of footage! This is probably the greatest lever for the models to improve.</p>
+                    <p>I've also been thinking about the broader environment of open-source tennis. I want to have a community where software, ideas, and data (especially data!) are freely shared, allowing developers to create useful tennis software easily, and amateur tennis players around the world to freely access these tools. I would call it OpenTennis.</p>
+                </article>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <a href="https://github.com/iroblesrazzaq/RallyClip" target="_blank">GitHub</a>
+            <span>·</span>
+            <a href="https://github.com/iroblesrazzaq/RallyClip/issues" target="_blank">Issues</a>
+            <span>·</span>
+            <span>GPL-3.0 License</span>
+        </footer>
+    </div>
+</body>
+</html>
