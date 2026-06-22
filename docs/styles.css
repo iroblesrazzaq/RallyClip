@@ -63,7 +63,7 @@ body {
 
 .header-logo {
     width: auto;
-    height: 98px;
+    height: 72px;
     display: block;
 }
 
@@ -339,7 +339,7 @@ li code {
     }
 
     .header-logo {
-        height: 50px;
+        height: 46px;
     }
 
     .tagline {
