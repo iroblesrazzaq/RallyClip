@@ -6,13 +6,13 @@
 
 :root {
     color-scheme: light;
-    --bg: #ffffff;
+    --bg: #fbf7ec;
     --text: #111111;
-    --muted: #666666;
-    --subtle: #8a8a8a;
-    --border: #e7e7e7;
-    --soft: #f7f7f7;
-    --soft-strong: #f0f0f0;
+    --muted: #5f5b52;
+    --subtle: #8a8376;
+    --border: #e4ddcf;
+    --soft: #fffdf7;
+    --soft-strong: #f1eadc;
     --accent: #111111;
 }
 
@@ -99,7 +99,7 @@ body {
 
 .github-link:hover {
     background: var(--soft);
-    border-color: #d8d8d8;
+    border-color: #d4cbbb;
 }
 
 .nav {
@@ -127,13 +127,13 @@ body {
 .nav a:hover {
     color: var(--text);
     background: var(--soft);
-    border-color: #d8d8d8;
+    border-color: #d4cbbb;
 }
 
 .nav a[aria-current="page"] {
     color: var(--text);
     background: var(--soft-strong);
-    border-color: #d0d0d0;
+    border-color: #d4cbbb;
 }
 
 .content {
@@ -189,7 +189,7 @@ a {
 }
 
 a:hover {
-    color: #000000;
+    color: var(--text);
 }
 
 .update-entry,
@@ -322,7 +322,7 @@ li code {
 }
 
 ::selection {
-    background: #eeeeee;
+    background: #efe6d2;
 }
 
 :focus-visible {
