@@ -8,6 +8,35 @@ import urllib.request
 from pathlib import Path
 
 
+def _resource_path(*parts: str) -> Path | None:
+    rel = Path(*parts)
+    roots: list[Path] = []
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            roots.append(Path(meipass).resolve())
+        if sys.platform == "darwin":
+            roots.append(Path(sys.executable).resolve().parent.parent / "Resources")
+
+    here = Path(__file__).resolve()
+    roots.append(Path.cwd())
+    for depth in (2, 3, 4):
+        try:
+            roots.append(here.parents[depth])
+        except IndexError:
+            continue
+
+    seen: list[Path] = []
+    for root in roots:
+        if root in seen:
+            continue
+        seen.append(root)
+        candidate = root / rel
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
 def _fix_frozen_webengine_paths() -> None:
     """Point Qt at the relocated QtWebEngineCore.framework in macOS bundles.
 
@@ -55,7 +84,7 @@ def main() -> int:
     _fix_frozen_webengine_paths()
     try:
         from PySide6.QtCore import Qt, QUrl
-        from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+        from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
         from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QSplashScreen
         from PySide6.QtWebEngineWidgets import QWebEngineView
     except ImportError as exc:
@@ -70,15 +99,37 @@ def main() -> int:
 
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName("RallyClip")
+    icon_path = _resource_path("docs", "rallyclip.icns") or _resource_path(
+        "docs", "rallyclip_favicon_transparent2.png"
+    )
+    app_icon = QIcon(str(icon_path)) if icon_path else QIcon()
+    if not app_icon.isNull():
+        qt_app.setWindowIcon(app_icon)
 
-    splash_pix = QPixmap(420, 160)
+    splash_pix = QPixmap(480, 220)
     splash_pix.fill(QColor("#f5f0e8"))
     painter = QPainter(splash_pix)
+    logo_path = _resource_path("docs", "rallyclip_logo_cropped.png")
+    logo = QPixmap(str(logo_path)) if logo_path else QPixmap()
+    if not logo.isNull():
+        scaled_logo = logo.scaled(
+            340,
+            150,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        target = scaled_logo.rect()
+        target.moveCenter(splash_pix.rect().center())
+        target.moveTop(30)
+        painter.drawPixmap(target, scaled_logo)
+        text_top = 178
+    else:
+        text_top = 90
     painter.setPen(QColor("#1a2744"))
     font = QFont()
     font.setPointSize(14)
     painter.setFont(font)
-    painter.drawText(splash_pix.rect(), Qt.AlignmentFlag.AlignCenter, "Starting RallyClip…")
+    painter.drawText(0, text_top, splash_pix.width(), 32, Qt.AlignmentFlag.AlignCenter, "Starting RallyClip…")
     painter.end()
 
     splash = QSplashScreen(splash_pix)
@@ -93,6 +144,8 @@ def main() -> int:
 
     window = QMainWindow()
     window.setWindowTitle("RallyClip")
+    if not app_icon.isNull():
+        window.setWindowIcon(app_icon)
     window.resize(1280, 840)
 
     view = QWebEngineView()
