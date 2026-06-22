@@ -14,6 +14,9 @@
     --soft: #f7f7f7;
     --soft-strong: #f0f0f0;
     --accent: #111111;
+    --tennis: #d7ff32;
+    --tennis-soft: #f7ffe2;
+    --tennis-border: #d8ef62;
 }
 
 html {
@@ -39,8 +42,19 @@ body {
 }
 
 .header {
+    position: relative;
     padding: 16px 0 28px;
     border-bottom: 1px solid var(--border);
+}
+
+.header::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: -1px;
+    width: 72px;
+    height: 2px;
+    background: var(--tennis);
 }
 
 .byline {
@@ -98,8 +112,8 @@ body {
 }
 
 .github-link:hover {
-    background: var(--soft);
-    border-color: #d8d8d8;
+    background: var(--tennis-soft);
+    border-color: var(--tennis-border);
 }
 
 .nav {
@@ -126,14 +140,14 @@ body {
 
 .nav a:hover {
     color: var(--text);
-    background: var(--soft);
-    border-color: #d8d8d8;
+    background: var(--tennis-soft);
+    border-color: var(--tennis-border);
 }
 
 .nav a[aria-current="page"] {
     color: var(--text);
-    background: var(--soft-strong);
-    border-color: #d0d0d0;
+    background: var(--tennis-soft);
+    border-color: var(--tennis-border);
 }
 
 .content {
@@ -152,11 +166,16 @@ body {
 }
 
 h2 {
+    display: inline-block;
     margin-bottom: 20px;
     font-size: clamp(26px, 4vw, 38px);
     line-height: 1.05;
     letter-spacing: -0.035em;
     font-weight: 650;
+    text-decoration: underline;
+    text-decoration-color: var(--tennis);
+    text-decoration-thickness: 4px;
+    text-underline-offset: 6px;
 }
 
 h3 {
@@ -186,6 +205,7 @@ a {
     color: var(--text);
     text-decoration-thickness: 1px;
     text-underline-offset: 3px;
+    text-decoration-color: rgba(215, 255, 50, 0.75);
 }
 
 a:hover {
@@ -198,6 +218,7 @@ a:hover {
     max-width: 760px;
     padding: 18px 20px;
     border: 1px solid var(--border);
+    border-left: 3px solid var(--tennis);
     border-radius: 10px;
     background: var(--soft);
 }
@@ -237,7 +258,7 @@ td {
 
 th {
     color: var(--text);
-    background: var(--soft);
+    background: linear-gradient(180deg, var(--tennis-soft), var(--soft));
     font-weight: 600;
 }
 
@@ -261,7 +282,7 @@ li {
 }
 
 li::marker {
-    color: var(--subtle);
+    color: var(--tennis-border);
 }
 
 pre {
@@ -269,7 +290,8 @@ pre {
     margin: 16px 0;
     padding: 18px 20px;
     overflow-x: auto;
-    border: 1px solid var(--border);
+    border: 1px solid #202020;
+    border-top: 3px solid var(--tennis);
     border-radius: 10px;
     background: #111111;
 }
@@ -322,7 +344,12 @@ li code {
 }
 
 ::selection {
-    background: #eeeeee;
+    background: var(--tennis-soft);
+}
+
+:focus-visible {
+    outline: 2px solid var(--tennis-border);
+    outline-offset: 3px;
 }
 
 @media (max-width: 640px) {
