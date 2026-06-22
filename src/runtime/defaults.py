@@ -61,7 +61,7 @@ def build_gui_defaults(artifact_dir: Optional[str] = None) -> Dict[str, Any]:
         raise KeyError(f"Manifest missing required fields: {', '.join(missing)}")
 
     yolo_file = str(manifest.get("yolo_model") or "yolov8n-pose.pt")
-    yolo_size = next((k for k, v in YOLO_SIZE_MAP.items() if v == yolo_file), "small")
+    yolo_size = next((k for k, v in YOLO_SIZE_MAP.items() if v == yolo_file), "nano")
 
     return {
         "write_csv": True,

@@ -84,7 +84,7 @@ h1 {
     width: 100%;
 }
 
-/* Upload + progress stay a comfortable reading width; the library spans wide. */
+/* Upload + progress stay a comfortable reading width; library/viewer span wide. */
 #uploadView,
 #progress {
     max-width: 40rem;
@@ -122,6 +122,18 @@ h1 {
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    cursor: pointer;
+    transition: transform 0.15s ease;
+}
+
+.lib-card:hover,
+.lib-card:focus-visible {
+    transform: translateY(-2px);
+}
+
+.lib-card:focus-visible {
+    outline: 3px solid var(--accent);
+    outline-offset: 3px;
 }
 
 .lib-thumb {
@@ -178,6 +190,62 @@ h1 {
     padding: 3rem 1.5rem;
     border: 1px dashed var(--line);
     border-radius: var(--radius);
+}
+
+.viewer-view {
+    display: grid;
+    gap: 1rem;
+}
+
+.viewer-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 1rem;
+}
+
+.viewer-head h2 {
+    margin: 0;
+    font-size: 1.7rem;
+    letter-spacing: -0.03em;
+    overflow-wrap: anywhere;
+}
+
+.viewer-head p {
+    margin: 0.25rem 0 0;
+    color: var(--ink-soft);
+    font-size: 0.95rem;
+}
+
+.viewer-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.75rem;
+}
+
+.viewer-video-wrap {
+    position: relative;
+}
+
+.match-video {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #020617;
+    border: 1px solid var(--ink);
+    border-radius: var(--radius);
+    display: block;
+}
+
+.preview-status {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: var(--white);
+    font-weight: 700;
+    letter-spacing: 0;
+    pointer-events: none;
 }
 
 .empty-title {
@@ -466,5 +534,14 @@ h1 {
 
     .file-drop-zone {
         min-height: 13rem;
+    }
+
+    .viewer-head {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .viewer-actions {
+        justify-content: flex-start;
     }
 }

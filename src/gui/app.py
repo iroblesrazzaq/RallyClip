@@ -6,12 +6,14 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import threading
 import time
 import uuid
 import webbrowser
 from datetime import datetime, timedelta
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -27,7 +29,7 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
 import numpy as np
 import av
 
-from runtime.assets import YOLO_SIZE_MAP, candidate_roots, resolve_asset
+from runtime.assets import candidate_roots, resolve_asset
 from extraction.pose_extractor import PoseExtractionCancelled, PoseExtractor
 from features.feature_engineer import FeatureEngineer
 from infer import (
@@ -50,9 +52,10 @@ from runtime.device import (
 )
 from runtime.paths import resolve_frontend_dir
 from runtime.video_validation import VideoValidationError, validate_video
-from segmentation.segment import segment_video
+from segmentation.segment import load_intervals, segment_video
 
 JobDict = Dict[str, Any]
+FIXED_YOLO_MODEL = "yolov8n-pose.pt"
 
 
 STATIC_DIR = resolve_frontend_dir()
@@ -146,7 +149,8 @@ def _load_default_config() -> Dict[str, Any]:
         cfg = {
             "write_csv": True,
             "segment_video": True,
-            "yolo_size": "small",
+            "yolo_size": "nano",
+            "yolo_weights": FIXED_YOLO_MODEL,
             "yolo_device": None,
             "fps": 5.0,
             "seq_len": 100,
@@ -222,6 +226,8 @@ def _reject_cross_origin_writes():
 
 jobs_lock = threading.Lock()
 jobs: Dict[str, JobDict] = {}
+preview_locks: Dict[str, threading.Lock] = {}
+preview_jobs: Dict[str, str] = {}
 
 
 class PipelineCancelled(Exception):
@@ -270,8 +276,261 @@ def _write_thumbnail(video_path: Path, thumb_path: Path, max_width: int = 480) -
     return False
 
 
+def _preview_lock(item_id: str) -> threading.Lock:
+    with jobs_lock:
+        lock = preview_locks.get(item_id)
+        if lock is None:
+            lock = threading.Lock()
+            preview_locks[item_id] = lock
+        return lock
+
+
+def _ffmpeg_executable() -> Optional[str]:
+    env_path = os.environ.get("RALLYCLIP_FFMPEG_PATH")
+    candidates = [
+        env_path,
+        shutil.which("ffmpeg"),
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        "/usr/bin/ffmpeg",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return str(candidate)
+    return None
+
+
+def _write_web_preview_ffmpeg(source_path: Path, preview_path: Path, max_width: int = 640) -> bool:
+    ffmpeg = _ffmpeg_executable()
+    if ffmpeg is None:
+        return False
+
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = preview_path.with_suffix(".tmp.webm")
+    if tmp_path.exists():
+        tmp_path.unlink()
+
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(source_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
+        "-vf",
+        f"scale={max_width}:-2:force_original_aspect_ratio=decrease,fps=15",
+        "-c:v",
+        "libvpx",
+        "-deadline",
+        "realtime",
+        "-cpu-used",
+        "8",
+        "-b:v",
+        "700k",
+        "-maxrate",
+        "900k",
+        "-bufsize",
+        "1400k",
+        "-threads",
+        "0",
+        "-c:a",
+        "libopus",
+        "-b:a",
+        "48k",
+        "-ac",
+        "2",
+        "-ar",
+        "48000",
+        str(tmp_path),
+    ]
+    try:
+        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        logging.warning("ffmpeg preview transcode failed for %s", source_path, exc_info=True)
+        return False
+
+    tmp_path.replace(preview_path)
+    return True
+
+
+def _write_web_preview(source_path: Path, preview_path: Path, max_width: int = 640) -> None:
+    """Transcode a browser-safe WebM preview for QtWebEngine.
+
+    The packaged QtWebEngine build can parse MP4 metadata/audio but does not
+    decode H.264 video, so the in-app viewer needs a VP8/Opus preview cache.
+    """
+    if _write_web_preview_ffmpeg(source_path, preview_path, max_width=max_width):
+        return
+
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = preview_path.with_suffix(".tmp.webm")
+    if tmp_path.exists():
+        tmp_path.unlink()
+
+    in_container = av.open(str(source_path))
+    try:
+        in_v = next((s for s in in_container.streams if s.type == "video"), None)
+        if in_v is None:
+            raise RuntimeError(f"No video stream found in {source_path}")
+        in_a = next((s for s in in_container.streams if s.type == "audio"), None)
+        out_container = av.open(str(tmp_path), "w")
+    except Exception:
+        in_container.close()
+        raise
+
+    try:
+        width = int(in_v.codec_context.width)
+        height = int(in_v.codec_context.height)
+        if width > max_width:
+            ratio = max_width / width
+            width = max(2, int(round(width * ratio)) // 2 * 2)
+            height = max(2, int(round(height * ratio)) // 2 * 2)
+        else:
+            width = max(2, width // 2 * 2)
+            height = max(2, height // 2 * 2)
+
+        source_rate = in_v.average_rate or Fraction(30, 1)
+        rate = min(source_rate, Fraction(15, 1))
+        video_tb = Fraction(1, 1) / rate
+        out_v = out_container.add_stream("libvpx", rate=rate)
+        out_v.width = width
+        out_v.height = height
+        out_v.pix_fmt = "yuv420p"
+        out_v.options = {
+            "deadline": "realtime",
+            "cpu-used": "8",
+            "crf": "12",
+            "b:v": "700k",
+        }
+
+        out_a = resampler = fifo = None
+        if in_a is not None:
+            out_a = out_container.add_stream("libopus", rate=48000)
+            out_a.layout = "stereo"
+            resampler = av.AudioResampler(format=out_a.format, layout=out_a.layout, rate=out_a.rate)
+            fifo = av.AudioFifo()
+
+        video_index = 0
+        audio_pts = 0
+
+        def drain_audio(flush: bool = False) -> None:
+            nonlocal audio_pts
+            if out_a is None or fifo is None:
+                return
+            frame_size = out_a.frame_size or 960
+            while fifo.samples >= frame_size or (flush and fifo.samples > 0):
+                take = frame_size if fifo.samples >= frame_size else fifo.samples
+                a_frame = fifo.read(take)
+                if a_frame is None:
+                    break
+                a_frame.pts = audio_pts
+                a_frame.time_base = Fraction(1, out_a.rate)
+                audio_pts += a_frame.samples
+                for packet in out_a.encode(a_frame):
+                    out_container.mux(packet)
+
+        decode_streams = [s for s in (in_v, in_a) if s is not None]
+        next_video_t = 0.0
+        frame_step = 1.0 / float(rate)
+        for frame in in_container.decode(*decode_streams):
+            if isinstance(frame, av.VideoFrame):
+                if frame.pts is not None:
+                    t = float(frame.pts * frame.time_base)
+                    if t + 1e-6 < next_video_t:
+                        continue
+                    next_video_t = t + frame_step
+                frame = frame.reformat(width=width, height=height, format="yuv420p")
+                frame.pts = video_index
+                frame.time_base = video_tb
+                frame.pict_type = av.video.frame.PictureType.NONE
+                video_index += 1
+                for packet in out_v.encode(frame):
+                    out_container.mux(packet)
+            elif out_a is not None and isinstance(frame, av.AudioFrame):
+                frame.pts = None
+                for r_frame in resampler.resample(frame):
+                    fifo.write(r_frame)
+                drain_audio()
+
+        for packet in out_v.encode():
+            out_container.mux(packet)
+        if out_a is not None:
+            for r_frame in resampler.resample(None):
+                fifo.write(r_frame)
+            drain_audio(flush=True)
+            for packet in out_a.encode():
+                out_container.mux(packet)
+    finally:
+        out_container.close()
+        in_container.close()
+
+    tmp_path.replace(preview_path)
+
+
+def _ensure_web_preview(item_id: str, source_path: Path) -> Path:
+    item_dir = _library_item_dir(item_id)
+    preview_path = item_dir / "preview.webm"
+    if preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime:
+        return preview_path
+    lock = _preview_lock(item_id)
+    with lock:
+        if preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime:
+            return preview_path
+        _write_web_preview(source_path, preview_path)
+        return preview_path
+
+
+def _web_preview_path(item_id: str) -> Path:
+    return _library_item_dir(item_id) / "preview.webm"
+
+
+def _web_preview_ready(item_id: str, source_path: Path) -> bool:
+    preview_path = _web_preview_path(item_id)
+    return preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime
+
+
+def _web_preview_state(item_id: str, source_path: Path) -> str:
+    if _web_preview_ready(item_id, source_path):
+        return "ready"
+    with jobs_lock:
+        return preview_jobs.get(item_id, "missing")
+
+
+def _prepare_web_preview_background(item_id: str, source_path: Path) -> None:
+    with jobs_lock:
+        preview_jobs[item_id] = "processing"
+    try:
+        _ensure_web_preview(item_id, source_path)
+        with jobs_lock:
+            preview_jobs[item_id] = "ready"
+    except Exception:
+        with jobs_lock:
+            preview_jobs[item_id] = "error"
+        logging.warning("Could not prepare web preview for %s", item_id, exc_info=True)
+
+
+def _start_web_preview_background(item_id: str, source_path: Path) -> str:
+    state = _web_preview_state(item_id, source_path)
+    if state in {"ready", "processing"}:
+        return state
+    threading.Thread(
+        target=_prepare_web_preview_background,
+        args=(item_id, source_path),
+        daemon=True,
+        name=f"rallyclip-preview-{item_id}",
+    ).start()
+    return "processing"
+
+
 def _read_library_items() -> list[Dict[str, Any]]:
-    """List saved matches (newest first). An item needs meta.json + video.mp4."""
+    """List saved matches (newest first). An item needs meta.json + a source video."""
     items: list[Dict[str, Any]] = []
     if not LIBRARY_DIR.exists():
         return items
@@ -279,7 +538,7 @@ def _read_library_items() -> list[Dict[str, Any]]:
         if not child.is_dir():
             continue
         meta_path = child / "meta.json"
-        if not meta_path.exists() or not (child / "video.mp4").exists():
+        if not meta_path.exists() or not ((child / "source.mp4").exists() or (child / "video.mp4").exists()):
             continue
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -288,6 +547,7 @@ def _read_library_items() -> list[Dict[str, Any]]:
         meta["id"] = child.name  # trust the folder name, not the file contents
         meta["has_csv"] = (child / "segments.csv").exists()
         meta["has_thumbnail"] = (child / "thumb.jpg").exists()
+        meta["has_export"] = (child / "export.mp4").exists()
         items.append(meta)
     items.sort(key=lambda m: m.get("created_ts", 0), reverse=True)
     return items
@@ -302,28 +562,35 @@ def _persist_library_item(
     fps: float,
     job: JobDict,
 ) -> tuple[str, Path, Path]:
-    """Write one saved match folder, removing it again if any write fails."""
+    """Write one saved match folder, removing it again if any write fails.
+
+    The library stores the full source video plus the CSV. Cut/stitched exports
+    are generated lazily by the export endpoint, not during analysis.
+    """
     library_id = _new_library_id()
     item_dir = _library_item_dir(library_id)
     item_dir.mkdir(parents=True, exist_ok=True)
     try:
         csv_out = item_dir / "segments.csv"
         write_segments_csv(segments, str(csv_out), fps=fps, overwrite=True)
-        video_out = item_dir / "video.mp4"
-        segment_video(str(upload_path), intervals_sec, str(video_out))
+        source_out = item_dir / "source.mp4"
+        shutil.copy2(upload_path, source_out)
         _set_step(job, "output", "in_progress", 70)
-        _write_thumbnail(video_out, item_dir / "thumb.jpg")
+        _write_thumbnail(source_out, item_dir / "thumb.jpg")
+        full_duration_s = _estimate_duration_seconds(source_out)
         meta = {
             "id": library_id,
             "name": base_name,
             "source_name": upload_path.name,
             "created": datetime.now().isoformat(timespec="seconds"),
             "created_ts": time.time(),
-            "duration_s": round(sum(e - s for s, e in intervals_sec), 2),
+            "duration_s": round(full_duration_s, 2) if full_duration_s > 0 else 0.0,
+            "point_duration_s": round(sum(e - s for s, e in intervals_sec), 2),
             "n_segments": len(segments),
         }
         (item_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
-        return library_id, video_out, csv_out
+        _start_web_preview_background(library_id, source_out)
+        return library_id, source_out, csv_out
     except Exception:
         shutil.rmtree(item_dir, ignore_errors=True)
         raise
@@ -398,7 +665,6 @@ def _safe_open_browser(port: int) -> None:
 # frontend round-trips the full defaults payload.
 _CLIENT_KEYS = {
     "output_name",
-    "yolo_size",
     "yolo_device",
     "write_csv",
     "segment_video",
@@ -415,16 +681,22 @@ def _normalize_config(raw: Dict[str, Any]) -> Dict[str, Any]:
     cfg.update(
         {k: v for k, v in (raw or {}).items() if v is not None and k in _CLIENT_KEYS}
     )
+    cfg["yolo_size"] = "nano"
+    cfg["yolo_weights"] = FIXED_YOLO_MODEL
     return cfg
 
 
 def _resolve_yolo_weights(cfg: Dict[str, Any]) -> str:
-    choice = cfg.get("yolo_size")
-    if choice and choice in YOLO_SIZE_MAP:
-        return YOLO_SIZE_MAP[choice]
-    if choice:
-        return str(choice)
-    return YOLO_SIZE_MAP["small"]
+    path = resolve_asset(
+        None,
+        env_var="RALLYCLIP_YOLO_MODEL_PATH",
+        relatives=[
+            f"models/{FIXED_YOLO_MODEL}",
+            FIXED_YOLO_MODEL,
+        ],
+        description="RallyClip YOLO pose model (nano)",
+    )
+    return str(path)
 
 
 def _resolve_model_paths(cfg: Dict[str, Any]) -> tuple[Path, Path]:
@@ -662,12 +934,12 @@ def _run_pipeline(job_id: str) -> None:
             (start_idx / float(cfg["fps"]), end_idx / float(cfg["fps"]))
             for start_idx, end_idx in segments
         ]
-        # Persist a found match as one library item (video + csv + thumb + meta in
-        # a single folder): survives restarts, deletes atomically. No segments ->
-        # nothing worth saving, so no item is created.
+        # Persist a found match as one library item (full source + csv + thumb +
+        # meta in a single folder): survives restarts, deletes atomically. No
+        # segments -> nothing worth saving, so no item is created.
         library_id = None
         if intervals_sec:
-            library_id, video_out, csv_out = _persist_library_item(
+            library_id, source_out, csv_out = _persist_library_item(
                 upload_path=upload_path,
                 base_name=base_name,
                 segments=segments,
@@ -675,7 +947,7 @@ def _run_pipeline(job_id: str) -> None:
                 fps=float(cfg["fps"]),
                 job=job,
             )
-            job["paths"]["video"] = str(video_out)
+            job["paths"]["video"] = str(source_out)
             job["paths"]["csv"] = str(csv_out)
         job["library_id"] = library_id
         _set_step(job, "output", "completed", 100)
@@ -772,7 +1044,7 @@ def config_defaults() -> tuple[Any, int]:
     return jsonify(
         {
             "defaults": defaults,
-            "yolo_sizes": list(YOLO_SIZE_MAP.keys()),
+            "yolo_model": FIXED_YOLO_MODEL,
             "warnings": ADVANCED_WARNINGS,
             "available_devices": available,
             "auto_device": auto_device,
@@ -874,6 +1146,23 @@ def _resolve_library_file(item_id: str, filename: str) -> Optional[Path]:
     return path if path.exists() else None
 
 
+def _resolve_library_source(item_id: str) -> Optional[Path]:
+    """Resolve the full source video for a library item.
+
+    source.mp4 is the current storage contract. video.mp4 is accepted only as a
+    legacy fallback for library items created before lazy export existed.
+    """
+    try:
+        item_dir = _library_item_dir(item_id)
+    except ValueError:
+        return None
+    for filename in ("source.mp4", "video.mp4"):
+        path = item_dir / filename
+        if path.exists():
+            return path
+    return None
+
+
 @app.route("/api/library/<item_id>/thumbnail", methods=["GET"])
 def library_thumbnail(item_id: str):
     path = _resolve_library_file(item_id, "thumb.jpg")
@@ -884,10 +1173,86 @@ def library_thumbnail(item_id: str):
 
 @app.route("/api/library/<item_id>/video", methods=["GET"])
 def library_video(item_id: str):
-    path = _resolve_library_file(item_id, "video.mp4")
+    source_path = _resolve_library_source(item_id)
+    csv_path = _resolve_library_file(item_id, "segments.csv")
+    if source_path is None:
+        return jsonify({"error": "Video not available"}), 404
+    if csv_path is None:
+        # Legacy items may only have an already-cut video.mp4.
+        if source_path.name == "video.mp4":
+            return send_file(str(source_path), as_attachment=True, download_name=f"{item_id}_segmented.mp4")
+        return jsonify({"error": "CSV not available"}), 404
+
+    try:
+        item_dir = _library_item_dir(item_id)
+        export_path = item_dir / "export.mp4"
+        needs_export = not export_path.exists()
+        if not needs_export:
+            export_mtime = export_path.stat().st_mtime
+            needs_export = source_path.stat().st_mtime > export_mtime or csv_path.stat().st_mtime > export_mtime
+        if needs_export:
+            intervals = load_intervals(str(csv_path))
+            if not intervals:
+                return jsonify({"error": "No point intervals available"}), 404
+            segment_video(str(source_path), intervals, str(export_path))
+        return send_file(str(export_path), as_attachment=True, download_name=f"{item_id}_segmented.mp4")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logging.exception("Could not export library video %s", item_id)
+        return jsonify({"error": f"Could not export video: {exc}"}), 500
+
+
+@app.route("/api/library/<item_id>/preview", methods=["GET"])
+def library_video_preview(item_id: str):
+    path = _resolve_library_source(item_id)
     if path is None:
         return jsonify({"error": "Video not available"}), 404
-    return send_file(str(path), as_attachment=True, download_name=f"{item_id}_segmented.mp4")
+    if not _web_preview_ready(item_id, path):
+        state = _start_web_preview_background(item_id, path)
+        return jsonify({"status": state}), 202
+    try:
+        preview_path = _web_preview_path(item_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logging.exception("Could not prepare library preview %s", item_id)
+        return jsonify({"error": f"Could not prepare preview: {exc}"}), 500
+    return send_file(str(preview_path), mimetype="video/webm")
+
+
+@app.route("/api/library/<item_id>/preview/status", methods=["GET"])
+def library_video_preview_status(item_id: str):
+    path = _resolve_library_source(item_id)
+    if path is None:
+        return jsonify({"error": "Video not available"}), 404
+    state = _start_web_preview_background(item_id, path)
+    preview_path = _web_preview_path(item_id)
+    payload = {
+        "status": state,
+        "ready": state == "ready",
+        "preview_url": f"/api/library/{item_id}/preview" if state == "ready" else None,
+    }
+    if preview_path.exists():
+        payload["bytes"] = preview_path.stat().st_size
+    return jsonify(payload), 200
+
+
+@app.route("/api/library/<item_id>/segments", methods=["GET"])
+def library_segments(item_id: str):
+    path = _resolve_library_file(item_id, "segments.csv")
+    if path is None:
+        return jsonify({"error": "CSV not available"}), 404
+    try:
+        intervals = load_intervals(str(path))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(
+        {
+            "segments": [{"start": start, "end": end} for start, end in intervals],
+            "point_duration_s": round(sum(end - start for start, end in intervals), 3),
+        }
+    ), 200
 
 
 @app.route("/api/library/<item_id>/csv", methods=["GET"])

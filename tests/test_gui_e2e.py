@@ -111,7 +111,7 @@ def _fabricate_library_item(library_dir: Path, *, n_segments: int = 3, with_csv:
     item_id = f"20990101-000000-{uuid.uuid4().hex[:6]}"
     item_dir = library_dir / item_id
     item_dir.mkdir(parents=True, exist_ok=True)
-    (item_dir / "video.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42fake-video-bytes")
+    (item_dir / "source.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42fake-video-bytes")
     if with_csv:
         (item_dir / "segments.csv").write_text("start_time,end_time\n1.000,3.500\n", encoding="utf-8")
     if with_thumb:
@@ -169,7 +169,8 @@ def test_config_defaults_contract(backend: BackendClient):
     defaults = payload["defaults"]
     assert defaults["fps"] == 5.0
     assert defaults["feature_set"] == "v1"
-    assert payload["yolo_sizes"]  # non-empty list of sizes
+    assert payload["yolo_model"] == "yolov8n-pose.pt"
+    assert defaults["yolo_size"] == "nano"
     assert "available_devices" in payload
     assert "auto_device" in payload
     # Server-internal absolute paths must not leak to the browser payload.
@@ -239,8 +240,11 @@ def test_library_item_downloads(backend: BackendClient, library_dir: Path):
     item_id = _fabricate_library_item(library_dir)
     thumb = backend.get(f"/api/library/{item_id}/thumbnail")
     assert thumb.status_code == 200 and thumb.content
-    video = backend.get(f"/api/library/{item_id}/video")
+    video = backend.get(f"/api/library/{item_id}/preview")
     assert video.status_code == 200 and video.content
+    segments = backend.get(f"/api/library/{item_id}/segments")
+    assert segments.status_code == 200
+    assert segments.json()["segments"] == [{"start": 1.0, "end": 3.5}]
     csv = backend.get(f"/api/library/{item_id}/csv")
     assert csv.status_code == 200
     assert csv.text.splitlines()[0].strip() == "start_time,end_time"

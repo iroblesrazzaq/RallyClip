@@ -56,12 +56,20 @@ jobs:
         shell: bash
         run: |
           python - <<'PY'
+          import shutil
+          from pathlib import Path
           from ultralytics import YOLO
-          # Downloads yolov8n-pose.pt into the Ultralytics cache dir
-          # (e.g. ~/.cache/ultralytics/). Not bundled by PyInstaller;
-          # Ultralytics auto-downloads at runtime on first use.
-          YOLO("yolov8n-pose.pt")
-          print("YOLO weights downloaded to Ultralytics cache.")
+          model = YOLO("yolov8n-pose.pt")
+          src = Path(getattr(model, "ckpt_path", "yolov8n-pose.pt"))
+          if not src.exists():
+              src = Path("yolov8n-pose.pt")
+          if not src.exists():
+              raise SystemExit("Could not resolve yolov8n-pose.pt after download")
+          dst = Path("models") / "yolov8n-pose.pt"
+          dst.parent.mkdir(parents=True, exist_ok=True)
+          if src.resolve() != dst.resolve():
+              shutil.copy2(src, dst)
+          print(f"YOLO nano pose weights ready at {dst}")
           PY
       - name: Verify RallyClip model artifacts
         shell: bash
@@ -70,6 +78,7 @@ jobs:
           test -f models/rallyclip_v0.3.1/model.onnx
           test -f models/rallyclip_v0.3.1/scaler.json
           test -f models/rallyclip_v0.3.1/manifest.json
+          test -f models/yolov8n-pose.pt
           test -f src/preprocessing/default_court_mask.png
           test -f docs/rallyclip.icns
           test -f docs/rallyclip_favicon_transparent2.png
@@ -96,6 +105,7 @@ jobs:
             --exclude-module=openvino \
             --add-data "src/gui/frontend${SEP}gui/frontend" \
             --add-data "models/rallyclip_v0.3.1${SEP}models/rallyclip_v0.3.1" \
+            --add-data "models/yolov8n-pose.pt${SEP}models" \
             --add-data "src/preprocessing/default_court_mask.png${SEP}preprocessing" \
             --add-data "docs/rallyclip_logo_cropped.png${SEP}docs" \
             --add-data "docs/rallyclip_favicon_transparent2.png${SEP}docs" \
@@ -165,7 +175,7 @@ jobs:
             sleep 2
           done
           if [ -n "$ok" ]; then
-            curl -s -m 5 http://127.0.0.1:8765/api/config/defaults | grep -q "yolo_sizes" || ok=""
+            curl -s -m 5 http://127.0.0.1:8765/api/config/defaults | grep -q "yolov8n-pose.pt" || ok=""
           fi
           kill $GUI_PID 2>/dev/null || true
           if [ -z "$ok" ]; then
