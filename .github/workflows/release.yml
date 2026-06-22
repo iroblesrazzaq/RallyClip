@@ -71,13 +71,17 @@ jobs:
           test -f models/rallyclip_v0.3.1/scaler.json
           test -f models/rallyclip_v0.3.1/manifest.json
           test -f src/preprocessing/default_court_mask.png
+          test -f docs/rallyclip.icns
+          test -f docs/rallyclip_favicon_transparent2.png
+          test -f docs/rallyclip_logo_cropped.png
       - name: Build desktop bundle
         shell: bash
         run: |
           SEP=":"
           if [ "${{ runner.os }}" = "Windows" ]; then SEP=";"; fi
-          pyinstaller --noconfirm --onedir \
+          pyinstaller --noconfirm --windowed --onedir \
             --name RallyClip \
+            --icon docs/rallyclip.icns \
             --hidden-import=gui.app \
             --hidden-import=cli.main \
             --hidden-import=runtime.assets \
@@ -93,6 +97,8 @@ jobs:
             --add-data "src/gui/frontend${SEP}gui/frontend" \
             --add-data "models/rallyclip_v0.3.1${SEP}models/rallyclip_v0.3.1" \
             --add-data "src/preprocessing/default_court_mask.png${SEP}preprocessing" \
+            --add-data "docs/rallyclip_logo_cropped.png${SEP}docs" \
+            --add-data "docs/rallyclip_favicon_transparent2.png${SEP}docs" \
             src/gui/desktop.py
       - name: Smoke test headless CLI in bundle
         shell: bash
@@ -170,14 +176,10 @@ jobs:
       - name: Archive build
         shell: bash
         run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            powershell Compress-Archive -Path dist/RallyClip -DestinationPath "${{ matrix.artifact }}.zip"
-            if command -v certutil >/dev/null 2>&1; then certutil -hashfile "${{ matrix.artifact }}.zip" SHA256 > "${{ matrix.artifact }}.zip.sha256"; fi
-          else
-            cd dist && tar -czf "../${{ matrix.artifact }}.tar.gz" RallyClip
-            cd ..
-            shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
-          fi
+          test -d dist/RallyClip.app
+          cd dist && tar -czf "../${{ matrix.artifact }}.tar.gz" RallyClip.app
+          cd ..
+          shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
