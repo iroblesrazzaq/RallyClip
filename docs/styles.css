@@ -6,13 +6,13 @@
 
 :root {
     color-scheme: light;
-    --bg: #fbf7ec;
+    --bg: #f3ead8;
     --text: #111111;
     --muted: #5f5b52;
     --subtle: #8a8376;
-    --border: #e4ddcf;
-    --soft: #fffdf7;
-    --soft-strong: #f1eadc;
+    --border: #d9cdb9;
+    --soft: #fbf5e8;
+    --soft-strong: #e8dcc8;
     --accent: #111111;
 }
 
