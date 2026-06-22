@@ -9,12 +9,13 @@ class RallyClipApp {
         this.progressInterval = null;
         this.defaults = {};
         this.warnings = {};
-        this.yoloOptions = [];
         this.availableDevices = [];
         this.autoDevice = "cpu";
         this.weights = null;
         this.etaSeconds = null;
         this.libraryId = null;
+        this.viewingItemId = null;
+        this.pointIntervals = [];
         this.steps = ["pose", "preprocess", "feature", "inference", "output"];
         this.stepLabels = {
             pose: "Extracting pose",
@@ -45,6 +46,14 @@ class RallyClipApp {
         this.newMatchBtn = document.getElementById("newMatchBtn");
         this.emptyNewMatchBtn = document.getElementById("emptyNewMatchBtn");
 
+        this.viewerView = document.getElementById("viewerView");
+        this.backFromViewer = document.getElementById("backFromViewer");
+        this.viewerTitle = document.getElementById("viewerTitle");
+        this.viewerMeta = document.getElementById("viewerMeta");
+        this.matchVideo = document.getElementById("matchVideo");
+        this.viewerExportBtn = document.getElementById("viewerExportBtn");
+        this.viewerCsvBtn = document.getElementById("viewerCsvBtn");
+
         this.uploadView = document.getElementById("uploadView");
         this.backToLibrary = document.getElementById("backToLibrary");
         this.dropZone = document.getElementById("dropZone");
@@ -60,7 +69,6 @@ class RallyClipApp {
         this.advancedPanel = document.getElementById("advancedPanel");
         this.resetAdvanced = document.getElementById("resetAdvanced");
         this.outputName = document.getElementById("outputName");
-        this.yoloSize = document.getElementById("yoloSize");
         this.yoloDevice = document.getElementById("yoloDevice");
         this.deviceNote = document.getElementById("deviceNote");
         this.low = document.getElementById("low");
@@ -92,6 +100,14 @@ class RallyClipApp {
         this.newMatchBtn.addEventListener("click", () => this.showUpload());
         this.emptyNewMatchBtn.addEventListener("click", () => this.showUpload());
         this.backToLibrary.addEventListener("click", () => this.showLibrary());
+        this.backFromViewer.addEventListener("click", () => this.showLibrary());
+        this.viewerExportBtn.addEventListener("click", () => {
+            if (this.viewingItemId) this.triggerDownload(`/api/library/${this.viewingItemId}/video`);
+        });
+        this.viewerCsvBtn.addEventListener("click", () => {
+            if (this.viewingItemId) this.triggerDownload(`/api/library/${this.viewingItemId}/csv`);
+        });
+        this.matchVideo.addEventListener("timeupdate", () => this.handleViewerTimeUpdate());
         this.libraryGrid.addEventListener("click", (e) => this.onLibraryClick(e));
 
         this.dropZone.addEventListener("dragover", (e) => {
@@ -153,8 +169,16 @@ class RallyClipApp {
         this.welcomeScreen.hidden = true;
         this.appShell.hidden = false;
         this.libraryView.hidden = viewName !== "library";
+        this.viewerView.hidden = viewName !== "viewer";
         this.uploadView.hidden = viewName !== "upload";
         this.progressCard.hidden = viewName !== "processing";
+        if (viewName !== "viewer" && this.matchVideo) {
+            this.matchVideo.pause();
+            this.matchVideo.removeAttribute("src");
+            this.matchVideo.load();
+            this.viewingItemId = null;
+            this.pointIntervals = [];
+        }
     }
 
     showLibrary() {
@@ -191,6 +215,9 @@ class RallyClipApp {
         const card = document.createElement("div");
         card.className = "lib-card";
         card.dataset.id = item.id;
+        card.tabIndex = 0;
+        card.setAttribute("role", "button");
+        card.setAttribute("aria-label", `View ${item.name || "saved match"}`);
 
         const thumb = document.createElement("div");
         thumb.className = "lib-thumb";
@@ -220,6 +247,13 @@ class RallyClipApp {
         if (item.has_csv) actions.appendChild(this.actionButton("CSV", "btn-secondary", "csv"));
         actions.appendChild(this.actionButton("Delete", "btn-ghost lib-delete", "delete"));
         card.appendChild(actions);
+        card.addEventListener("keydown", (e) => {
+            if (e.target.closest("button")) return;
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                this.showViewer(item);
+            }
+        });
 
         return card;
     }
@@ -238,7 +272,8 @@ class RallyClipApp {
         if (typeof item.n_segments === "number") {
             parts.push(`${item.n_segments} point${item.n_segments === 1 ? "" : "s"}`);
         }
-        if (typeof item.duration_s === "number") parts.push(`${Math.round(item.duration_s)}s`);
+        if (typeof item.point_duration_s === "number") parts.push(`${Math.round(item.point_duration_s)}s points`);
+        if (typeof item.duration_s === "number") parts.push(`${Math.round(item.duration_s)}s video`);
         if (item.created) parts.push(this.formatDate(item.created));
         return parts.join(" · ");
     }
@@ -253,14 +288,87 @@ class RallyClipApp {
 
     onLibraryClick(e) {
         const btn = e.target.closest("button[data-action]");
-        if (!btn) return;
-        const card = btn.closest(".lib-card");
+        const card = e.target.closest(".lib-card");
         const id = card && card.dataset.id;
         if (!id) return;
+        if (!btn) {
+            this.showViewerFromCard(card);
+            return;
+        }
         const action = btn.dataset.action;
         if (action === "export") this.triggerDownload(`/api/library/${id}/video`);
         else if (action === "csv") this.triggerDownload(`/api/library/${id}/csv`);
         else if (action === "delete") this.deleteItem(id);
+    }
+
+    showViewerFromCard(card) {
+        const item = {
+            id: card.dataset.id,
+            name: card.querySelector(".lib-name")?.textContent || card.dataset.id,
+            metaText: card.querySelector(".lib-meta")?.textContent || "",
+            has_csv: Boolean(card.querySelector("button[data-action='csv']")),
+        };
+        this.showViewer(item);
+    }
+
+    async showViewer(item) {
+        if (!item || !item.id) return;
+        this.viewingItemId = item.id;
+        this.pointIntervals = [];
+        this.viewerTitle.textContent = item.name || "Match";
+        this.viewerMeta.textContent = item.metaText || this.cardMeta(item);
+        this.viewerCsvBtn.hidden = !item.has_csv;
+        this.matchVideo.src = `/api/library/${item.id}/preview`;
+        this.matchVideo.load();
+        this.showView("viewer");
+        await this.loadPointIntervals(item.id);
+    }
+
+    async loadPointIntervals(itemId) {
+        try {
+            const resp = await fetch(`/api/library/${itemId}/segments`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const payload = await resp.json();
+            if (this.viewingItemId !== itemId) return;
+            this.pointIntervals = (payload.segments || [])
+                .map((seg) => ({ start: Number(seg.start), end: Number(seg.end) }))
+                .filter((seg) => Number.isFinite(seg.start) && Number.isFinite(seg.end) && seg.end > seg.start)
+                .sort((a, b) => a.start - b.start || a.end - b.end);
+            this.seekToFirstPoint();
+        } catch (err) {
+            console.error(err);
+            this.pointIntervals = [];
+            this.showToast("Could not load point times.", "error");
+        }
+    }
+
+    seekToFirstPoint() {
+        if (!this.pointIntervals.length) return;
+        const seek = () => {
+            if (!this.pointIntervals.length) return;
+            this.matchVideo.currentTime = this.pointIntervals[0].start;
+        };
+        if (this.matchVideo.readyState >= 1) seek();
+        else this.matchVideo.addEventListener("loadedmetadata", seek, { once: true });
+    }
+
+    handleViewerTimeUpdate() {
+        if (!this.pointIntervals.length || !this.matchVideo.src || this.matchVideo.paused) return;
+        const t = this.matchVideo.currentTime;
+        const idx = this.pointIntervals.findIndex((seg) => t >= seg.start && t <= seg.end);
+        if (idx < 0) return;
+
+        const segment = this.pointIntervals[idx];
+        const threshold = Math.min(0.15, Math.max(0.04, (segment.end - segment.start) / 4));
+        if (t < segment.end - threshold) return;
+
+        const next = this.pointIntervals[idx + 1];
+        if (!next) {
+            this.matchVideo.pause();
+            return;
+        }
+        this.matchVideo.currentTime = next.start;
+        this.matchVideo.play().catch(() => {});
     }
 
     // A real navigation to an attachment URL: the browser downloads it, and in
@@ -295,7 +403,6 @@ class RallyClipApp {
             const payload = await resp.json();
             this.defaults = payload.defaults || {};
             this.warnings = payload.warnings || {};
-            this.yoloOptions = payload.yolo_sizes || [];
             this.availableDevices = payload.available_devices || ["cpu"];
             this.autoDevice = payload.auto_device || "cpu";
             this.applyDefaults();
@@ -306,7 +413,6 @@ class RallyClipApp {
     }
 
     applyDefaults() {
-        this.populateSelect(this.yoloSize, this.yoloOptions, this.defaults.yolo_size || "small");
         this.populateDeviceSelect();
         this.outputName.value = "";
         this.low.value = this.defaults.low ?? 0.45;
@@ -392,7 +498,6 @@ class RallyClipApp {
     buildConfigFromForm() {
         const cfg = { ...(this.defaults || {}) };
         cfg.output_name = this.outputName.value.trim() || null;
-        cfg.yolo_size = this.yoloSize.value || cfg.yolo_size;
         cfg.yolo_device = this.yoloDevice.value || null;
         cfg.write_csv = true;
         cfg.segment_video = true;
