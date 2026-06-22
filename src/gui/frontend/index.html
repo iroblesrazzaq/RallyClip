@@ -35,6 +35,21 @@
                 <div class="library-grid" id="libraryGrid"></div>
             </section>
 
+            <section class="run-card viewer-view" id="viewerView" hidden>
+                <button type="button" class="text-button back-link" id="backFromViewer">← Saved matches</button>
+                <div class="viewer-head">
+                    <div>
+                        <h2 id="viewerTitle">Match</h2>
+                        <p id="viewerMeta"></p>
+                    </div>
+                    <div class="viewer-actions">
+                        <button type="button" class="btn btn-secondary" id="viewerCsvBtn" hidden>CSV</button>
+                        <button type="button" class="btn btn-primary" id="viewerExportBtn">Export video</button>
+                    </div>
+                </div>
+                <video class="match-video" id="matchVideo" controls playsinline preload="metadata"></video>
+            </section>
+
             <section class="run-card" id="uploadView" hidden>
                 <button type="button" class="text-button back-link" id="backToLibrary">← Saved matches</button>
                 <div class="file-drop-zone" id="dropZone">
@@ -71,10 +86,6 @@
                         <label class="field">
                             <span>Match name</span>
                             <input type="text" id="outputName" placeholder="Defaults to video name">
-                        </label>
-                        <label class="field">
-                            <span>Pose model</span>
-                            <select id="yoloSize"></select>
                         </label>
                         <label class="field">
                             <span>Device</span>

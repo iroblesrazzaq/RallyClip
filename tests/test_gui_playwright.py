@@ -92,7 +92,7 @@ def _fabricate_ui_item() -> str:
     item_id = f"20990101-000000-{uuid.uuid4().hex[:6]}"
     item_dir = Path(gui_app.LIBRARY_DIR) / item_id
     item_dir.mkdir(parents=True, exist_ok=True)
-    (item_dir / "video.mp4").write_bytes(b"fake-video")
+    (item_dir / "source.mp4").write_bytes(b"fake-video")
     (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
     (item_dir / "thumb.jpg").write_bytes(b"\xff\xd8\xff\xe0fake")
     (item_dir / "meta.json").write_text(

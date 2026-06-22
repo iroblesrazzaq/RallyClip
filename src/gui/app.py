@@ -27,7 +27,7 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
 import numpy as np
 import av
 
-from runtime.assets import YOLO_SIZE_MAP, candidate_roots, resolve_asset
+from runtime.assets import candidate_roots, resolve_asset
 from extraction.pose_extractor import PoseExtractionCancelled, PoseExtractor
 from features.feature_engineer import FeatureEngineer
 from infer import (
@@ -50,9 +50,10 @@ from runtime.device import (
 )
 from runtime.paths import resolve_frontend_dir
 from runtime.video_validation import VideoValidationError, validate_video
-from segmentation.segment import segment_video
+from segmentation.segment import load_intervals, segment_video
 
 JobDict = Dict[str, Any]
+FIXED_YOLO_MODEL = "yolov8n-pose.pt"
 
 
 STATIC_DIR = resolve_frontend_dir()
@@ -146,7 +147,8 @@ def _load_default_config() -> Dict[str, Any]:
         cfg = {
             "write_csv": True,
             "segment_video": True,
-            "yolo_size": "small",
+            "yolo_size": "nano",
+            "yolo_weights": FIXED_YOLO_MODEL,
             "yolo_device": None,
             "fps": 5.0,
             "seq_len": 100,
@@ -271,7 +273,7 @@ def _write_thumbnail(video_path: Path, thumb_path: Path, max_width: int = 480) -
 
 
 def _read_library_items() -> list[Dict[str, Any]]:
-    """List saved matches (newest first). An item needs meta.json + video.mp4."""
+    """List saved matches (newest first). An item needs meta.json + a source video."""
     items: list[Dict[str, Any]] = []
     if not LIBRARY_DIR.exists():
         return items
@@ -279,7 +281,7 @@ def _read_library_items() -> list[Dict[str, Any]]:
         if not child.is_dir():
             continue
         meta_path = child / "meta.json"
-        if not meta_path.exists() or not (child / "video.mp4").exists():
+        if not meta_path.exists() or not ((child / "source.mp4").exists() or (child / "video.mp4").exists()):
             continue
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -288,6 +290,7 @@ def _read_library_items() -> list[Dict[str, Any]]:
         meta["id"] = child.name  # trust the folder name, not the file contents
         meta["has_csv"] = (child / "segments.csv").exists()
         meta["has_thumbnail"] = (child / "thumb.jpg").exists()
+        meta["has_export"] = (child / "export.mp4").exists()
         items.append(meta)
     items.sort(key=lambda m: m.get("created_ts", 0), reverse=True)
     return items
@@ -302,28 +305,34 @@ def _persist_library_item(
     fps: float,
     job: JobDict,
 ) -> tuple[str, Path, Path]:
-    """Write one saved match folder, removing it again if any write fails."""
+    """Write one saved match folder, removing it again if any write fails.
+
+    The library stores the full source video plus the CSV. Cut/stitched exports
+    are generated lazily by the export endpoint, not during analysis.
+    """
     library_id = _new_library_id()
     item_dir = _library_item_dir(library_id)
     item_dir.mkdir(parents=True, exist_ok=True)
     try:
         csv_out = item_dir / "segments.csv"
         write_segments_csv(segments, str(csv_out), fps=fps, overwrite=True)
-        video_out = item_dir / "video.mp4"
-        segment_video(str(upload_path), intervals_sec, str(video_out))
+        source_out = item_dir / "source.mp4"
+        shutil.copy2(upload_path, source_out)
         _set_step(job, "output", "in_progress", 70)
-        _write_thumbnail(video_out, item_dir / "thumb.jpg")
+        _write_thumbnail(source_out, item_dir / "thumb.jpg")
+        full_duration_s = _estimate_duration_seconds(source_out)
         meta = {
             "id": library_id,
             "name": base_name,
             "source_name": upload_path.name,
             "created": datetime.now().isoformat(timespec="seconds"),
             "created_ts": time.time(),
-            "duration_s": round(sum(e - s for s, e in intervals_sec), 2),
+            "duration_s": round(full_duration_s, 2) if full_duration_s > 0 else 0.0,
+            "point_duration_s": round(sum(e - s for s, e in intervals_sec), 2),
             "n_segments": len(segments),
         }
         (item_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
-        return library_id, video_out, csv_out
+        return library_id, source_out, csv_out
     except Exception:
         shutil.rmtree(item_dir, ignore_errors=True)
         raise
@@ -398,7 +407,6 @@ def _safe_open_browser(port: int) -> None:
 # frontend round-trips the full defaults payload.
 _CLIENT_KEYS = {
     "output_name",
-    "yolo_size",
     "yolo_device",
     "write_csv",
     "segment_video",
@@ -415,16 +423,22 @@ def _normalize_config(raw: Dict[str, Any]) -> Dict[str, Any]:
     cfg.update(
         {k: v for k, v in (raw or {}).items() if v is not None and k in _CLIENT_KEYS}
     )
+    cfg["yolo_size"] = "nano"
+    cfg["yolo_weights"] = FIXED_YOLO_MODEL
     return cfg
 
 
 def _resolve_yolo_weights(cfg: Dict[str, Any]) -> str:
-    choice = cfg.get("yolo_size")
-    if choice and choice in YOLO_SIZE_MAP:
-        return YOLO_SIZE_MAP[choice]
-    if choice:
-        return str(choice)
-    return YOLO_SIZE_MAP["small"]
+    path = resolve_asset(
+        None,
+        env_var="RALLYCLIP_YOLO_MODEL_PATH",
+        relatives=[
+            f"models/{FIXED_YOLO_MODEL}",
+            FIXED_YOLO_MODEL,
+        ],
+        description="RallyClip YOLO pose model (nano)",
+    )
+    return str(path)
 
 
 def _resolve_model_paths(cfg: Dict[str, Any]) -> tuple[Path, Path]:
@@ -662,12 +676,12 @@ def _run_pipeline(job_id: str) -> None:
             (start_idx / float(cfg["fps"]), end_idx / float(cfg["fps"]))
             for start_idx, end_idx in segments
         ]
-        # Persist a found match as one library item (video + csv + thumb + meta in
-        # a single folder): survives restarts, deletes atomically. No segments ->
-        # nothing worth saving, so no item is created.
+        # Persist a found match as one library item (full source + csv + thumb +
+        # meta in a single folder): survives restarts, deletes atomically. No
+        # segments -> nothing worth saving, so no item is created.
         library_id = None
         if intervals_sec:
-            library_id, video_out, csv_out = _persist_library_item(
+            library_id, source_out, csv_out = _persist_library_item(
                 upload_path=upload_path,
                 base_name=base_name,
                 segments=segments,
@@ -675,7 +689,7 @@ def _run_pipeline(job_id: str) -> None:
                 fps=float(cfg["fps"]),
                 job=job,
             )
-            job["paths"]["video"] = str(video_out)
+            job["paths"]["video"] = str(source_out)
             job["paths"]["csv"] = str(csv_out)
         job["library_id"] = library_id
         _set_step(job, "output", "completed", 100)
@@ -772,7 +786,7 @@ def config_defaults() -> tuple[Any, int]:
     return jsonify(
         {
             "defaults": defaults,
-            "yolo_sizes": list(YOLO_SIZE_MAP.keys()),
+            "yolo_model": FIXED_YOLO_MODEL,
             "warnings": ADVANCED_WARNINGS,
             "available_devices": available,
             "auto_device": auto_device,
@@ -874,6 +888,23 @@ def _resolve_library_file(item_id: str, filename: str) -> Optional[Path]:
     return path if path.exists() else None
 
 
+def _resolve_library_source(item_id: str) -> Optional[Path]:
+    """Resolve the full source video for a library item.
+
+    source.mp4 is the current storage contract. video.mp4 is accepted only as a
+    legacy fallback for library items created before lazy export existed.
+    """
+    try:
+        item_dir = _library_item_dir(item_id)
+    except ValueError:
+        return None
+    for filename in ("source.mp4", "video.mp4"):
+        path = item_dir / filename
+        if path.exists():
+            return path
+    return None
+
+
 @app.route("/api/library/<item_id>/thumbnail", methods=["GET"])
 def library_thumbnail(item_id: str):
     path = _resolve_library_file(item_id, "thumb.jpg")
@@ -884,10 +915,59 @@ def library_thumbnail(item_id: str):
 
 @app.route("/api/library/<item_id>/video", methods=["GET"])
 def library_video(item_id: str):
-    path = _resolve_library_file(item_id, "video.mp4")
+    source_path = _resolve_library_source(item_id)
+    csv_path = _resolve_library_file(item_id, "segments.csv")
+    if source_path is None:
+        return jsonify({"error": "Video not available"}), 404
+    if csv_path is None:
+        # Legacy items may only have an already-cut video.mp4.
+        if source_path.name == "video.mp4":
+            return send_file(str(source_path), as_attachment=True, download_name=f"{item_id}_segmented.mp4")
+        return jsonify({"error": "CSV not available"}), 404
+
+    try:
+        item_dir = _library_item_dir(item_id)
+        export_path = item_dir / "export.mp4"
+        needs_export = not export_path.exists()
+        if not needs_export:
+            export_mtime = export_path.stat().st_mtime
+            needs_export = source_path.stat().st_mtime > export_mtime or csv_path.stat().st_mtime > export_mtime
+        if needs_export:
+            intervals = load_intervals(str(csv_path))
+            if not intervals:
+                return jsonify({"error": "No point intervals available"}), 404
+            segment_video(str(source_path), intervals, str(export_path))
+        return send_file(str(export_path), as_attachment=True, download_name=f"{item_id}_segmented.mp4")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logging.exception("Could not export library video %s", item_id)
+        return jsonify({"error": f"Could not export video: {exc}"}), 500
+
+
+@app.route("/api/library/<item_id>/preview", methods=["GET"])
+def library_video_preview(item_id: str):
+    path = _resolve_library_source(item_id)
     if path is None:
         return jsonify({"error": "Video not available"}), 404
-    return send_file(str(path), as_attachment=True, download_name=f"{item_id}_segmented.mp4")
+    return send_file(str(path), mimetype="video/mp4")
+
+
+@app.route("/api/library/<item_id>/segments", methods=["GET"])
+def library_segments(item_id: str):
+    path = _resolve_library_file(item_id, "segments.csv")
+    if path is None:
+        return jsonify({"error": "CSV not available"}), 404
+    try:
+        intervals = load_intervals(str(path))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(
+        {
+            "segments": [{"start": start, "end": end} for start, end in intervals],
+            "point_duration_s": round(sum(end - start for start, end in intervals), 3),
+        }
+    ), 200
 
 
 @app.route("/api/library/<item_id>/csv", methods=["GET"])
