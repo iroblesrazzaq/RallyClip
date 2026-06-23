@@ -121,6 +121,24 @@ On stop: write a final `JOURNAL.md` summary (before→after table, commits, what
 suggested merge/rebase step back onto `feat/first-release`) and hand back to the user. The
 user runs the final real-video acceptance and merges.
 
+## Survive usage limits (4h self-resume)
+The model can't see its own token budget, so instead of detecting the cutoff we keep a resume
+armed in advance. At the **start of each work batch**:
+1. `CronList` → if a prior survival job exists, `CronDelete` it.
+2. Compute ~4h from now off the `:00`/`:30` marks: `date -v+4H "+%M %H %d %m"` → `"M H DoM Mon *"`.
+3. `CronCreate { recurring: false, durable: true, cron: "<that>", prompt: "<RESUME PROMPT>" }`.
+
+RESUME PROMPT (single arg to the cron):
+> Resume the RallyClip streaming-pipeline loop. cd
+> /Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/RallyClip-perf, read
+> docs/perf/LOOP.md + docs/perf/JOURNAL.md, re-arm the 4h survival cron, and continue
+> iterations until the Phase A+B backlog is done. Journal every iteration. Never touch
+> feat/first-release. When complete, CronDelete the survival job and stop.
+
+If the session is cut off mid-work, the pending durable cron fires ~4h later (after the usage
+window resets, whenever Claude Code is next running/idle) and continues. **When the backlog is
+complete, `CronDelete` the survival job** so it doesn't keep firing.
+
 ## Guardrails
 - Never edit `feat/first-release` or `/private/tmp/rallyclip-first-release`.
 - Never edit the golden baselines' correctness hashes or `bench_pipeline.py`'s hashing/stub
