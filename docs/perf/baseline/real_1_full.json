@@ -1,0 +1,23 @@
+{
+  "mode": "real",
+  "video": "1_utr9_genM_courtH_IN_angleMED_zoomIN.mp4",
+  "duration_s": "full",
+  "device": "auto",
+  "return_code": 0,
+  "serialization": {
+    "write_s": 2.1972,
+    "write_mb": 10.391,
+    "read_s": 0.0014,
+    "read_mb": 10.391,
+    "total_s": 2.1986,
+    "total_mb": 20.783,
+    "writes": 3,
+    "reads": 3
+  },
+  "peak_rss_delta_mb": 518.9,
+  "elapsed_total_s": 1060.52,
+  "correctness": {
+    "segments_csv_sha256": "1bb060cc2debc42a",
+    "csv_rows_incl_header": 79
+  }
+}
