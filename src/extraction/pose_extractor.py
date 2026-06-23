@@ -104,7 +104,7 @@ class PoseExtractor:
             logging.error("[PyAV Error] %s", e)
             return
 
-    def extract_pose_data(
+    def extract_pose_frames(
         self,
         video_path: str,
         confidence_threshold: float,
@@ -114,8 +114,14 @@ class PoseExtractor:
         imgsz: Optional[int] = None,
         annotations_csv: Optional[str] = None,
         progress_callback: Optional[Callable[[float], None]] = None,
-        output_dir: Optional[str] = None,
-    ) -> str:
+    ) -> list:
+        """In-memory pose extraction core.
+
+        Runs YOLO pose over the (downsampled) frames and returns the per-frame data
+        list -- the exact object that :meth:`extract_pose_data` serializes. The
+        release path consumes this directly (no intermediate NPZ); the file-writing
+        wrapper below is kept for the training ``scripts/``.
+        """
         import csv
         predict_imgsz = int(self.imgsz if imgsz is None else imgsz)
 
@@ -286,6 +292,37 @@ class PoseExtractor:
                 all_frames_data.append(frame_data)
 
         _flush_batch()
+
+        return all_frames_data
+
+    def extract_pose_data(
+        self,
+        video_path: str,
+        confidence_threshold: float,
+        start_time_seconds: int = 0,
+        duration_seconds: int = 60,
+        target_fps: int = 15,
+        imgsz: Optional[int] = None,
+        annotations_csv: Optional[str] = None,
+        progress_callback: Optional[Callable[[float], None]] = None,
+        output_dir: Optional[str] = None,
+    ) -> str:
+        """File-writing wrapper around :meth:`extract_pose_frames`.
+
+        Behaviour-preserving: computes the in-memory frame list via the core, then
+        serializes it to the same NPZ path as before and returns that path. Kept for
+        the training ``scripts/``; the release path calls the core directly.
+        """
+        all_frames_data = self.extract_pose_frames(
+            video_path=video_path,
+            confidence_threshold=confidence_threshold,
+            start_time_seconds=start_time_seconds,
+            duration_seconds=duration_seconds,
+            target_fps=target_fps,
+            imgsz=imgsz,
+            annotations_csv=annotations_csv,
+            progress_callback=progress_callback,
+        )
 
         # output path
         if "yolov8" in self.model_path:
