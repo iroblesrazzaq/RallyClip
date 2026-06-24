@@ -117,7 +117,66 @@ class FeatureEngineer:
             num_keypoints=num_keypoints,
         )
 
+    def build_features(self, targets, near_players, far_players):
+        """In-memory feature core.
+
+        Builds the v1 feature matrix from the preprocessed per-frame targets +
+        near/far player records, carrying prev-frame state for velocity/acceleration.
+        Returns ``(feature_array, target_array)`` -- the arrays the release path feeds
+        straight into inference and that :meth:`create_features_from_preprocessed`
+        serializes. Only the previous frame is needed as state, so this is streamable
+        (Phase B).
+        """
+        annotated_indices = np.where(targets >= 0)[0]
+        feature_vectors, feature_targets = [], []
+        previous_players = None
+        previous_velocities = {
+            'near': {'centroid': None, 'keypoints': None},
+            'far': {'centroid': None, 'keypoints': None},
+        }
+        for idx in annotated_indices:
+            assigned_players = {'near_player': near_players[idx], 'far_player': far_players[idx]}
+            feature_vector = self.create_feature_vector(assigned_players, previous_players, previous_velocities)
+            feature_vectors.append(feature_vector)
+            feature_targets.append(targets[idx])
+            current_velocities = {
+                'near': {
+                    'centroid': self._player_velocity(
+                        assigned_players['near_player'],
+                        previous_players['near_player'] if previous_players else None,
+                    ),
+                    'keypoints': self._player_keypoint_velocity(
+                        assigned_players['near_player'],
+                        previous_players['near_player'] if previous_players else None,
+                    ),
+                },
+                'far': {
+                    'centroid': self._player_velocity(
+                        assigned_players['far_player'],
+                        previous_players['far_player'] if previous_players else None,
+                    ),
+                    'keypoints': self._player_keypoint_velocity(
+                        assigned_players['far_player'],
+                        previous_players['far_player'] if previous_players else None,
+                    ),
+                },
+            }
+            previous_players = assigned_players
+            previous_velocities = current_velocities
+        if feature_vectors:
+            feature_array = np.array(feature_vectors, dtype=np.float32)
+            target_array = np.array(feature_targets)
+        else:
+            feature_array = np.empty((0, self.feature_vector_size), dtype=np.float32)
+            target_array = np.empty((0,))
+        return feature_array, target_array
+
     def create_features_from_preprocessed(self, input_npz_path: str, output_file: str, overwrite: bool = False) -> bool:
+        """File-writing wrapper around :meth:`build_features` (training scripts).
+
+        Behaviour-preserving load->core->save: loads the preprocessed arrays, runs the
+        core, and serializes the same ``features`` / ``targets`` matrices.
+        """
         try:
             if os.path.exists(output_file) and not overwrite:
                 logging.info("Features skip (exists): %s", os.path.basename(output_file))
@@ -127,48 +186,7 @@ class FeatureEngineer:
                 targets = data['targets'].copy()
                 near_players = data['near_players'].copy()
                 far_players = data['far_players'].copy()
-            annotated_indices = np.where(targets >= 0)[0]
-            feature_vectors, feature_targets = [], []
-            previous_players = None
-            previous_velocities = {
-                'near': {'centroid': None, 'keypoints': None},
-                'far': {'centroid': None, 'keypoints': None},
-            }
-            for idx in annotated_indices:
-                assigned_players = {'near_player': near_players[idx], 'far_player': far_players[idx]}
-                feature_vector = self.create_feature_vector(assigned_players, previous_players, previous_velocities)
-                feature_vectors.append(feature_vector)
-                feature_targets.append(targets[idx])
-                current_velocities = {
-                    'near': {
-                        'centroid': self._player_velocity(
-                            assigned_players['near_player'],
-                            previous_players['near_player'] if previous_players else None,
-                        ),
-                        'keypoints': self._player_keypoint_velocity(
-                            assigned_players['near_player'],
-                            previous_players['near_player'] if previous_players else None,
-                        ),
-                    },
-                    'far': {
-                        'centroid': self._player_velocity(
-                            assigned_players['far_player'],
-                            previous_players['far_player'] if previous_players else None,
-                        ),
-                        'keypoints': self._player_keypoint_velocity(
-                            assigned_players['far_player'],
-                            previous_players['far_player'] if previous_players else None,
-                        ),
-                    },
-                }
-                previous_players = assigned_players
-                previous_velocities = current_velocities
-            if feature_vectors:
-                feature_array = np.array(feature_vectors, dtype=np.float32)
-                target_array = np.array(feature_targets)
-            else:
-                feature_array = np.empty((0, self.feature_vector_size), dtype=np.float32)
-                target_array = np.empty((0,))
+            feature_array, target_array = self.build_features(targets, near_players, far_players)
             os.makedirs(os.path.dirname(output_file), exist_ok=True)
             np.savez_compressed(output_file, features=feature_array, targets=target_array)
             logging.info("Features saved to: %s", output_file)
