@@ -214,7 +214,6 @@ def run_stub(frames: int, fps: float, tmp_dir: Path, ref_w: int = 1280, ref_h: i
     from infer import extract_segments_from_binary, gaussian_filter1d, hysteresis_threshold
 
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    pose_dir = tmp_dir / "pose"
 
     # Build a PoseExtractor without loading a real model.
     ex = PoseExtractor.__new__(PoseExtractor)
@@ -228,8 +227,12 @@ def run_stub(frames: int, fps: float, tmp_dir: Path, ref_w: int = 1280, ref_h: i
 
     stage_time: dict[str, float] = {}
 
+    # Mirrors the release path (CLI run_pipeline / GUI _run_pipeline): the three stages hand
+    # off in memory via their pure cores -- no intermediate NPZ round-trips. The file-writing
+    # wrappers (extract_pose_data / preprocess_single_video / create_features_from_preprocessed)
+    # remain for the training scripts and are covered by their own contract tests.
     t0 = time.perf_counter()
-    raw_npz = ex.extract_pose_data(
+    pose_data = ex.extract_pose_frames(
         video_path="synthetic.mp4",
         confidence_threshold=0.25,
         start_time_seconds=0,
@@ -237,35 +240,27 @@ def run_stub(frames: int, fps: float, tmp_dir: Path, ref_w: int = 1280, ref_h: i
         target_fps=int(fps),
         imgsz=960,
         annotations_csv=None,
-        output_dir=str(pose_dir),
     )
     stage_time["pose"] = time.perf_counter() - t0
 
     pre = DataPreprocessor(screen_width=ref_w, screen_height=ref_h, save_court_masks=False)
     # Synthetic "all in-bounds" court mask (0 == kept). Passing this avoids triggering the
-    # real CourtDetector/YOLO (court_mask=None means *generate one*), keeping the stub
-    # deterministic and offline. Court filtering itself is exercised, just with nothing culled.
+    # real CourtDetector/YOLO, keeping the stub deterministic and offline. Court filtering
+    # itself is exercised, just with nothing culled.
     court_mask = np.zeros((ref_h, ref_w), dtype=np.uint8)
-    preprocessed = tmp_dir / "preprocessed.npz"
     t0 = time.perf_counter()
-    ok = pre.preprocess_single_video(
-        raw_npz, "synthetic.mp4", str(preprocessed), overwrite=True, court_mask=court_mask
-    )
+    # synthetic.mp4 can't be probed -> _source_frame_shape falls back to (ref_h, ref_w), i.e.
+    # an identity rescale, exactly as the file path did inside preprocess_single_video.
+    src_height, src_width, _ = pre._source_frame_shape("synthetic.mp4")
+    preprocessed = pre.preprocess_frames(pose_data, court_mask, src_width, src_height)
     stage_time["preprocess"] = time.perf_counter() - t0
-    if not ok:
-        raise RuntimeError("preprocess_single_video failed")
 
     fe = FeatureEngineer(screen_width=ref_w, screen_height=ref_h, target_fps=fps)
-    features_npz = tmp_dir / "features.npz"
     t0 = time.perf_counter()
-    ok = fe.create_features_from_preprocessed(str(preprocessed), str(features_npz), overwrite=True)
+    feats, targets = fe.build_features(
+        preprocessed["targets"], preprocessed["near_players"], preprocessed["far_players"]
+    )
     stage_time["features"] = time.perf_counter() - t0
-    if not ok:
-        raise RuntimeError("create_features_from_preprocessed failed")
-
-    with np.load(str(features_npz)) as data:
-        feats = data["features"].copy()
-        targets = data["targets"].copy()
 
     # Deterministic stand-in for windowed model inference: a fixed projection of the
     # features. The streaming refactor does not touch inference, so this is sufficient to
