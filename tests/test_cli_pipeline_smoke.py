@@ -9,10 +9,12 @@ from helpers.module_stubs import import_cli_main_with_stubs
 from helpers.runtime_fixtures import FEATURE_DIM
 
 
-def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monkeypatch):
+def test_run_pipeline_wires_runtime_stages_in_memory(tmp_path, monkeypatch):
+    # The release path hands stages off in memory (pose -> preprocess -> features ->
+    # inference) with no intermediate NPZ round-trips. This asserts the in-memory wiring
+    # and that no np.load of an intermediate features file happens.
     cli_main = import_cli_main_with_stubs(monkeypatch)
     calls: list[str] = []
-    opened_npz = []
     video_path = tmp_path / "match.mp4"
     model_path = tmp_path / "model.onnx"
     scaler_path = tmp_path / "scaler.json"
@@ -26,12 +28,12 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
             assert model_path == "yolov8n-pose.pt"
             assert Path(model_dir).name == "models"
 
-        def extract_pose_data(self, **kwargs):
+        def extract_pose_frames(self, **kwargs):
             calls.append("pose:extract")
             assert kwargs["target_fps"] == 5
             assert kwargs["imgsz"] == 960
             assert kwargs["confidence_threshold"] == 0.25
-            return str(tmp_path / "raw_pose.npz")
+            return ["POSE_DATA"]  # opaque in-memory frame list handed to preprocess
 
     class FakePreprocessor:
         def __init__(self, save_court_masks, screen_width=None, screen_height=None, yolo_model_path=None, conf=None, **_kwargs):
@@ -48,13 +50,17 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
             assert vp == str(video_path)
             return "COURT_MASK", {"source": "detected", "detected": True, "timestamp_s": 60}
 
-        def preprocess_single_video(self, raw_npz, video, output_npz, overwrite, court_mask=None):
+        def _source_frame_shape(self, vp):
+            calls.append("preprocess:srcshape")
+            assert vp == str(video_path)
+            return (720, 1280, 3)
+
+        def preprocess_frames(self, pose_data, court_mask, src_width, src_height):
             calls.append("preprocess:run")
-            assert raw_npz.endswith("raw_pose.npz")
-            assert video == str(video_path)
-            assert overwrite is True
+            assert pose_data == ["POSE_DATA"]  # in-memory hand-off, not an NPZ path
             assert court_mask == "COURT_MASK"  # mask computed up front and passed in
-            return True
+            assert (src_width, src_height) == (1280, 720)
+            return {"targets": "TARGETS", "near_players": "NEAR", "far_players": "FAR"}
 
     feature_engineer_fps: list[float] = []
 
@@ -63,31 +69,11 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
             calls.append("features:init")
             feature_engineer_fps.append(float(target_fps))
 
-        def create_features_from_preprocessed(self, input_npz_path, output_file, overwrite):
+        def build_features(self, targets, near_players, far_players):
             calls.append("features:run")
-            assert input_npz_path.endswith("preprocessed.npz")
-            assert output_file.endswith("features.npz")
-            assert overwrite is True
-            return True
-
-    class TrackingNpz:
-        def __init__(self):
-            self.closed = False
-            self.features = np.ones((100, FEATURE_DIM), dtype=np.float32)
-
-        def __getitem__(self, key):
-            assert key == "features"
-            return self.features
-
-        def close(self):
-            self.closed = True
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            self.close()
-            return False
+            assert (targets, near_players, far_players) == ("TARGETS", "NEAR", "FAR")
+            features = np.ones((100, FEATURE_DIM), dtype=np.float32)
+            return features, np.zeros(100, dtype=np.float32)
 
     class FakeScaler:
         def transform(self, features):
@@ -96,11 +82,7 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
             return features
 
     def fake_np_load(path, *args, **kwargs):
-        calls.append("features:load")
-        assert str(path).endswith("features.npz")
-        npz = TrackingNpz()
-        opened_npz.append(npz)
-        return npz
+        raise AssertionError(f"release path must not np.load intermediates (got {path})")
 
     def fake_onnx(model, features, sequence_length, overlap):
         calls.append("inference:onnx")
@@ -174,17 +156,15 @@ def test_run_pipeline_wires_runtime_stages_and_closes_feature_npz(tmp_path, monk
         "court:detect",
         "pose:init",
         "pose:extract",
+        "preprocess:srcshape",
         "preprocess:run",
         "features:init",
         "features:run",
-        "features:load",
         "scaler:transform",
         "inference:onnx",
         "output:csv",
         "output:video",
     ]
-    assert opened_npz
-    assert all(npz.closed for npz in opened_npz)
 
 
 def test_unsupported_feature_set_fails_before_pose_extraction(tmp_path, monkeypatch):
