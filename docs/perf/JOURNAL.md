@@ -79,3 +79,31 @@ consistent with the floor.)
 - thoughts / next: start **A1** — give `PoseExtractor` an in-memory core so the raw pose NPZ
   write can be skipped on the release path. Watch `serialization.writes` drop 3→2 and the IO
   time fall; correctness hashes must stay identical.
+
+### Iteration 1 — A1 (PoseExtractor in-memory core) — KEEP (88a431f)
+- when: 2026-06-22T23:35   base_commit: 4a09808
+- hypothesis: split `extract_pose_data` into a pure core `extract_pose_frames` (returns the
+  per-frame data list — the exact object that was being serialized) + a thin save-wrapper.
+  Behaviour-preserving (same list, same NPZ, same return path); enables A4 to hand the list to
+  preprocess in memory. Should not move any metric this iteration (run_stub still calls the
+  file wrapper); proves the core is byte-identical via the frozen shas.
+- params: bench frames {6000, 9000, 27000} @ 15fps; tests = gate subset (11 files).
+- change: `src/extraction/pose_extractor.py` — renamed body to `extract_pose_frames` (dropped
+  `output_dir`, returns list); new `extract_pose_data` wrapper calls core then saves. No
+  run_stub change (release wiring unchanged until A4).
+- metrics: machine was under load (load avg ~3–4), so absolute baseline_*.json comparison is
+  contaminated — everything (incl. unchanged code) ran ~50% slow. Did a same-machine A/B
+  (stash parent vs mine) to isolate the change:
+  | frames | PARENT rss/total | MINE rss/total | ser (both) |
+  |  6000  | 79.0 / 1.21      | 71.1 / 1.22    | 0.38s w3/r3 |
+  | 27000  | 308.0 / 5.99     | 258.3 / 5.53   | ~2.0s w3/r3 |
+  → MINE ≤ PARENT on rss, total flat, serialization byte-identical. No regression from the change.
+- tests: PASS (53 passed).
+- correctness: features_sha match=Y (29d72f5f11c8cb19) segments_sha match=Y (980cc0ee139b33a9)
+  at 6k; 27k shas also golden-identical.
+- decision: KEEP commit 88a431f. (Absolute gate vs stale baseline fails only due to current
+  machine load — A/B vs parent on the same host is the noise-controlled truth: perf-neutral.)
+- thoughts / next: **A2** — `DataPreprocessor.preprocess_frames(pose_data, court_mask, src_wh)`
+  pure core; make `preprocess_single_video` a load→core→save wrapper. Still no metric move
+  expected (run_stub unchanged until A4); the 3→0 write drop lands at A4 when CLI + run_stub
+  chain the cores in memory.
