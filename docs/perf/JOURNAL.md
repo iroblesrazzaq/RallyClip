@@ -130,3 +130,26 @@ consistent with the floor.)
 - thoughts / next: **A3** — `FeatureEngineer.build_features(...)` pure core; make
   `create_features_from_preprocessed` a load→core→save wrapper. Then A4 wires all three cores
   in memory (CLI + run_stub) and serialization should drop 3w/3r → 0.
+
+### Iteration 3 — A3 (FeatureEngineer in-memory core) — KEEP (47d189d)
+- when: 2026-06-23T22:11   base_commit: 254e504
+- hypothesis: extract `build_features(targets, near, far) -> (features, targets)` (pure feature
+  matrix builder, prev-frame state only) and make `create_features_from_preprocessed` a
+  load→core→save wrapper. Behaviour-preserving (same arrays, same NPZ); prev-frame-only state
+  means streamable in Phase B. No metric move expected (run_stub file-based until A4).
+- params: bench frames {6000, 9000, 27000} @ 15fps; tests = gate subset (11 files).
+- change: `src/features/feature_engineer.py` — new `build_features` core; wrapper loads NPZ,
+  calls core, saves. No run_stub change.
+- metrics: load avg ~5; same-machine A/B:
+  | frames | PARENT rss/total | MINE rss/total | ser (mine) |
+  |  6000  | 78.9 / 1.24      | 84.6 / 1.27    | 0.37s w3/r3 |
+  | 27000  | 283.9 / 5.43     | 270.9 / 5.43   | 1.55s w3/r3 |
+  → 6k rss +7% = load noise (small abs); 27k (the memory point) MINE lower, total flat. No regression.
+- tests: PASS (53 passed).
+- correctness: features_sha + segments_sha match golden at 6k/9k/27k (Y/Y all three).
+- decision: KEEP commit 47d189d.
+- thoughts / next: **A4** — all three cores now exist. Rewire CLI `run_pipeline` to chain
+  cores in memory (pose_frames → preprocess_frames → build_features → inference), dropping the
+  raw-pose NPZ (and the persistent `pose_data/` write bug) + the two tmp NPZs. MIRROR the same
+  wiring in `run_stub`. Expect serialization 3w/3r → 0w/0r, total_s/total_mb → ~0. Correctness
+  shas must stay identical. This is the first iteration where the IO metric actually moves.
