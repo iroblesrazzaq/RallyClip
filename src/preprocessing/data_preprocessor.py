@@ -260,7 +260,47 @@ class DataPreprocessor:
             'conf': np.asarray(kept_conf, dtype=np.float32).reshape((-1, 17)),
         }
 
+    def preprocess_frames(self, pose_data, court_mask, src_width: int, src_height: int) -> dict:
+        """In-memory preprocessing core.
+
+        Filters each frame's detections by the court mask, assigns near/far players,
+        and rescales them into the model reference resolution. Returns the dict the
+        release path consumes directly and that :meth:`preprocess_single_video`
+        serializes: ``{'frames', 'targets', 'near_players', 'far_players'}``. Per-frame
+        independent given a fixed court mask, so it is safe to stream later (Phase B).
+        """
+        mask = court_mask
+        all_frame_data, all_targets, all_near_players, all_far_players = [], [], [], []
+        for frame_idx, frame_data in enumerate(pose_data):
+            annotation_status = frame_data.get('annotation_status', 0)
+            all_targets.append(annotation_status)
+            if annotation_status == -1:
+                all_frame_data.append({
+                    'boxes': np.empty((0, 4), dtype=np.float32),
+                    'box_conf': np.empty((0,), dtype=np.float32),
+                    'keypoints': np.empty((0, 17, 2), dtype=np.float32),
+                    'conf': np.empty((0, 17), dtype=np.float32),
+                })
+                all_near_players.append(None)
+                all_far_players.append(None)
+                continue
+            filtered_frame_data = self.filter_frame_by_court(frame_data, mask)
+            all_frame_data.append(filtered_frame_data)
+            assigned_players = self.assign_players(filtered_frame_data)
+            all_near_players.append(rescale_player_to_reference(
+                assigned_players['near_player'], src_width, src_height, self.screen_width, self.screen_height))
+            all_far_players.append(rescale_player_to_reference(
+                assigned_players['far_player'], src_width, src_height, self.screen_width, self.screen_height))
+            if (frame_idx + 1) % 100 == 0:
+                logging.debug("Processed %s/%s frames", frame_idx + 1, len(pose_data))
+        return {'frames': all_frame_data, 'targets': np.array(all_targets), 'near_players': all_near_players, 'far_players': all_far_players}
+
     def preprocess_single_video(self, input_npz_path: str, video_path: str, output_npz_path: str, overwrite: bool = False, court_mask=None) -> bool:
+        """File-writing wrapper around :meth:`preprocess_frames` (training scripts).
+
+        Behaviour-preserving load->core->save: loads pose data from NPZ, resolves the
+        court mask + native resolution, runs the core, and serializes the same dict.
+        """
         try:
             if os.path.exists(output_npz_path) and not overwrite:
                 logging.info("Preprocess skip (exists): %s", os.path.basename(output_npz_path))
@@ -281,31 +321,8 @@ class DataPreprocessor:
             # Native source resolution, independent of court-mask fallback shape.
             # Used to rescale detections into the model's reference space; identity at 720p.
             src_height, src_width, _ = self._source_frame_shape(video_path)
-            all_frame_data, all_targets, all_near_players, all_far_players = [], [], [], []
-            for frame_idx, frame_data in enumerate(pose_data):
-                annotation_status = frame_data.get('annotation_status', 0)
-                all_targets.append(annotation_status)
-                if annotation_status == -1:
-                    all_frame_data.append({
-                        'boxes': np.empty((0, 4), dtype=np.float32),
-                        'box_conf': np.empty((0,), dtype=np.float32),
-                        'keypoints': np.empty((0, 17, 2), dtype=np.float32),
-                        'conf': np.empty((0, 17), dtype=np.float32),
-                    })
-                    all_near_players.append(None)
-                    all_far_players.append(None)
-                    continue
-                filtered_frame_data = self.filter_frame_by_court(frame_data, mask)
-                all_frame_data.append(filtered_frame_data)
-                assigned_players = self.assign_players(filtered_frame_data)
-                all_near_players.append(rescale_player_to_reference(
-                    assigned_players['near_player'], src_width, src_height, self.screen_width, self.screen_height))
-                all_far_players.append(rescale_player_to_reference(
-                    assigned_players['far_player'], src_width, src_height, self.screen_width, self.screen_height))
-                if (frame_idx + 1) % 100 == 0:
-                    logging.debug("Processed %s/%s frames", frame_idx + 1, len(pose_data))
+            save_data = self.preprocess_frames(pose_data, mask, src_width, src_height)
             os.makedirs(os.path.dirname(output_npz_path), exist_ok=True)
-            save_data = { 'frames': all_frame_data, 'targets': np.array(all_targets), 'near_players': all_near_players, 'far_players': all_far_players }
             if self.save_court_masks and mask is not None:
                 save_data['court_mask'] = mask
             np.savez_compressed(output_npz_path, **save_data)
