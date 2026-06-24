@@ -153,3 +153,36 @@ consistent with the floor.)
   raw-pose NPZ (and the persistent `pose_data/` write bug) + the two tmp NPZs. MIRROR the same
   wiring in `run_stub`. Expect serialization 3w/3r → 0w/0r, total_s/total_mb → ~0. Correctness
   shas must stay identical. This is the first iteration where the IO metric actually moves.
+
+### Iteration 4 — A4 (CLI in-memory hand-off) — KEEP (9b66946)
+- when: 2026-06-24T00:00   base_commit: 1935ec4
+- hypothesis: rewire CLI `run_pipeline` to call the three cores and chain them in memory
+  (extract_pose_frames → preprocess_frames → build_features → scaler → inference), dropping all
+  intermediate NPZ round-trips + the `tempfile.TemporaryDirectory` + the persistent
+  `pose_data/raw/` write bug. Mirror the same wiring in `run_stub`. Serialization should drop
+  3w/3r → 0; correctness shas must stay identical (NPZ round-trip is lossless for float32, so
+  in-memory == reloaded). First iteration where IO actually moves.
+- params: bench frames {6000, 9000, 27000} @ 15fps; tests = gate subset (11 files).
+- change: `src/cli/main.py` (chain cores, remove tempfile + np.load), `scripts/perf/
+  bench_pipeline.py::run_stub` (mirror in-memory chain; hashing/stub untouched),
+  `tests/test_cli_pipeline_smoke.py` (test was asserting the OLD NPZ wiring — now asserts the
+  in-memory wiring + that np.load of intermediates never happens; renamed
+  `..._closes_feature_npz` → `..._in_memory`).
+- metrics (mine vs baseline; load avg ~4):
+  | frames | ser before | ser after | rss before | rss after | total before | total after |
+  |  6000  | 0.42s 3w/3r | **0.0s 0w/0r** | 71.2 | 43.6 | 1.32 | 0.80 |
+  |  9000  | 0.58s 3w/3r | **0.0s 0w/0r** | 87.1 | 64.0 | 2.38 | 1.19 |
+  | 27000  | 1.57s 3w/3r | **0.0s 0w/0r** | 201.8 | 126.4 (best of 2; 192 worst) | 5.60 | 3.55 |
+  → serialization eliminated; peak RSS *dropped* too (savez/np.load buffer spikes gone), total down.
+- gate checks: correctness all golden=Y; ser→0 (0w); rss@27k 126.4 ≤ 222.0 (×1.10) Y; total@6k 0.80 ≤ 1.455 Y.
+- tests: PASS (53; smoke test updated to new wiring).
+- correctness: features_sha + segments_sha match golden at 6k/9k/27k (Y/Y all three).
+- decision: KEEP commit 9b66946.
+- note on method: dropped the stash-based A/B — it collided with a pre-existing user stash
+  (`release GUI changes`) and an interrupt left edits parked in a stash, producing a spurious
+  w3 reading. Now measuring the working tree directly vs frozen baselines; ser=0 and golden
+  shas are load-independent and unambiguous, so no A/B needed for an IO-removal item.
+- thoughts / next: **A5** — GUI `_run_pipeline` (`src/gui/app.py` or `desktop.py`): same
+  in-memory chain; drop the `job_dir` intermediate NPZs but KEEP the final outputs + saved-match
+  library item. Then **A6** guard test (assert run_pipeline writes no intermediate .npz), then
+  the Phase-A milestone real-video gate (`bench_real.py`, writes 3→0, csv sha unchanged).
