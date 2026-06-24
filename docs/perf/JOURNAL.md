@@ -107,3 +107,26 @@ consistent with the floor.)
   pure core; make `preprocess_single_video` a load→core→save wrapper. Still no metric move
   expected (run_stub unchanged until A4); the 3→0 write drop lands at A4 when CLI + run_stub
   chain the cores in memory.
+
+### Iteration 2 — A2 (DataPreprocessor in-memory core) — KEEP (b916097)
+- when: 2026-06-23T22:08   base_commit: 0f853c1
+- hypothesis: extract `preprocess_frames(pose_data, court_mask, src_w, src_h) -> dict` (the
+  pure per-frame filter→assign→rescale transform) and make `preprocess_single_video` a
+  load→core→save wrapper. Behaviour-preserving (same dict, same NPZ); per-frame independent
+  given a fixed mask, so streamable in Phase B. No metric move expected (run_stub still calls
+  the file wrapper until A4).
+- params: bench frames {6000, 9000, 27000} @ 15fps; tests = gate subset (11 files).
+- change: `src/preprocessing/data_preprocessor.py` — new `preprocess_frames` core; wrapper now
+  loads NPZ, resolves mask + native res, calls core, saves. No run_stub change.
+- metrics: machine load even higher (load avg ~6.5), so absolute baseline contaminated again;
+  used same-machine A/B (stash parent vs mine):
+  | frames | PARENT rss/total | MINE rss/total | ser (mine) |
+  |  6000  | 83.9 / 1.34      | 74.3 / 1.24    | 0.37s w3/r3 |
+  | 27000  | 283.0 / 5.60     | 285.1 / 5.43   | 1.56s w3/r3 |
+  → MINE ≈ PARENT (27k rss +0.8% = noise, total better). No regression.
+- tests: PASS (53 passed).
+- correctness: features_sha + segments_sha match golden at 6k/9k/27k (Y/Y all three).
+- decision: KEEP commit b916097.
+- thoughts / next: **A3** — `FeatureEngineer.build_features(...)` pure core; make
+  `create_features_from_preprocessed` a load→core→save wrapper. Then A4 wires all three cores
+  in memory (CLI + run_stub) and serialization should drop 3w/3r → 0.
