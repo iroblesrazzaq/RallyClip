@@ -323,3 +323,33 @@ milestone, or the user runs it directly:
   Update the cli smoke + A6 guard tests to the streaming wiring. Confirm stub peak RSS drops
   sharply (27k → ~feats floor), refresh the memory golden, and run/queue the bench_real
   acceptance (csv sha unchanged, peak RSS bounded).
+
+### Iteration 11 — B5 (end-to-end streaming wiring) — KEEP (b3fbc9f)
+- when: 2026-06-25T02:10   base_commit: 4f7119f
+- hypothesis: wire the streaming chain end-to-end so no full-length structure is materialized.
+  CLI run_pipeline fully streams (incl. run_windowed_inference_average_*_stream); GUI streams
+  pose→preprocess→features into the feature matrix but keeps batch inference (preserves its
+  staged progress/cancel UX); run_stub mirrors the streamed chain (feats still materialized
+  only because the bench must hash it). Behaviour-preserving (golden + streaming-inference
+  bit-identical); peak RSS should drop sharply.
+- params: bench frames {6000, 9000, 27000} @ 15fps; tests = gate subset + streaming inference.
+- change: `src/infer/inference.py` (+__init__) onnx/torch streaming entrypoints; `src/cli/main.py`
+  full streaming wiring (import swap batch→stream); `src/gui/app.py` streamed pose→preprocess→
+  features (batch inference kept); `scripts/perf/bench_pipeline.py::run_stub` streamed chain;
+  `tests/test_cli_pipeline_smoke.py` rewired to streaming (smoke + A6 guard); `tests/helpers/
+  module_stubs.py` added the stream names to the fake `infer` module.
+- metrics (mine; load avg ~4):
+  | frames | peak RSS before | peak RSS after | total before | total after | ser |
+  |  6000  | 71.16 | **19.22** | 1.32 | 1.08 | 0w/0r |
+  |  9000  | 87.10 | **28.39** | 2.38 | 1.61 | 0w/0r |
+  | 27000  | 201.80 | **86.07** | 5.60 | 4.82 | 0w/0r |
+  RSS down 57-73%. Residual 27k/6k ratio ≈ 4.5 is the feats matrix the stub MUST materialize to
+  hash it (features_sha256) — not present in the real pipeline, which streams feats into inference.
+- gate checks: golden Y/Y at 6k/9k/27k; ser 0; rss@27k 86 ≤ 222 (×1.10) Y; total@6k 1.08 ≤ 1.455 Y.
+- tests: PASS (62: gate subset 54 + streaming inference 8).
+- correctness: features_sha + segments_sha == golden at 6k/9k/27k (Y/Y all three).
+- decision: KEEP commit b3fbc9f.
+- thoughts / next: all A+B implementation items KEPT. Remaining for DONE: the real-video
+  milestone (`bench_real.py`) to confirm csv sha 1bb060cc2debc42a unchanged + peak RSS bounded
+  on the real pipeline (validates the streamed run_pipeline end-to-end with the real model).
+  Then final summary + CronDelete.
