@@ -259,3 +259,20 @@ milestone, or the user runs it directly:
 - thoughts / next: **B2** — preprocess consumes the pose stream and yields per-frame
   preprocessed records (generator core), keeping `preprocess_frames` as the list-materializing
   wrapper. Stateless per frame given a fixed court mask, so a 1:1 streaming map.
+
+### Iteration 8 — B2 (preprocess streaming generator) — KEEP (15da4f3)
+- when: 2026-06-25T00:10   base_commit: 08c31d8
+- hypothesis: add `iter_preprocess_frames(pose_stream, court_mask, src_w, src_h)` yielding one
+  `(frame_data, target, near_player, far_player)` record per frame (per-frame independent → O(1)
+  peak); make `preprocess_frames` materialize it into the dict. The release feature path needs
+  only target/near/far, so it can later consume records directly. Behaviour-preserving; no
+  metric move yet (wrapper still builds the lists).
+- params: bench frames {6000, 9000, 27000} @ 15fps; tests = gate subset (11 files).
+- change: `src/preprocessing/data_preprocessor.py` — generator core + list-materializing
+  wrapper. Debug log dropped the `len(pose_data)` total (stream has no length); cosmetic only.
+- metrics (mine): 6k rss 37.6 / total 1.07; 9k 51.4 / 1.62; 27k 168.7 / 4.85; ser 0w.
+- tests: PASS (54). correctness: golden Y/Y at 6k/9k/27k.
+- decision: KEEP commit 15da4f3.
+- thoughts / next: **B3** — features consume the preprocessed stream keeping only prev-frame
+  state, emit rows. Add `iter_build_features` / a stream-consuming core; keep `build_features`
+  as the array-materializing wrapper.
