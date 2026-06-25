@@ -98,6 +98,13 @@ class PoseExtractor:
         try:
             with av.open(video_path) as container:
                 stream = container.streams.video[0]
+                # Enable FFmpeg's internal multithreaded decode (deterministic, identical
+                # pixels) so HEVC/H.264 decode overlaps across threads instead of running
+                # single-threaded. Decode is a real slice of wall time on long 1080p clips.
+                try:
+                    stream.thread_type = "AUTO"
+                except Exception:
+                    pass
                 time_base = stream.time_base
                 for frame in container.decode(stream):
                     ts = float(frame.pts * time_base) if frame.pts is not None else None
