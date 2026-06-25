@@ -186,3 +186,28 @@ consistent with the floor.)
   in-memory chain; drop the `job_dir` intermediate NPZs but KEEP the final outputs + saved-match
   library item. Then **A6** guard test (assert run_pipeline writes no intermediate .npz), then
   the Phase-A milestone real-video gate (`bench_real.py`, writes 3→0, csv sha unchanged).
+
+### Iteration 5 — A5 (GUI in-memory hand-off) — KEEP (468b20f)
+- when: 2026-06-24T00:20   base_commit: c370ac6
+- hypothesis: rewire GUI `_run_pipeline` to chain the three cores in memory, dropping the
+  raw/preprocessed/features NPZs written into `job_dir`. Keep progress callbacks, step/cancel
+  handling, final outputs, and the saved-match library item. Core failures now propagate to the
+  existing `except Exception` handler (same job-failed outcome as the old success-bool checks),
+  so behaviour is preserved. No bench/run_stub change (run_stub already mirrors the in-memory
+  chain from A4; GUI uses the same cores).
+- params: bench frames {6000, 27000} @ 15fps; tests = gate subset (11 files).
+- change: `src/gui/app.py` — `extract_pose_frames` → `_source_frame_shape` + `preprocess_frames`
+  → `build_features`; removed the two `success_*`/`Path(...).exists()` checks (cores raise),
+  the `np.load(features_npz)`, and the now-dead intermediate-NPZ cleanup loop. Verified import +
+  py_compile; no leftover intermediate-NPZ references (only inert `None` placeholders in the job
+  paths dict, which nothing reads).
+- metrics: GUI isn't exercised by the stub bench, so bench reflects the shared cores: 6k/27k
+  still golden, serialization 0w/0r, rss 43.7 / 191.7. (Real GUI write-elimination is covered by
+  code review + the shared-core contract; the CLI milestone gate proves the cores write nothing.)
+- tests: PASS (53 passed).
+- correctness: features_sha + segments_sha match golden at 6k/27k (Y/Y).
+- decision: KEEP commit 468b20f.
+- thoughts / next: **A6** — add a guard test asserting `run_pipeline` (CLI) writes **no**
+  intermediate `.npz` (sandbox cwd + assert no `*.npz` created and `pose_data/` never appears).
+  Then the **Phase-A milestone** real-video gate via `bench_real.py` (writes 3→0, csv sha
+  unchanged, peak RSS ≤ real baseline).
