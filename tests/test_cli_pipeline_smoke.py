@@ -224,3 +224,106 @@ def test_unsupported_feature_set_fails_before_pose_extraction(tmp_path, monkeypa
 
     assert "feature_set='v0'" in str(ei.value)
     assert calls == []  # never reached pose extraction
+
+
+def test_run_pipeline_writes_no_intermediate_npz(tmp_path, monkeypatch):
+    # Guard (A6): the release path hands stages off in memory and must never serialize an
+    # intermediate .npz. This pins the design two ways: (1) the file-writing wrappers
+    # (extract_pose_data / preprocess_single_video / create_features_from_preprocessed) are
+    # never called, and np.savez_compressed is never invoked from the release module; (2) no
+    # .npz file (and no persistent pose_data/ dir) is left on disk under a sandboxed cwd.
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    video_path = tmp_path / "match.mp4"
+    model_path = tmp_path / "model.onnx"
+    scaler_path = tmp_path / "scaler.json"
+    video_path.write_bytes(b"fake video")
+    model_path.write_bytes(b"fake onnx")
+    scaler_path.write_text("{}", encoding="utf-8")
+
+    class FakePoseExtractor:
+        def __init__(self, model_path, model_dir):
+            pass
+
+        def extract_pose_frames(self, **kwargs):
+            return ["POSE_DATA"]  # in-memory hand-off
+
+        def extract_pose_data(self, *a, **k):
+            raise AssertionError("release path must not call extract_pose_data (writes NPZ)")
+
+    class FakePreprocessor:
+        def __init__(self, **_kwargs):
+            pass
+
+        def compute_court_mask(self, vp):
+            return "COURT_MASK", {"source": "default", "detected": False, "timestamp_s": None}
+
+        def _source_frame_shape(self, vp):
+            return (720, 1280, 3)
+
+        def preprocess_frames(self, pose_data, court_mask, src_width, src_height):
+            return {"targets": "T", "near_players": "N", "far_players": "F"}
+
+        def preprocess_single_video(self, *a, **k):
+            raise AssertionError("release path must not call preprocess_single_video (writes NPZ)")
+
+    class FakeFeatureEngineer:
+        def __init__(self, **_kwargs):
+            pass
+
+        def build_features(self, targets, near_players, far_players):
+            return np.ones((50, FEATURE_DIM), dtype=np.float32), np.zeros(50, dtype=np.float32)
+
+        def create_features_from_preprocessed(self, *a, **k):
+            raise AssertionError("release path must not call create_features_from_preprocessed (writes NPZ)")
+
+    class FakeScaler:
+        def transform(self, features):
+            return features
+
+    def no_savez(*a, **k):
+        raise AssertionError("release path must not np.savez_compressed an intermediate")
+
+    monkeypatch.setattr(cli_main, "PoseExtractor", FakePoseExtractor)
+    monkeypatch.setattr(cli_main, "DataPreprocessor", FakePreprocessor)
+    monkeypatch.setattr(cli_main, "FeatureEngineer", FakeFeatureEngineer)
+    monkeypatch.setattr(cli_main.np, "savez_compressed", no_savez)
+    monkeypatch.setattr(cli_main, "load_scaler_asset", lambda _path: FakeScaler())
+    monkeypatch.setattr(
+        cli_main, "run_windowed_inference_average_onnx",
+        lambda *a, **k: np.zeros(50, dtype=np.float32),
+    )
+    monkeypatch.setattr(cli_main, "gaussian_filter1d", lambda values, sigma: values)
+    monkeypatch.setattr(cli_main, "validate_video", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+
+    cfg = cli_main.RunConfig(
+        video_path=video_path,
+        output_dir=tmp_path / "out",
+        output_name=None,
+        csv_output_dir=tmp_path / "out_csv",
+        write_csv=False,
+        segment_video=False,
+        yolo_weights="yolov8n-pose.pt",
+        yolo_device=None,
+        model_path=model_path,
+        scaler_path=scaler_path,
+        fps=5.0,
+        seq_len=100,
+        overlap=50,
+        sigma=1.0,
+        low=0.45,
+        high=0.7,
+        min_dur_sec=1.0,
+        conf=0.25,
+        imgsz=960,
+        feature_set="v1",
+        screen_width=1280,
+        screen_height=720,
+        start_time=0,
+        duration=999999,
+    )
+
+    assert cli_main.run_pipeline(cfg) == 0
+    # No intermediate .npz anywhere under the sandbox, and no persistent pose_data/ dir.
+    assert list(tmp_path.rglob("*.npz")) == []
+    assert not (tmp_path / "pose_data").exists()
