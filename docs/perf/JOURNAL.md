@@ -276,3 +276,22 @@ milestone, or the user runs it directly:
 - thoughts / next: **B3** — features consume the preprocessed stream keeping only prev-frame
   state, emit rows. Add `iter_build_features` / a stream-consuming core; keep `build_features`
   as the array-materializing wrapper.
+
+### Iteration 9 — B3 (feature streaming generator) — KEEP (3913812)
+- when: 2026-06-25T00:30   base_commit: e0173dd
+- hypothesis: add `iter_build_features(preprocessed_records)` that skips target<0 frames,
+  retains only the previous kept frame as state, and yields `(feature_vector, target)`; make
+  `build_features` materialize it over the parallel arrays. State advances only across kept
+  frames, exactly as the old `annotated_indices` loop. Behaviour-preserving; no metric move yet.
+- params: bench frames {6000, 9000, 27000} @ 15fps; tests = gate subset (11 files).
+- change: `src/features/feature_engineer.py` — generator core + array-materializing wrapper
+  (wrapper feeds synthetic `(None, target, near, far)` records).
+- metrics (mine): 6k rss 42.8 / total 1.08; 9k 64.8 / 1.60; 27k 192.0 / 4.83; ser 0w.
+- tests: PASS (54). correctness: golden Y/Y at 6k/9k/27k.
+- decision: KEEP commit 3913812.
+- thoughts / next: **B4** — the three streaming cores now exist (iter_pose → iter_preprocess →
+  iter_build_features). Make inference consume features incrementally (fill seq_len windows,
+  accumulate summed_probs/counts; retain only O(num_frames) floats) AND wire run_pipeline +
+  run_stub to chain the generators end-to-end. THIS is where peak RSS should drop (27k → ~6k).
+  Need to read infer/inference.py run_windowed_inference_average* to design the streaming
+  windowing without changing the averaged-probs result (gate: segments_sha unchanged).
