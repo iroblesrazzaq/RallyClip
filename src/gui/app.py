@@ -593,7 +593,7 @@ def _run_pipeline(job_id: str) -> None:
                 job["pose_eta_seconds"] = pose_eta
                 job["pose_throughput_fps"] = smoothed_fps
 
-        raw_npz = extractor.extract_pose_data(
+        pose_data = extractor.extract_pose_frames(
             video_path=str(upload_path),
             confidence_threshold=float(cfg["conf"]),
             start_time_seconds=int(cfg["start_time"]),
@@ -602,20 +602,16 @@ def _run_pipeline(job_id: str) -> None:
             imgsz=int(cfg["imgsz"]),
             annotations_csv=None,
             progress_callback=pose_progress,
-            output_dir=str(job_dir),
         )
-        job["paths"]["raw_npz"] = raw_npz
         _set_step(job, "pose", "completed", 100)
 
         _check_cancel(job)
         _set_step(job, "preprocess", "in_progress", 5)
-        preprocessed_npz = str(job_dir / "preprocessed.npz")
-        success_pre = pre.preprocess_single_video(
-            raw_npz, str(upload_path), preprocessed_npz, overwrite=True, court_mask=court_mask
-        )
-        if not success_pre or not Path(preprocessed_npz).exists():
-            raise RuntimeError("Preprocessing failed")
-        job["paths"]["preprocessed_npz"] = preprocessed_npz
+        # In-memory hand-off: stages chain through their pure cores with no intermediate
+        # NPZ written to job_dir. Native source resolution gives an identity rescale at
+        # 720p, exactly as preprocess_single_video did internally.
+        src_height, src_width, _ = pre._source_frame_shape(str(upload_path))
+        preprocessed = pre.preprocess_frames(pose_data, court_mask, src_width, src_height)
         _set_step(job, "preprocess", "completed", 100)
 
         _check_cancel(job)
@@ -625,17 +621,13 @@ def _run_pipeline(job_id: str) -> None:
             screen_height=int(cfg["screen_height"]),
             target_fps=float(cfg["fps"]),
         )
-        features_npz = str(job_dir / "features.npz")
-        success_fe = fe.create_features_from_preprocessed(preprocessed_npz, features_npz, overwrite=True)
-        if not success_fe or not Path(features_npz).exists():
-            raise RuntimeError("Feature engineering failed")
-        job["paths"]["features_npz"] = features_npz
+        features, _targets = fe.build_features(
+            preprocessed["targets"], preprocessed["near_players"], preprocessed["far_players"]
+        )
         _set_step(job, "feature", "completed", 100)
 
         _check_cancel(job)
         _set_step(job, "inference", "in_progress", 5)
-        with np.load(features_npz) as data:
-            features = data["features"].copy()
         scaler = load_scaler_asset(str(scaler_path))
         features = scaler.transform(features)
 
@@ -695,14 +687,8 @@ def _run_pipeline(job_id: str) -> None:
         _set_step(job, "output", "completed", 100)
         job["status"] = "completed"
         job["eta_seconds"] = 0.0
-        # Cleanup intermediates now that outputs are ready
-        for key in ("raw_npz", "preprocessed_npz", "features_npz"):
-            path = job["paths"].get(key)
-            if path and os.path.exists(path):
-                try:
-                    os.remove(path)
-                except Exception:
-                    pass
+        # No intermediate NPZs are written anymore (stages hand off in memory), so there
+        # is nothing to clean up between stages.
         # Remove uploaded input and optionally job dir if outputs are elsewhere and keep flag not set
         if not _keep_jobs():
             upload_path.unlink(missing_ok=True)
