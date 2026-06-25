@@ -295,3 +295,31 @@ milestone, or the user runs it directly:
   run_stub to chain the generators end-to-end. THIS is where peak RSS should drop (27k → ~6k).
   Need to read infer/inference.py run_windowed_inference_average* to design the streaming
   windowing without changing the averaged-probs result (gate: segments_sha unchanged).
+
+### Iteration 10 — B4 (streaming windowed inference) — KEEP (f48b3dd)
+- when: 2026-06-25T01:10   base_commit: dfdea0d
+- hypothesis: add `run_windowed_inference_average_stream(feature_rows, run_window, L, overlap)`
+  that windows a *stream* using a seq_len ring buffer, accumulating summed/counts in float32
+  with the same start sequence + slice-add order as the batch path → bit-identical averaged
+  output, peak O(seq_len) in features. Done as a discrete step (not wired yet) so it is gated
+  by its own equivalence test rather than relying on the deferred bench_real.
+- NOTE on the stub's limits (answer to "why does RSS still scale 6k→27k?"): B1–B3 only added
+  the generators; nothing consumes them, so peak is still O(N) (pose_data + preprocessed +
+  feats coexist). ALSO the stub bench *must* materialize the full `feats` matrix (it hashes it
+  for `features_sha256` + computes its segments from a global z-score), so even after end-to-end
+  streaming the stub keeps an O(N·362) feats floor and can't show perfectly flat RSS — it will
+  show a big drop (pose+preprocess no longer coexist). True flatness is proven by `bench_real.py`
+  (real pipeline streams feats into inference, never hashing them).
+- params: equivalence unit test (6 windowing cases + 2 guards); gate subset; bench 6k golden.
+- change: `src/infer/inference.py` (+ `__init__` export) streaming fn; `tests/
+  test_inference_streaming.py` proving stream==batch bit-for-bit.
+- metrics: n/a (unwired). Bench 6k golden unchanged; ser 0w.
+- tests: PASS (gate subset 54 + streaming 8).
+- correctness: golden Y at 6k (function not on the golden path yet).
+- decision: KEEP commit f48b3dd.
+- thoughts / next: **B5** — wire the full streaming chain into run_pipeline (iter_pose →
+  iter_preprocess → iter_build_features → per-row scaler → run_windowed_inference_average_stream
+  with a torch/onnx window-runner) AND run_stub (stream into the feats array it must hash).
+  Update the cli smoke + A6 guard tests to the streaming wiring. Confirm stub peak RSS drops
+  sharply (27k → ~feats floor), refresh the memory golden, and run/queue the bench_real
+  acceptance (csv sha unchanged, peak RSS bounded).
