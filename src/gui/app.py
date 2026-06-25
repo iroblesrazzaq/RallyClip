@@ -593,7 +593,13 @@ def _run_pipeline(job_id: str) -> None:
                 job["pose_eta_seconds"] = pose_eta
                 job["pose_throughput_fps"] = smoothed_fps
 
-        pose_data = extractor.extract_pose_frames(
+        # Streaming hand-off: pose -> preprocess -> features chain through their generators, so
+        # pose_data and the preprocessed records are produced-and-discarded one frame at a time
+        # (no intermediate NPZ, no full-length pose/preprocess buffers). The pose progress
+        # callback drives the bar while the chain is consumed. Native source resolution gives an
+        # identity rescale at 720p, exactly as preprocess_single_video did internally.
+        src_height, src_width, _ = pre._source_frame_shape(str(upload_path))
+        pose_stream = extractor.iter_pose_frames(
             video_path=str(upload_path),
             confidence_threshold=float(cfg["conf"]),
             start_time_seconds=int(cfg["start_time"]),
@@ -603,27 +609,20 @@ def _run_pipeline(job_id: str) -> None:
             annotations_csv=None,
             progress_callback=pose_progress,
         )
-        _set_step(job, "pose", "completed", 100)
-
-        _check_cancel(job)
-        _set_step(job, "preprocess", "in_progress", 5)
-        # In-memory hand-off: stages chain through their pure cores with no intermediate
-        # NPZ written to job_dir. Native source resolution gives an identity rescale at
-        # 720p, exactly as preprocess_single_video did internally.
-        src_height, src_width, _ = pre._source_frame_shape(str(upload_path))
-        preprocessed = pre.preprocess_frames(pose_data, court_mask, src_width, src_height)
-        _set_step(job, "preprocess", "completed", 100)
-
-        _check_cancel(job)
-        _set_step(job, "feature", "in_progress", 5)
+        preprocessed_stream = pre.iter_preprocess_frames(pose_stream, court_mask, src_width, src_height)
         fe = FeatureEngineer(
             screen_width=int(cfg["screen_width"]),
             screen_height=int(cfg["screen_height"]),
             target_fps=float(cfg["fps"]),
         )
-        features, _targets = fe.build_features(
-            preprocessed["targets"], preprocessed["near_players"], preprocessed["far_players"]
-        )
+        feature_rows = [feature_vector for feature_vector, _target in fe.iter_build_features(preprocessed_stream)]
+        if feature_rows:
+            features = np.array(feature_rows, dtype=np.float32)
+        else:
+            features = np.empty((0, fe.feature_vector_size), dtype=np.float32)
+        del feature_rows
+        _set_step(job, "pose", "completed", 100)
+        _set_step(job, "preprocess", "completed", 100)
         _set_step(job, "feature", "completed", 100)
 
         _check_cancel(job)

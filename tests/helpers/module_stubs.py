@@ -18,6 +18,9 @@ def import_cli_main_with_stubs(monkeypatch):
     infer.load_model_from_checkpoint = lambda path, return_logits=False: (None, None)
     infer.run_windowed_inference_average_onnx = lambda *args, **kwargs: np.array([], dtype=np.float32)
     infer.run_windowed_inference_average = lambda *args, **kwargs: np.array([], dtype=np.float32)
+    infer.run_windowed_inference_average_stream = lambda *args, **kwargs: np.array([], dtype=np.float32)
+    infer.run_windowed_inference_average_onnx_stream = lambda *args, **kwargs: np.array([], dtype=np.float32)
+    infer.run_windowed_inference_average_torch_stream = lambda *args, **kwargs: np.array([], dtype=np.float32)
     infer.write_segments_csv = lambda *args, **kwargs: None
 
     extraction_pose = types.ModuleType("extraction.pose_extractor")
