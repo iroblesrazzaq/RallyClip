@@ -8,6 +8,8 @@ from .inference import (
     run_windowed_inference_average_onnx,
     run_windowed_inference_average,
     run_windowed_inference_average_stream,
+    run_windowed_inference_average_onnx_stream,
+    run_windowed_inference_average_torch_stream,
     write_segments_csv,
 )
 
@@ -21,6 +23,8 @@ __all__ = [
     "run_windowed_inference_average_onnx",
     "run_windowed_inference_average",
     "run_windowed_inference_average_stream",
+    "run_windowed_inference_average_onnx_stream",
+    "run_windowed_inference_average_torch_stream",
     "write_segments_csv",
 ]
 

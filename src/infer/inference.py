@@ -327,6 +327,70 @@ def run_windowed_inference_average_stream(
     return np.divide(summed[:n], np.maximum(counts[:n], 1), dtype=np.float32)
 
 
+def run_windowed_inference_average_onnx_stream(
+    model_path: str,
+    feature_rows,
+    sequence_length: int,
+    overlap: int,
+    progress_callback: Optional[Callable[[float], None]] = None,
+    total_windows: Optional[int] = None,
+) -> np.ndarray:
+    """Streaming counterpart of :func:`run_windowed_inference_average_onnx`.
+
+    Sets up the ONNX session once and feeds the feature-row stream through
+    :func:`run_windowed_inference_average_stream`. The per-window computation (run + squeeze +
+    sigmoid) is identical to the batch path, so the averaged output is identical.
+    """
+    if ort is None:
+        raise RuntimeError(
+            "ONNX model requested but onnxruntime is not installed. "
+            "Install dependencies with `pip install .`."
+        )
+    providers = [p for p in ort.get_available_providers() if p in {"CPUExecutionProvider", "CUDAExecutionProvider"}]
+    if not providers:
+        providers = ["CPUExecutionProvider"]
+    session = ort.InferenceSession(model_path, providers=providers)
+    input_name = session.get_inputs()[0].name
+    output_name = session.get_outputs()[0].name
+
+    def run_window(window: np.ndarray) -> np.ndarray:
+        seq_np = window.astype(np.float32)[None, ...]
+        output = session.run([output_name], {input_name: seq_np})[0]
+        seq_out = np.asarray(output, dtype=np.float32).squeeze()
+        if seq_out.ndim != 1:
+            seq_out = seq_out.reshape(-1)
+        return _sigmoid(seq_out)
+
+    return run_windowed_inference_average_stream(
+        feature_rows, run_window, sequence_length, overlap, progress_callback, total_windows
+    )
+
+
+def run_windowed_inference_average_torch_stream(
+    model: TennisPointLSTM,
+    device: "torch.device",
+    feature_rows,
+    sequence_length: int,
+    overlap: int,
+    progress_callback: Optional[Callable[[float], None]] = None,
+    total_windows: Optional[int] = None,
+) -> np.ndarray:
+    """Streaming counterpart of :func:`run_windowed_inference_average` (torch path).
+
+    The per-window forward pass matches the batch path exactly, so the averaged output is
+    identical while peak feature memory is O(seq_len) instead of O(num_frames).
+    """
+    def run_window(window: np.ndarray) -> np.ndarray:
+        seq_tensor = torch.from_numpy(window).unsqueeze(0).to(device)
+        with torch.no_grad():
+            output_tensor = model(seq_tensor)
+        return output_tensor.squeeze().detach().cpu().numpy().astype(np.float32)
+
+    return run_windowed_inference_average_stream(
+        feature_rows, run_window, sequence_length, overlap, progress_callback, total_windows
+    )
+
+
 def extract_segments_from_binary(pred: np.ndarray) -> List[Tuple[int, int]]:
     segments: List[Tuple[int, int]] = []
     n = len(pred)

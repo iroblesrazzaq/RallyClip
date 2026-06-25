@@ -227,12 +227,24 @@ def run_stub(frames: int, fps: float, tmp_dir: Path, ref_w: int = 1280, ref_h: i
 
     stage_time: dict[str, float] = {}
 
-    # Mirrors the release path (CLI run_pipeline / GUI _run_pipeline): the three stages hand
-    # off in memory via their pure cores -- no intermediate NPZ round-trips. The file-writing
-    # wrappers (extract_pose_data / preprocess_single_video / create_features_from_preprocessed)
-    # remain for the training scripts and are covered by their own contract tests.
+    pre = DataPreprocessor(screen_width=ref_w, screen_height=ref_h, save_court_masks=False)
+    # Synthetic "all in-bounds" court mask (0 == kept). Passing this avoids triggering the
+    # real CourtDetector/YOLO, keeping the stub deterministic and offline. Court filtering
+    # itself is exercised, just with nothing culled.
+    court_mask = np.zeros((ref_h, ref_w), dtype=np.uint8)
+    fe = FeatureEngineer(screen_width=ref_w, screen_height=ref_h, target_fps=fps)
+    # synthetic.mp4 can't be probed -> _source_frame_shape falls back to (ref_h, ref_w), i.e.
+    # an identity rescale, exactly as the file path did inside preprocess_single_video.
+    src_height, src_width, _ = pre._source_frame_shape("synthetic.mp4")
+
+    # Mirrors the release path: the stages hand off in memory AND stream --
+    # iter_pose_frames -> iter_preprocess_frames -> iter_build_features -- so pose_data and the
+    # preprocessed records are produced-and-discarded one frame at a time (peak memory
+    # O(batch + 1), not O(num_frames)). The bench still materializes the feature matrix because
+    # it must hash it (features_sha256) and derive segments from a global op on it; the real
+    # pipeline streams feature rows into inference too (see bench_real.py).
     t0 = time.perf_counter()
-    pose_data = ex.extract_pose_frames(
+    pose_stream = ex.iter_pose_frames(
         video_path="synthetic.mp4",
         confidence_threshold=0.25,
         start_time_seconds=0,
@@ -241,26 +253,18 @@ def run_stub(frames: int, fps: float, tmp_dir: Path, ref_w: int = 1280, ref_h: i
         imgsz=960,
         annotations_csv=None,
     )
-    stage_time["pose"] = time.perf_counter() - t0
-
-    pre = DataPreprocessor(screen_width=ref_w, screen_height=ref_h, save_court_masks=False)
-    # Synthetic "all in-bounds" court mask (0 == kept). Passing this avoids triggering the
-    # real CourtDetector/YOLO, keeping the stub deterministic and offline. Court filtering
-    # itself is exercised, just with nothing culled.
-    court_mask = np.zeros((ref_h, ref_w), dtype=np.uint8)
-    t0 = time.perf_counter()
-    # synthetic.mp4 can't be probed -> _source_frame_shape falls back to (ref_h, ref_w), i.e.
-    # an identity rescale, exactly as the file path did inside preprocess_single_video.
-    src_height, src_width, _ = pre._source_frame_shape("synthetic.mp4")
-    preprocessed = pre.preprocess_frames(pose_data, court_mask, src_width, src_height)
-    stage_time["preprocess"] = time.perf_counter() - t0
-
-    fe = FeatureEngineer(screen_width=ref_w, screen_height=ref_h, target_fps=fps)
-    t0 = time.perf_counter()
-    feats, targets = fe.build_features(
-        preprocessed["targets"], preprocessed["near_players"], preprocessed["far_players"]
-    )
-    stage_time["features"] = time.perf_counter() - t0
+    pre_stream = pre.iter_preprocess_frames(pose_stream, court_mask, src_width, src_height)
+    feature_rows, feature_targets = [], []
+    for feature_vector, target in fe.iter_build_features(pre_stream):
+        feature_rows.append(feature_vector)
+        feature_targets.append(target)
+    if feature_rows:
+        feats = np.array(feature_rows, dtype=np.float32)
+        targets = np.array(feature_targets)
+    else:
+        feats = np.empty((0, fe.feature_vector_size), dtype=np.float32)
+        targets = np.empty((0,))
+    stage_time["stream"] = time.perf_counter() - t0
 
     # Deterministic stand-in for windowed model inference: a fixed projection of the
     # features. The streaming refactor does not touch inference, so this is sufficient to

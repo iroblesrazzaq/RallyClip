@@ -9,10 +9,10 @@ from helpers.module_stubs import import_cli_main_with_stubs
 from helpers.runtime_fixtures import FEATURE_DIM
 
 
-def test_run_pipeline_wires_runtime_stages_in_memory(tmp_path, monkeypatch):
-    # The release path hands stages off in memory (pose -> preprocess -> features ->
-    # inference) with no intermediate NPZ round-trips. This asserts the in-memory wiring
-    # and that no np.load of an intermediate features file happens.
+def test_run_pipeline_streams_runtime_stages(tmp_path, monkeypatch):
+    # The release path streams every stage end-to-end: iter_pose_frames ->
+    # iter_preprocess_frames -> iter_build_features -> per-row scale -> streaming windowed
+    # inference, with no intermediate NPZ round-trips and no np.load of intermediates.
     cli_main = import_cli_main_with_stubs(monkeypatch)
     calls: list[str] = []
     video_path = tmp_path / "match.mp4"
@@ -28,12 +28,12 @@ def test_run_pipeline_wires_runtime_stages_in_memory(tmp_path, monkeypatch):
             assert model_path == "yolov8n-pose.pt"
             assert Path(model_dir).name == "models"
 
-        def extract_pose_frames(self, **kwargs):
-            calls.append("pose:extract")
+        def iter_pose_frames(self, **kwargs):
+            calls.append("pose:iter")
             assert kwargs["target_fps"] == 5
             assert kwargs["imgsz"] == 960
             assert kwargs["confidence_threshold"] == 0.25
-            return ["POSE_DATA"]  # opaque in-memory frame list handed to preprocess
+            return iter(["POSE_STREAM"])  # opaque stream handed to preprocess
 
     class FakePreprocessor:
         def __init__(self, save_court_masks, screen_width=None, screen_height=None, yolo_model_path=None, conf=None, **_kwargs):
@@ -41,7 +41,6 @@ def test_run_pipeline_wires_runtime_stages_in_memory(tmp_path, monkeypatch):
             assert save_court_masks is False
             assert screen_width == 1280
             assert screen_height == 720
-            # court detection uses the same manifest-pinned model + conf as pose extraction
             assert yolo_model_path == "yolov8n-pose.pt"
             assert conf == 0.25
 
@@ -55,12 +54,12 @@ def test_run_pipeline_wires_runtime_stages_in_memory(tmp_path, monkeypatch):
             assert vp == str(video_path)
             return (720, 1280, 3)
 
-        def preprocess_frames(self, pose_data, court_mask, src_width, src_height):
-            calls.append("preprocess:run")
-            assert pose_data == ["POSE_DATA"]  # in-memory hand-off, not an NPZ path
-            assert court_mask == "COURT_MASK"  # mask computed up front and passed in
+        def iter_preprocess_frames(self, pose_stream, court_mask, src_width, src_height):
+            calls.append("preprocess:iter")
+            assert list(pose_stream) == ["POSE_STREAM"]  # in-memory hand-off, not an NPZ path
+            assert court_mask == "COURT_MASK"
             assert (src_width, src_height) == (1280, 720)
-            return {"targets": "TARGETS", "near_players": "NEAR", "far_players": "FAR"}
+            return iter(["PRE_STREAM"])
 
     feature_engineer_fps: list[float] = []
 
@@ -69,30 +68,30 @@ def test_run_pipeline_wires_runtime_stages_in_memory(tmp_path, monkeypatch):
             calls.append("features:init")
             feature_engineer_fps.append(float(target_fps))
 
-        def build_features(self, targets, near_players, far_players):
-            calls.append("features:run")
-            assert (targets, near_players, far_players) == ("TARGETS", "NEAR", "FAR")
-            features = np.ones((100, FEATURE_DIM), dtype=np.float32)
-            return features, np.zeros(100, dtype=np.float32)
+        def iter_build_features(self, preprocessed_stream):
+            calls.append("features:iter")
+            assert list(preprocessed_stream) == ["PRE_STREAM"]
+            for _ in range(100):
+                yield np.ones(FEATURE_DIM, dtype=np.float32), 0
 
     class FakeScaler:
         def transform(self, features):
-            calls.append("scaler:transform")
-            assert features.shape == (100, FEATURE_DIM)
-            return features
+            return features  # identity; per-row in the streaming path
+
+    def fake_onnx_stream(model_path_arg, feature_rows, sequence_length, overlap, **kwargs):
+        calls.append("inference:onnx")
+        assert model_path_arg == str(model_path)
+        assert sequence_length == 100
+        assert overlap == 50
+        rows = list(feature_rows)  # consume the streaming chain
+        assert len(rows) == 100
+        assert all(r.shape == (FEATURE_DIM,) for r in rows)
+        probs = np.zeros(len(rows), dtype=np.float32)
+        probs[10:25] = 0.95
+        return probs
 
     def fake_np_load(path, *args, **kwargs):
         raise AssertionError(f"release path must not np.load intermediates (got {path})")
-
-    def fake_onnx(model, features, sequence_length, overlap):
-        calls.append("inference:onnx")
-        assert model == str(model_path)
-        assert features.shape == (100, FEATURE_DIM)
-        assert sequence_length == 100
-        assert overlap == 50
-        probs = np.zeros(features.shape[0], dtype=np.float32)
-        probs[10:25] = 0.95
-        return probs
 
     def fake_write_segments_csv(segments, output_csv_path, fps, overwrite):
         calls.append("output:csv")
@@ -112,7 +111,7 @@ def test_run_pipeline_wires_runtime_stages_in_memory(tmp_path, monkeypatch):
     monkeypatch.setattr(cli_main, "FeatureEngineer", FakeFeatureEngineer)
     monkeypatch.setattr(cli_main.np, "load", fake_np_load)
     monkeypatch.setattr(cli_main, "load_scaler_asset", lambda _path: FakeScaler())
-    monkeypatch.setattr(cli_main, "run_windowed_inference_average_onnx", fake_onnx)
+    monkeypatch.setattr(cli_main, "run_windowed_inference_average_onnx_stream", fake_onnx_stream)
     monkeypatch.setattr(cli_main, "gaussian_filter1d", lambda values, sigma: values)
     monkeypatch.setattr(cli_main, "write_segments_csv", fake_write_segments_csv)
     monkeypatch.setattr(cli_main, "segment_video", fake_segment_video)
@@ -155,13 +154,12 @@ def test_run_pipeline_wires_runtime_stages_in_memory(tmp_path, monkeypatch):
         "preprocess:init",
         "court:detect",
         "pose:init",
-        "pose:extract",
         "preprocess:srcshape",
-        "preprocess:run",
+        "pose:iter",
+        "preprocess:iter",
         "features:init",
-        "features:run",
-        "scaler:transform",
         "inference:onnx",
+        "features:iter",
         "output:csv",
         "output:video",
     ]
@@ -183,8 +181,8 @@ def test_unsupported_feature_set_fails_before_pose_extraction(tmp_path, monkeypa
         def __init__(self, *args, **kwargs):
             calls.append("pose:init")
 
-        def extract_pose_data(self, *args, **kwargs):
-            calls.append("pose:extract")
+        def iter_pose_frames(self, *args, **kwargs):
+            calls.append("pose:iter")
             raise AssertionError("pose extraction must not run for an unsupported feature_set")
 
     monkeypatch.setattr(cli_main, "PoseExtractor", ExplodingPoseExtractor)
@@ -227,11 +225,11 @@ def test_unsupported_feature_set_fails_before_pose_extraction(tmp_path, monkeypa
 
 
 def test_run_pipeline_writes_no_intermediate_npz(tmp_path, monkeypatch):
-    # Guard (A6): the release path hands stages off in memory and must never serialize an
-    # intermediate .npz. This pins the design two ways: (1) the file-writing wrappers
-    # (extract_pose_data / preprocess_single_video / create_features_from_preprocessed) are
-    # never called, and np.savez_compressed is never invoked from the release module; (2) no
-    # .npz file (and no persistent pose_data/ dir) is left on disk under a sandboxed cwd.
+    # Guard (A6): the streaming release path must never serialize an intermediate .npz. Pinned
+    # two ways: (1) the file-writing wrappers (extract_pose_data / preprocess_single_video /
+    # create_features_from_preprocessed) are never called and np.savez_compressed is never
+    # invoked from the release module; (2) no .npz file (and no persistent pose_data/ dir) is
+    # left on disk under a sandboxed cwd.
     cli_main = import_cli_main_with_stubs(monkeypatch)
     video_path = tmp_path / "match.mp4"
     model_path = tmp_path / "model.onnx"
@@ -244,8 +242,8 @@ def test_run_pipeline_writes_no_intermediate_npz(tmp_path, monkeypatch):
         def __init__(self, model_path, model_dir):
             pass
 
-        def extract_pose_frames(self, **kwargs):
-            return ["POSE_DATA"]  # in-memory hand-off
+        def iter_pose_frames(self, **kwargs):
+            return iter(["POSE_STREAM"])
 
         def extract_pose_data(self, *a, **k):
             raise AssertionError("release path must not call extract_pose_data (writes NPZ)")
@@ -260,8 +258,9 @@ def test_run_pipeline_writes_no_intermediate_npz(tmp_path, monkeypatch):
         def _source_frame_shape(self, vp):
             return (720, 1280, 3)
 
-        def preprocess_frames(self, pose_data, court_mask, src_width, src_height):
-            return {"targets": "T", "near_players": "N", "far_players": "F"}
+        def iter_preprocess_frames(self, pose_stream, court_mask, src_width, src_height):
+            list(pose_stream)
+            return iter(["PRE_STREAM"])
 
         def preprocess_single_video(self, *a, **k):
             raise AssertionError("release path must not call preprocess_single_video (writes NPZ)")
@@ -270,8 +269,10 @@ def test_run_pipeline_writes_no_intermediate_npz(tmp_path, monkeypatch):
         def __init__(self, **_kwargs):
             pass
 
-        def build_features(self, targets, near_players, far_players):
-            return np.ones((50, FEATURE_DIM), dtype=np.float32), np.zeros(50, dtype=np.float32)
+        def iter_build_features(self, preprocessed_stream):
+            list(preprocessed_stream)
+            for _ in range(120):
+                yield np.ones(FEATURE_DIM, dtype=np.float32), 0
 
         def create_features_from_preprocessed(self, *a, **k):
             raise AssertionError("release path must not call create_features_from_preprocessed (writes NPZ)")
@@ -283,15 +284,16 @@ def test_run_pipeline_writes_no_intermediate_npz(tmp_path, monkeypatch):
     def no_savez(*a, **k):
         raise AssertionError("release path must not np.savez_compressed an intermediate")
 
+    def fake_onnx_stream(model_path_arg, feature_rows, sequence_length, overlap, **kwargs):
+        n = len(list(feature_rows))
+        return np.zeros(n, dtype=np.float32)  # no segments
+
     monkeypatch.setattr(cli_main, "PoseExtractor", FakePoseExtractor)
     monkeypatch.setattr(cli_main, "DataPreprocessor", FakePreprocessor)
     monkeypatch.setattr(cli_main, "FeatureEngineer", FakeFeatureEngineer)
     monkeypatch.setattr(cli_main.np, "savez_compressed", no_savez)
     monkeypatch.setattr(cli_main, "load_scaler_asset", lambda _path: FakeScaler())
-    monkeypatch.setattr(
-        cli_main, "run_windowed_inference_average_onnx",
-        lambda *a, **k: np.zeros(50, dtype=np.float32),
-    )
+    monkeypatch.setattr(cli_main, "run_windowed_inference_average_onnx_stream", fake_onnx_stream)
     monkeypatch.setattr(cli_main, "gaussian_filter1d", lambda values, sigma: values)
     monkeypatch.setattr(cli_main, "validate_video", lambda *a, **k: None)
     monkeypatch.chdir(tmp_path)
