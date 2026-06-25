@@ -235,6 +235,98 @@ def run_windowed_inference_average(
     return avg_probs
 
 
+def run_windowed_inference_average_stream(
+    feature_rows,
+    run_window: Callable[[np.ndarray], np.ndarray],
+    sequence_length: int,
+    overlap: int,
+    progress_callback: Optional[Callable[[float], None]] = None,
+    total_windows: Optional[int] = None,
+) -> np.ndarray:
+    """Windowed-average inference over a *stream* of feature rows (bounded memory).
+
+    Produces the same averaged-probability vector as :func:`run_windowed_inference_average`
+    / ``_onnx`` but holds only a ``sequence_length`` ring buffer of feature rows instead of
+    the full ``(num_frames, F)`` matrix, so peak memory is O(seq_len) in the features rather
+    than O(num_frames). The only O(num_frames) state is the float-per-frame ``summed`` /
+    ``counts`` accumulators.
+
+    Args:
+        feature_rows: iterable of 1-D float32 feature vectors, one per frame, in order.
+        run_window: maps a ``(sequence_length, F)`` window to its ``sequence_length``
+            probabilities -- the same per-window computation the batch callers perform
+            (torch forward, or ONNX run + sigmoid).
+        sequence_length, overlap: identical windowing to :func:`generate_start_indices`.
+
+    The window start sequence and the float32 slice-accumulation order are identical to the
+    batch path, so the averaged output is bit-for-bit identical.
+    """
+    from collections import deque
+
+    L = int(sequence_length)
+    if L <= 0:
+        raise ValueError("sequence_length must be > 0")
+    if overlap < 0 or overlap >= L:
+        raise ValueError("overlap must be in [0, sequence_length-1]")
+    step = L - overlap
+
+    ring: deque = deque(maxlen=L)
+    cap = max(L, 1024)
+    summed = np.zeros(cap, dtype=np.float32)
+    counts = np.zeros(cap, dtype=np.int32)
+    n = 0
+    next_start = 0
+    fired = 0
+
+    def _grow(size: int) -> None:
+        nonlocal summed, counts, cap
+        if size <= cap:
+            return
+        new_cap = cap
+        while new_cap < size:
+            new_cap *= 2
+        new_s = np.zeros(new_cap, dtype=np.float32)
+        new_s[:summed.size] = summed
+        new_c = np.zeros(new_cap, dtype=np.int32)
+        new_c[:counts.size] = counts
+        summed, counts, cap = new_s, new_c, new_cap
+
+    def _fire(start: int) -> None:
+        nonlocal fired
+        window = np.stack(tuple(ring)).astype(np.float32)
+        probs = np.asarray(run_window(window), dtype=np.float32)
+        if probs.shape[0] != L:
+            raise ValueError(
+                f"window output length mismatch: got {probs.shape[0]}, expected {L}. "
+                "Check seq_len against model manifest."
+            )
+        summed[start:start + L] += probs
+        counts[start:start + L] += 1
+        fired += 1
+        if progress_callback is not None and total_windows:
+            try:
+                progress_callback(fired / float(total_windows))
+            except Exception:
+                pass
+
+    for row in feature_rows:
+        ring.append(np.asarray(row, dtype=np.float32))
+        n += 1
+        _grow(n)
+        if next_start + L <= n:
+            _fire(next_start)
+            next_start += step
+
+    if n < L:
+        raise ValueError("input video too short for the chosen sequence_length")
+    # End-anchored tail window, appended only when it does not coincide with the last
+    # regular start -- matches generate_start_indices' trailing append exactly.
+    if (next_start - step) + L < n:
+        _fire(n - L)
+
+    return np.divide(summed[:n], np.maximum(counts[:n], 1), dtype=np.float32)
+
+
 def extract_segments_from_binary(pred: np.ndarray) -> List[Tuple[int, int]]:
     segments: List[Tuple[int, int]] = []
     n = len(pred)
