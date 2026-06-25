@@ -91,6 +91,10 @@ class PoseExtractor:
             pass
 
     def frame_iterator_pyav(self, video_path: str):
+        # Yields the decoded ``av.VideoFrame`` (NOT a BGR ndarray) so the caller can defer the
+        # costly to_ndarray(bgr24) conversion to only the frames it actually keeps. At
+        # target_fps << source_fps most frames are downsampled out, so converting eagerly here
+        # wasted ~11/12 of the conversions on a 60fps source. See _to_bgr / iter_pose_frames.
         try:
             with av.open(video_path) as container:
                 stream = container.streams.video[0]
@@ -99,10 +103,23 @@ class PoseExtractor:
                     ts = float(frame.pts * time_base) if frame.pts is not None else None
                     if ts is None:
                         continue
-                    yield frame.to_ndarray(format="bgr24"), ts
+                    yield frame, ts
         except Exception as e:
             logging.error("[PyAV Error] %s", e)
             return
+
+    @staticmethod
+    def _to_bgr(frame):
+        """Convert a decoded frame to a BGR ndarray, only when a frame is actually kept.
+
+        Handles both real ``av.VideoFrame`` objects (-> to_ndarray) and bare ndarrays (the test
+        / bench stubs already yield ndarrays), so the downsample path is identical to before for
+        the frames that pass the timestamp gate.
+        """
+        to_ndarray = getattr(frame, "to_ndarray", None)
+        if to_ndarray is not None:
+            return to_ndarray(format="bgr24")
+        return frame
 
     def iter_pose_frames(
         self,
@@ -252,7 +269,8 @@ class PoseExtractor:
                     "conf": np.empty((0, 17), dtype=np.float32),
                     "annotation_status": annotation_status_current,
                 })
-                batch_frames.append(frame)
+                # Convert to BGR only now that this frame passed the downsample gate.
+                batch_frames.append(self._to_bgr(frame))
                 batch_positions.append(len(pending) - 1)
                 appended = True
                 if len(batch_frames) >= self.batch_size:
