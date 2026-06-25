@@ -353,3 +353,50 @@ milestone, or the user runs it directly:
   milestone (`bench_real.py`) to confirm csv sha 1bb060cc2debc42a unchanged + peak RSS bounded
   on the real pipeline (validates the streamed run_pipeline end-to-end with the real model).
   Then final summary + CronDelete.
+
+---
+
+## FINAL SUMMARY (Phase A + B complete)
+
+**Goal achieved:** the RallyClip release pipeline (CLI `run_pipeline` + GUI `_run_pipeline`) no
+longer round-trips intermediates through `.npz` on disk, and peak memory is bounded by streaming
+the whole chain — **without changing produced segments** (every iteration matched the frozen
+feature/segment goldens exactly) and **without breaking tests** (62 in the gate subset).
+
+### Before → after (stub harness, per-iteration gate)
+| frames | peak RSS Δ (MB) | serialization (s, w/r) | total (s) |
+|-------:|----------------:|------------------------|----------:|
+|  6,000 | 71.16 → **19.22** | 0.42 / 3w3r → **0 / 0w0r** | 1.32 → 1.08 |
+|  9,000 | 87.10 → **28.39** | 0.58 / 3w3r → **0 / 0w0r** | 2.38 → 1.61 |
+| 27,000 | 201.80 → **86.07** | 1.57 / 3w3r → **0 / 0w0r** | 5.60 → 4.82 |
+
+Serialization eliminated (3 NPZ round-trips → 0). Peak RSS down 57–73%. The residual 27k/6k RSS
+ratio (~4.5) is the feature matrix the *stub bench* must materialize to hash it
+(`features_sha256` anti-cheat) + the global z-score it derives segments from — it is NOT in the
+real pipeline, which streams feature rows straight into windowed inference.
+
+### Real-video milestone (`bench_real.py`, clip 1, full, CPU)
+Baseline: peak RSS 518.9 MB, serialization 2.199s/20.8MB 3w/3r, csv sha `1bb060cc2debc42a`, 78 seg.
+After: _PENDING — running; fill in peak RSS / serialization (expect 0w/0r) / csv sha (must equal
+`1bb060cc2debc42a`)._
+
+### What changed (architecture)
+Each stage gained a pure in-memory core, then a streaming generator; the file-writing methods
+became thin load→core→save wrappers kept for the training `scripts/`:
+- `PoseExtractor.iter_pose_frames` (generator) → `extract_pose_frames` (list) → `extract_pose_data` (NPZ wrapper)
+- `DataPreprocessor.iter_preprocess_frames` → `preprocess_frames` → `preprocess_single_video`
+- `FeatureEngineer.iter_build_features` → `build_features` → `create_features_from_preprocessed`
+- `infer.run_windowed_inference_average_stream` (+ onnx/torch entrypoints): ring-buffer windowed
+  averaging, bit-identical to the batch path.
+The release path chains the generators end-to-end; CLI also streams inference; GUI streams
+pose→preprocess→features and keeps batch inference for its staged progress UX.
+
+### Commits (oldest→newest; co-author trailer dropped from the B3-journal commit onward per user)
+A1 `88a431f` · A2 `b916097` · A3 `47d189d` · A4 `9b66946` · A5 `468b20f` · A6 `71a3e34` ·
+B1 `64728bc` · B2 `15da4f3` · B3 `3913812` · B4 `f48b3dd` · B5 `b3fbc9f` (+ interleaved
+`docs(perf): journal …` commits).
+
+### Suggested merge
+Rebase `perf/streaming-pipeline` onto `feat/first-release` (the release branch this worktree was
+based on) and run the final real-video acceptance there before merging. Earlier commits carry a
+`Co-Authored-By: Claude` trailer; squash/clean at rebase time if desired.
