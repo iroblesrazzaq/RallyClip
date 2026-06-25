@@ -104,7 +104,7 @@ class PoseExtractor:
             logging.error("[PyAV Error] %s", e)
             return
 
-    def extract_pose_frames(
+    def iter_pose_frames(
         self,
         video_path: str,
         confidence_threshold: float,
@@ -114,13 +114,14 @@ class PoseExtractor:
         imgsz: Optional[int] = None,
         annotations_csv: Optional[str] = None,
         progress_callback: Optional[Callable[[float], None]] = None,
-    ) -> list:
-        """In-memory pose extraction core.
+    ):
+        """Streaming pose extraction core (generator).
 
-        Runs YOLO pose over the (downsampled) frames and returns the per-frame data
-        list -- the exact object that :meth:`extract_pose_data` serializes. The
-        release path consumes this directly (no intermediate NPZ); the file-writing
-        wrapper below is kept for the training ``scripts/``.
+        Yields per-frame data dicts in stream order -- the same sequence
+        :meth:`extract_pose_frames` returns as a list -- but only buffers one detection
+        batch (plus the downsampled-out frames interleaved with it) at a time, so peak
+        memory is O(batch) instead of O(num_frames). Detection results arrive per batch,
+        so the buffered chunk is filled then flushed out in order at each batch boundary.
         """
         import csv
         predict_imgsz = int(self.imgsz if imgsz is None else imgsz)
@@ -149,7 +150,6 @@ class PoseExtractor:
         except Exception:
             total_frames = 0
 
-        all_frames_data = []
         processed_frames_count = 0  # frames actually processed/saved (downsampled)
         frames_seen = 0  # all frames iterated from the stream
         next_target_timestamp = start_time_seconds
@@ -170,11 +170,16 @@ class PoseExtractor:
             annotation_index = 0
             num_annotations = 0
 
+        # `pending` holds the frame dicts emitted since the last batch flush, in stream
+        # order; processed frames await detection results that the next flush fills in. It
+        # is never rebound (only mutated in place + .clear()) so the _flush_batch closure
+        # always sees the same list object.
+        pending = []
         batch_frames = []
-        batch_indices = []
+        batch_positions = []  # index within `pending` of each batched (processed) frame
 
         def _flush_batch():
-            nonlocal batch_frames, batch_indices
+            nonlocal batch_frames, batch_positions
             if not batch_frames:
                 return
             try:
@@ -195,7 +200,7 @@ class PoseExtractor:
                     imgsz=predict_imgsz,
                 )
             for i, res in enumerate(results):
-                idx = batch_indices[i]
+                pos = batch_positions[i]
                 frame_data = {}
                 if res is not None and getattr(res, "boxes", None) is not None:
                     try:
@@ -215,10 +220,10 @@ class PoseExtractor:
                     frame_data["box_conf"] = np.empty((0,), dtype=np.float32)
                     frame_data["keypoints"] = np.empty((0, 17, 2), dtype=np.float32)
                     frame_data["conf"] = np.empty((0, 17), dtype=np.float32)
-                frame_data["annotation_status"] = all_frames_data[idx].get("annotation_status", 0)
-                all_frames_data[idx] = frame_data
+                frame_data["annotation_status"] = pending[pos].get("annotation_status", 0)
+                pending[pos] = frame_data
             batch_frames = []
-            batch_indices = []
+            batch_positions = []
 
         gen = self.frame_iterator_pyav(video_path)
         show_tqdm = os.environ.get("RALLYCLIP_NO_TQDM", "").strip().lower() not in {"1", "true", "yes"}
@@ -240,7 +245,7 @@ class PoseExtractor:
                         annotation_index += 1
                     if (starts[annotation_index] - EPS) <= current_timestamp <= (ends[annotation_index] + EPS):
                         annotation_status_current = 1
-                all_frames_data.append({
+                pending.append({
                     "boxes": np.empty((0, 4), dtype=np.float32),
                     "box_conf": np.empty((0,), dtype=np.float32),
                     "keypoints": np.empty((0, 17, 2), dtype=np.float32),
@@ -248,10 +253,12 @@ class PoseExtractor:
                     "annotation_status": annotation_status_current,
                 })
                 batch_frames.append(frame)
-                batch_indices.append(len(all_frames_data) - 1)
+                batch_positions.append(len(pending) - 1)
                 appended = True
                 if len(batch_frames) >= self.batch_size:
                     _flush_batch()
+                    yield from pending
+                    pending.clear()
                 next_target_timestamp += (1.0 / target_fps)
                 if first_processed_ts is None:
                     first_processed_ts = time.time()
@@ -289,11 +296,39 @@ class PoseExtractor:
                     "annotation_status": -1,
                 }
             if not appended:
-                all_frames_data.append(frame_data)
+                pending.append(frame_data)
 
         _flush_batch()
+        yield from pending
+        pending.clear()
 
-        return all_frames_data
+    def extract_pose_frames(
+        self,
+        video_path: str,
+        confidence_threshold: float,
+        start_time_seconds: int = 0,
+        duration_seconds: int = 60,
+        target_fps: int = 15,
+        imgsz: Optional[int] = None,
+        annotations_csv: Optional[str] = None,
+        progress_callback: Optional[Callable[[float], None]] = None,
+    ) -> list:
+        """In-memory pose extraction core: the full per-frame data list.
+
+        Materializes :meth:`iter_pose_frames` (the streaming core). Kept for callers that
+        want the whole list at once (file-writing wrapper + training scripts); the release
+        path can consume the generator directly for bounded memory.
+        """
+        return list(self.iter_pose_frames(
+            video_path=video_path,
+            confidence_threshold=confidence_threshold,
+            start_time_seconds=start_time_seconds,
+            duration_seconds=duration_seconds,
+            target_fps=target_fps,
+            imgsz=imgsz,
+            annotations_csv=annotations_csv,
+            progress_callback=progress_callback,
+        ))
 
     def extract_pose_data(
         self,
