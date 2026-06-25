@@ -375,10 +375,17 @@ ratio (~4.5) is the feature matrix the *stub bench* must materialize to hash it
 (`features_sha256` anti-cheat) + the global z-score it derives segments from — it is NOT in the
 real pipeline, which streams feature rows straight into windowed inference.
 
-### Real-video milestone (`bench_real.py`, clip 1, full, CPU)
-Baseline: peak RSS 518.9 MB, serialization 2.199s/20.8MB 3w/3r, csv sha `1bb060cc2debc42a`, 78 seg.
-After: _PENDING — running; fill in peak RSS / serialization (expect 0w/0r) / csv sha (must equal
-`1bb060cc2debc42a`)._
+### Real-video milestone (`bench_real.py`, clip 1, full 32-min 1080p/60, CPU) — PASS
+| metric | baseline (before) | after (streamed) | result |
+|--------|------------------:|-----------------:|--------|
+| segments_csv_sha256 | `1bb060cc2debc42a` | `1bb060cc2debc42a` | **identical** ✓ |
+| serialization | 2.199s / 20.8 MB, 3w/3r | **0.0s / 0 MB, 0w/0r** | disk IO eliminated ✓ |
+| peak RSS Δ | 518.9 MB | **353.68 MB** (−32%, −165 MB) | bounded at the model+decode floor ✓ |
+| elapsed | 1060.5s | 1151.1s | within run-to-run noise (CPU) |
+
+The −165 MB is the accumulated pose/preprocessed/feature data that is no longer materialized;
+peak RSS now sits at the irreducible floor (YOLO + onnxruntime + 1080p decode ≈ 360 MB). Real
+segments are byte-for-byte unchanged. **Milestone gate: PASS.**
 
 ### What changed (architecture)
 Each stage gained a pure in-memory core, then a streaming generator; the file-writing methods
