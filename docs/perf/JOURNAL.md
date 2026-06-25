@@ -211,3 +211,20 @@ consistent with the floor.)
   intermediate `.npz` (sandbox cwd + assert no `*.npz` created and `pose_data/` never appears).
   Then the **Phase-A milestone** real-video gate via `bench_real.py` (writes 3→0, csv sha
   unchanged, peak RSS ≤ real baseline).
+
+### Iteration 6 — A6 (guard test: no intermediate NPZ) — KEEP (71a3e34)
+- when: 2026-06-24T00:35   base_commit: 66b30be
+- hypothesis: a guard test pins the Phase-A design so a future change can't silently
+  reintroduce intermediate NPZ writes on the release path.
+- params: tests = gate subset (11 files, now 54 tests); bench 6k spot-check.
+- change: `tests/test_cli_pipeline_smoke.py` — new `test_run_pipeline_writes_no_intermediate_npz`:
+  fakes whose file-writing wrappers raise AssertionError + `np.savez_compressed` patched to
+  raise + sandboxed cwd + assert no `*.npz` / no `pose_data/` on disk. (write_csv/segment_video
+  off so the test is purely about intermediates.)
+- metrics: n/a (test-only). Bench 6k unchanged: golden, ser 0.0s/0w.
+- tests: PASS (54 passed; +1 guard).
+- correctness: features_sha + segments_sha match golden at 6k (Y/Y).
+- decision: KEEP commit 71a3e34.
+- thoughts / next: **Phase-A milestone gate** — `bench_real.py` on testing_app clip 1; require
+  segments_csv_sha256 == 1bb060cc2debc42a (unchanged), serialization.writes 3→0, peak RSS ≤
+  518.9. Then start Phase B (B1: pose generator).
