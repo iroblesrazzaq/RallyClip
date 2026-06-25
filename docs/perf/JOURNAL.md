@@ -228,3 +228,34 @@ consistent with the floor.)
 - thoughts / next: **Phase-A milestone gate** — `bench_real.py` on testing_app clip 1; require
   segments_csv_sha256 == 1bb060cc2debc42a (unchanged), serialization.writes 3→0, peak RSS ≤
   518.9. Then start Phase B (B1: pose generator).
+
+### Phase-A milestone — DEFERRED (user request, 2026-06-24)
+The ~18-min real-video `bench_real.py` run was deferred at the user's request to proceed
+straight to Phase B. Phase A's IO-removal is already proven at the stub level (serialization
+3w/3r → 0w/0r, goldens unchanged) and pinned by the A6 guard test (release path makes no NPZ
+write / no `pose_data/`). The real-video acceptance (csv sha 1bb060cc2debc42a unchanged, writes
+3→0, peak RSS ≤ 518.9) is owed before merge — run it at the end of Phase B alongside the Phase-B
+milestone, or the user runs it directly:
+`$PY scripts/perf/bench_real.py --video "$TA/1_utr9_...mp4" --device cpu --json /tmp/real_1.json`.
+
+### Iteration 7 — B1 (pose streaming generator) — KEEP (64728bc)
+- when: 2026-06-24T00:55   base_commit: b8966bb
+- hypothesis: convert `extract_pose_frames` into a generator `iter_pose_frames` that yields
+  per-frame dicts in stream order while buffering only one detection batch (a `pending` chunk
+  filled on flush, then `yield from` + `.clear()`), making pose peak memory O(batch). Keep
+  `extract_pose_frames` = `list(iter_pose_frames(...))` so all current callers are unchanged.
+  Behaviour-preserving (same sequence); no metric move yet (run_stub still materializes the
+  list); correctness shas must stay identical.
+- params: bench frames {6000, 9000, 27000} @ 15fps; tests = gate subset (11 files).
+- change: `src/extraction/pose_extractor.py` — generator core + list wrapper; `_flush_batch`
+  now fills `pending[pos]` (chunk-relative) instead of `all_frames_data[idx]` (global). The
+  pending list is never rebound (mutated in place + .clear()) so the closure sees one object.
+- metrics (mine; load avg ~4): 6k rss 43.6 / total 1.05; 9k rss 64.7 / 1.61; 27k rss 192.1 /
+  4.79; serialization 0w (unchanged). Memory unchanged this iter by design (list still built);
+  drop lands when the chain consumes the generator (later B wiring).
+- tests: PASS (54 passed; pose contract incl. box_conf/imgsz/coords still green).
+- correctness: features_sha + segments_sha == golden at 6k/9k/27k (Y/Y all three).
+- decision: KEEP commit 64728bc.
+- thoughts / next: **B2** — preprocess consumes the pose stream and yields per-frame
+  preprocessed records (generator core), keeping `preprocess_frames` as the list-materializing
+  wrapper. Stateless per frame given a fixed court mask, so a 1:1 streaming map.
