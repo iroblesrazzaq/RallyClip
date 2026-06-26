@@ -228,11 +228,17 @@ jobs_lock = threading.Lock()
 jobs: Dict[str, JobDict] = {}
 preview_locks: Dict[str, threading.Lock] = {}
 preview_jobs: Dict[str, str] = {}
-PREVIEW_WINDOW_DURATION_S = 45.0
+_MEMORY_PROCESS = None
+active_preview_item_id: Optional[str] = None
+last_preview_cache_prune = 0.0
+PREVIEW_WINDOW_DURATION_S = 8.0
 PREVIEW_WINDOW_MIN_DURATION_S = 5.0
 PREVIEW_WINDOW_MAX_DURATION_S = 90.0
 PREVIEW_WINDOW_WIDTH = 640
 PREVIEW_WINDOW_FPS = 30
+PREVIEW_CACHE_TTL_SECONDS = 24 * 60 * 60
+PREVIEW_TRANSCODE_CONCURRENCY = 2
+preview_transcode_semaphore = threading.BoundedSemaphore(PREVIEW_TRANSCODE_CONCURRENCY)
 
 
 class PipelineCancelled(Exception):
@@ -279,6 +285,56 @@ def _write_thumbnail(video_path: Path, thumb_path: Path, max_width: int = 480) -
     except Exception:
         logging.warning("Could not write thumbnail for %s", video_path, exc_info=True)
     return False
+
+
+def _rss_mb() -> Optional[float]:
+    """Return current resident memory when psutil is available."""
+    global _MEMORY_PROCESS
+    try:
+        if _MEMORY_PROCESS is None:
+            import psutil  # type: ignore
+
+            _MEMORY_PROCESS = psutil.Process(os.getpid())
+        return float(_MEMORY_PROCESS.memory_info().rss) / 1e6
+    except Exception:
+        return None
+
+
+def _peak_rss_mb() -> Optional[float]:
+    """Return peak resident memory from resource on Unix-like platforms."""
+    try:
+        import resource
+
+        value = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        if sys.platform == "darwin":
+            return value / 1e6
+        return value / 1000.0
+    except Exception:
+        return None
+
+
+def _log_memory(label: str, *, job_id: Optional[str] = None, **fields: Any) -> None:
+    rss = _rss_mb()
+    peak = _peak_rss_mb()
+    parts = [f"event=memory", f"label={label}"]
+    if job_id:
+        parts.append(f"job_id={job_id}")
+    if rss is not None:
+        parts.append(f"rss_mb={rss:.1f}")
+    else:
+        parts.append("rss_mb=unavailable")
+    if peak is not None:
+        parts.append(f"peak_rss_mb={peak:.1f}")
+    for key, value in fields.items():
+        if value is None:
+            continue
+        if isinstance(value, float):
+            parts.append(f"{key}={value:.3f}")
+        elif isinstance(value, str):
+            parts.append(f"{key}={json.dumps(value)}")
+        else:
+            parts.append(f"{key}={value}")
+    logging.getLogger("rallyclip.memory").info(" ".join(parts))
 
 
 def _preview_lock(item_id: str) -> threading.Lock:
@@ -543,7 +599,8 @@ def _ensure_web_preview(item_id: str, source_path: Path) -> Path:
     with lock:
         if preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime:
             return preview_path
-        _write_web_preview(source_path, preview_path)
+        with preview_transcode_semaphore:
+            _write_web_preview(source_path, preview_path)
         return preview_path
 
 
@@ -551,13 +608,20 @@ def _web_preview_path(item_id: str) -> Path:
     return _library_item_dir(item_id) / "preview.webm"
 
 
+def _preview_windows_dir(item_id: str) -> Path:
+    return _library_item_dir(item_id) / "preview_windows"
+
+
 def _preview_window_values(source_path: Path, start_s: float, duration_s: Optional[float] = None) -> tuple[float, float]:
-    duration = PREVIEW_WINDOW_DURATION_S if duration_s is None else duration_s
-    duration = min(PREVIEW_WINDOW_MAX_DURATION_S, max(PREVIEW_WINDOW_MIN_DURATION_S, duration))
+    del duration_s
     source_duration = _estimate_duration_seconds(source_path)
-    start = max(0.0, start_s)
+    chunk_s = PREVIEW_WINDOW_DURATION_S
+    safe_start = max(0.0, start_s)
     if source_duration > 0:
-        start = min(start, max(0.0, source_duration - 0.1))
+        safe_start = min(safe_start, max(0.0, source_duration - 0.1))
+    start = int(safe_start // chunk_s) * chunk_s
+    duration = chunk_s
+    if source_duration > 0:
         duration = min(duration, max(0.1, source_duration - start))
     return round(start, 3), round(duration, 3)
 
@@ -565,7 +629,7 @@ def _preview_window_values(source_path: Path, start_s: float, duration_s: Option
 def _preview_window_path(item_id: str, start_s: float, duration_s: float) -> Path:
     start_ms = int(round(start_s * 1000))
     duration_ms = int(round(duration_s * 1000))
-    return _library_item_dir(item_id) / "preview_windows" / f"{start_ms:012d}_{duration_ms:06d}.webm"
+    return _preview_windows_dir(item_id) / f"{start_ms:012d}_{duration_ms:06d}.webm"
 
 
 def _preview_window_job_key(item_id: str, start_s: float, duration_s: float) -> str:
@@ -580,8 +644,89 @@ def _preview_window_ready(item_id: str, source_path: Path, start_s: float, durat
 def _preview_window_state(item_id: str, source_path: Path, start_s: float, duration_s: float) -> str:
     if _preview_window_ready(item_id, source_path, start_s, duration_s):
         return "ready"
+    key = _preview_window_job_key(item_id, start_s, duration_s)
     with jobs_lock:
-        return preview_jobs.get(_preview_window_job_key(item_id, start_s, duration_s), "missing")
+        state = preview_jobs.get(key, "missing")
+        if state == "ready":
+            preview_jobs.pop(key, None)
+            return "missing"
+        return state
+
+
+def _clear_preview_job_state(item_id: str) -> None:
+    prefix = f"{item_id}:window:"
+    with jobs_lock:
+        for key in list(preview_jobs):
+            if key == item_id or key.startswith(prefix):
+                preview_jobs.pop(key, None)
+
+
+def _is_preview_cache_active(item_id: str) -> bool:
+    with jobs_lock:
+        active = active_preview_item_id
+    return active is None or active == item_id
+
+
+def _unlink_if_old(path: Path, cutoff: float) -> bool:
+    try:
+        if path.exists() and path.stat().st_mtime < cutoff:
+            path.unlink()
+            return True
+    except Exception:
+        logging.debug("Could not prune preview cache file %s", path, exc_info=True)
+    return False
+
+
+def _prune_preview_cache(active_item_id: Optional[str], *, now: Optional[float] = None) -> None:
+    if not LIBRARY_DIR.exists():
+        return
+    cutoff = (time.time() if now is None else now) - PREVIEW_CACHE_TTL_SECONDS
+    try:
+        children = [child for child in LIBRARY_DIR.iterdir() if child.is_dir()]
+    except Exception:
+        logging.debug("Could not scan preview cache root %s", LIBRARY_DIR, exc_info=True)
+        return
+
+    for item_dir in children:
+        item_id = item_dir.name
+        windows_dir = item_dir / "preview_windows"
+        full_preview = item_dir / "preview.webm"
+
+        if active_item_id is not None and item_id != active_item_id:
+            if windows_dir.exists():
+                shutil.rmtree(windows_dir, ignore_errors=True)
+            try:
+                full_preview.unlink(missing_ok=True)
+            except Exception:
+                logging.debug("Could not remove inactive preview cache %s", full_preview, exc_info=True)
+            _clear_preview_job_state(item_id)
+            continue
+
+        removed_any = _unlink_if_old(full_preview, cutoff)
+        if windows_dir.exists():
+            try:
+                for cached in windows_dir.iterdir():
+                    if cached.is_file() and cached.suffix in {".webm", ".tmp"}:
+                        removed_any = _unlink_if_old(cached, cutoff) or removed_any
+                if not any(windows_dir.iterdir()):
+                    windows_dir.rmdir()
+            except Exception:
+                logging.debug("Could not prune active preview cache %s", windows_dir, exc_info=True)
+        if removed_any:
+            _clear_preview_job_state(item_id)
+
+
+def _activate_preview_cache(item_id: str, *, force: bool = False) -> None:
+    global active_preview_item_id, last_preview_cache_prune
+    now = time.time()
+    with jobs_lock:
+        changed = active_preview_item_id != item_id
+        active_preview_item_id = item_id
+        should_prune = force or changed or (now - last_preview_cache_prune) >= 60.0
+        if should_prune:
+            last_preview_cache_prune = now
+    if should_prune:
+        _prune_preview_cache(item_id, now=now)
 
 
 def _ensure_preview_window(item_id: str, source_path: Path, start_s: float, duration_s: float) -> Path:
@@ -592,15 +737,16 @@ def _ensure_preview_window(item_id: str, source_path: Path, start_s: float, dura
     with lock:
         if preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime:
             return preview_path
-        _write_web_preview(
-            source_path,
-            preview_path,
-            max_width=PREVIEW_WINDOW_WIDTH,
-            start_s=start_s,
-            duration_s=duration_s,
-            fps=PREVIEW_WINDOW_FPS,
-            video_bitrate="1200k",
-        )
+        with preview_transcode_semaphore:
+            _write_web_preview(
+                source_path,
+                preview_path,
+                max_width=PREVIEW_WINDOW_WIDTH,
+                start_s=start_s,
+                duration_s=duration_s,
+                fps=PREVIEW_WINDOW_FPS,
+                video_bitrate="1200k",
+            )
         return preview_path
 
 
@@ -609,7 +755,14 @@ def _prepare_preview_window_background(item_id: str, source_path: Path, start_s:
     with jobs_lock:
         preview_jobs[key] = "processing"
     try:
-        _ensure_preview_window(item_id, source_path, start_s, duration_s)
+        preview_path = _ensure_preview_window(item_id, source_path, start_s, duration_s)
+        if not _is_preview_cache_active(item_id):
+            try:
+                preview_path.unlink(missing_ok=True)
+            finally:
+                with jobs_lock:
+                    preview_jobs.pop(key, None)
+            return
         with jobs_lock:
             preview_jobs[key] = "ready"
     except Exception:
@@ -647,7 +800,14 @@ def _prepare_web_preview_background(item_id: str, source_path: Path) -> None:
     with jobs_lock:
         preview_jobs[item_id] = "processing"
     try:
-        _ensure_web_preview(item_id, source_path)
+        preview_path = _ensure_web_preview(item_id, source_path)
+        if not _is_preview_cache_active(item_id):
+            try:
+                preview_path.unlink(missing_ok=True)
+            finally:
+                with jobs_lock:
+                    preview_jobs.pop(item_id, None)
+            return
         with jobs_lock:
             preview_jobs[item_id] = "ready"
     except Exception:
@@ -903,6 +1063,23 @@ def _compute_weights(duration_seconds: float) -> Dict[str, float]:
     }
 
 
+def _estimate_stream_window_count(num_frames: int, sequence_length: int, overlap: int) -> Optional[int]:
+    try:
+        n = int(num_frames)
+        length = int(sequence_length)
+        ov = int(overlap)
+    except Exception:
+        return None
+    if n < length or length <= 0 or ov < 0 or ov >= length:
+        return None
+    step = length - ov
+    count = ((n - length) // step) + 1
+    last_start = (count - 1) * step
+    if last_start + length < n:
+        count += 1
+    return max(1, count)
+
+
 def _run_pipeline(job_id: str) -> None:
     with jobs_lock:
         job = jobs.get(job_id)
@@ -916,6 +1093,9 @@ def _run_pipeline(job_id: str) -> None:
         job_dir.mkdir(parents=True, exist_ok=True)
         raw_output_name = cfg.get("output_name") or upload_path.stem
         base_name = Path(str(raw_output_name)).name or upload_path.stem
+        pipeline_start = time.perf_counter()
+        last_memory_log = 0.0
+        _log_memory("job_start", job_id=job_id, video=upload_path.name)
 
         duration_seconds = _estimate_duration_seconds(upload_path)
         if duration_seconds <= 0:
@@ -967,6 +1147,7 @@ def _run_pipeline(job_id: str) -> None:
         # Court mask detection has no inner progress hooks; tick so the bar
         # visibly moves before pose extraction starts reporting.
         _set_step(job, "pose", "in_progress", 3)
+        _log_memory("after_court_mask", job_id=job_id, elapsed_s=time.perf_counter() - pipeline_start)
 
         _check_cancel(job)
         extractor = PoseExtractor(
@@ -977,6 +1158,7 @@ def _run_pipeline(job_id: str) -> None:
         )
 
         def pose_progress(frac: float, meta: Optional[Dict[str, Any]] = None) -> None:
+            nonlocal last_memory_log
             if job.get("cancelled"):
                 raise PoseExtractionCancelled("Job cancelled during pose extraction")
             _set_step(job, "pose", "in_progress", int(3 + max(0.0, min(1.0, frac)) * 96))
@@ -992,6 +1174,18 @@ def _run_pipeline(job_id: str) -> None:
                 job["eta_seconds"] = pose_eta + tail
                 job["pose_eta_seconds"] = pose_eta
                 job["pose_throughput_fps"] = smoothed_fps
+                now = time.perf_counter()
+                if now - last_memory_log >= 10.0 or frac >= 1.0:
+                    last_memory_log = now
+                    _log_memory(
+                        "pose_progress",
+                        job_id=job_id,
+                        elapsed_s=now - pipeline_start,
+                        frames_seen=frames_seen,
+                        frames_total=frames_total,
+                        progress=frac,
+                        pose_fps=smoothed_fps,
+                    )
 
         # Streaming hand-off: pose -> preprocess -> features chain through their generators, so
         # pose_data and the preprocessed records are produced-and-discarded one frame at a time
@@ -1022,15 +1216,35 @@ def _run_pipeline(job_id: str) -> None:
         _set_step(job, "feature", "in_progress", 1)
         _set_step(job, "inference", "in_progress", 5)
         scaler = load_scaler_asset(str(scaler_path))
+        _log_memory("before_streaming_inference", job_id=job_id, elapsed_s=time.perf_counter() - pipeline_start)
+        estimated_feature_rows = max(0, int(round(duration_seconds * float(cfg["fps"]))) - 1)
+        estimated_windows = _estimate_stream_window_count(
+            estimated_feature_rows,
+            int(cfg["seq_len"]),
+            int(cfg["overlap"]),
+        )
+        feature_rows_seen = 0
+        last_stream_progress = 0.0
 
         def scaled_feature_rows():
+            nonlocal feature_rows_seen, last_stream_progress
             for feature_vector, _target in feature_stream:
                 _check_cancel(job)
+                feature_rows_seen += 1
+                now = time.perf_counter()
+                if estimated_feature_rows > 0 and (now - last_stream_progress >= 2.0 or feature_rows_seen >= estimated_feature_rows):
+                    last_stream_progress = now
+                    frac = min(1.0, feature_rows_seen / float(estimated_feature_rows))
+                    stage_progress = int(1 + frac * 94)
+                    _set_step(job, "preprocess", "in_progress", stage_progress)
+                    _set_step(job, "feature", "in_progress", stage_progress)
+                    if estimated_windows is None:
+                        _set_step(job, "inference", "in_progress", int(5 + frac * 80))
                 row = np.asarray(feature_vector, dtype=np.float32).reshape(1, -1)
                 yield scaler.transform(row)[0].astype(np.float32)
 
         def infer_progress(frac: float) -> None:
-            _set_step(job, "inference", "in_progress", int(1 + max(0.0, min(1.0, frac)) * 94))
+            _set_step(job, "inference", "in_progress", int(5 + max(0.0, min(1.0, frac)) * 90))
         if model_path.suffix.lower() == ".onnx":
             avg_probs = run_windowed_inference_average_onnx_stream(
                 str(model_path),
@@ -1038,6 +1252,7 @@ def _run_pipeline(job_id: str) -> None:
                 sequence_length=int(cfg["seq_len"]),
                 overlap=int(cfg["overlap"]),
                 progress_callback=infer_progress,
+                total_windows=estimated_windows,
             )
         else:
             model, device = load_model_from_checkpoint(str(model_path), return_logits=False)
@@ -1048,10 +1263,12 @@ def _run_pipeline(job_id: str) -> None:
                 sequence_length=int(cfg["seq_len"]),
                 overlap=int(cfg["overlap"]),
                 progress_callback=infer_progress,
+                total_windows=estimated_windows,
             )
         _set_step(job, "pose", "completed", 100)
         _set_step(job, "preprocess", "completed", 100)
         _set_step(job, "feature", "completed", 100)
+        _log_memory("after_streaming_inference", job_id=job_id, elapsed_s=time.perf_counter() - pipeline_start)
         smoothed_probs = gaussian_filter1d(avg_probs.astype(np.float32), sigma=float(cfg["sigma"]))
         min_duration_frames = int(round(max(0.0, float(cfg["min_dur_sec"])) * float(cfg["fps"])))
         binary_pred = hysteresis_threshold(
@@ -1088,6 +1305,13 @@ def _run_pipeline(job_id: str) -> None:
         _set_step(job, "output", "completed", 100)
         job["status"] = "completed"
         job["eta_seconds"] = 0.0
+        _log_memory(
+            "job_completed",
+            job_id=job_id,
+            elapsed_s=time.perf_counter() - pipeline_start,
+            segments=len(segments),
+            library_id=library_id,
+        )
         # No intermediate NPZs are written anymore (stages hand off in memory), so there
         # is nothing to clean up between stages.
         # Remove uploaded input and optionally job dir if outputs are elsewhere and keep flag not set
@@ -1107,6 +1331,7 @@ def _run_pipeline(job_id: str) -> None:
             if job_dir.exists() and not outputs_in_job_dir:
                 shutil.rmtree(job_dir, ignore_errors=True)
     except PoseExtractionCancelled:
+        _log_memory("job_cancelled", job_id=job_id)
         job["status"] = "cancelled"
         job["error"] = None
         job["eta_seconds"] = 0.0
@@ -1120,6 +1345,7 @@ def _run_pipeline(job_id: str) -> None:
             except Exception:
                 pass
     except PipelineCancelled:
+        _log_memory("job_cancelled", job_id=job_id)
         job["status"] = "cancelled"
         job["error"] = None
         job["eta_seconds"] = 0.0
@@ -1133,6 +1359,7 @@ def _run_pipeline(job_id: str) -> None:
             except Exception:
                 pass
     except Exception as exc:  # pragma: no cover - runtime safety
+        _log_memory("job_failed", job_id=job_id, error=type(exc).__name__)
         if job.get("status") != "cancelled":
             job["status"] = "failed"
             job["error"] = str(exc)
@@ -1337,6 +1564,7 @@ def library_video_preview(item_id: str):
     path = _resolve_library_source(item_id)
     if path is None:
         return jsonify({"error": "Video not available"}), 404
+    _activate_preview_cache(item_id)
     if not _web_preview_ready(item_id, path):
         state = _start_web_preview_background(item_id, path)
         return jsonify({"status": state}), 202
@@ -1355,6 +1583,7 @@ def library_video_preview_status(item_id: str):
     path = _resolve_library_source(item_id)
     if path is None:
         return jsonify({"error": "Video not available"}), 404
+    _activate_preview_cache(item_id)
     state = _start_web_preview_background(item_id, path)
     preview_path = _web_preview_path(item_id)
     payload = {
@@ -1402,6 +1631,7 @@ def library_video_preview_window_status(item_id: str):
     path = _resolve_library_source(item_id)
     if path is None:
         return jsonify({"error": "Video not available"}), 404
+    _activate_preview_cache(item_id)
     try:
         start_s, duration_s = _preview_window_from_request(path)
         state = _start_preview_window_background(item_id, path, start_s, duration_s)
@@ -1415,6 +1645,7 @@ def library_video_preview_window(item_id: str):
     path = _resolve_library_source(item_id)
     if path is None:
         return jsonify({"error": "Video not available"}), 404
+    _activate_preview_cache(item_id)
     try:
         start_s, duration_s = _preview_window_from_request(path)
         if not _preview_window_ready(item_id, path, start_s, duration_s):
@@ -1469,7 +1700,30 @@ def library_delete(item_id: str):
 def _configure_gui_logging() -> None:
     verbose = os.environ.get("RALLYCLIP_GUI_VERBOSE", "").strip().lower() in {"1", "true", "yes"}
     log_level = logging.INFO if verbose else logging.ERROR
-    logging.basicConfig(level=log_level, format="%(asctime)s [%(levelname)s] %(message)s")
+    if not getattr(_configure_gui_logging, "_configured", False):
+        formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+
+        console = logging.StreamHandler()
+        console.setLevel(log_level)
+        console.setFormatter(formatter)
+        root_logger.addHandler(console)
+
+        log_dir = Path(os.environ.get("RALLYCLIP_LOG_DIR") or (_frozen_data_root() or Path.cwd()) / "logs")
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.FileHandler(log_dir / "rallyclip.log", encoding="utf-8")
+            file_handler.setLevel(logging.INFO)
+            file_handler.setFormatter(formatter)
+            root_logger.addHandler(file_handler)
+            logging.getLogger("rallyclip.memory").info("event=log_ready path=%s", log_dir / "rallyclip.log")
+        except Exception:
+            logging.getLogger(__name__).exception("Could not configure RallyClip file logging")
+
+        _configure_gui_logging._configured = True  # type: ignore[attr-defined]
+    else:
+        logging.getLogger().setLevel(logging.INFO)
     for name in ("werkzeug", "flask.app"):
         logging.getLogger(name).setLevel(log_level)
     if not verbose:
