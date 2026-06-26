@@ -306,8 +306,9 @@ select {
 }
 
 .lib-actions {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: auto auto;
+    justify-content: start;
     align-items: center;
     gap: 0.5rem;
     padding: 0.75rem 1rem 1rem;
@@ -319,10 +320,13 @@ select {
     font-size: 0.9rem;
 }
 
+.lib-actions .btn[data-action="export"] {
+    grid-column: 1 / -1;
+}
+
 .lib-delete {
     color: var(--danger);
-    border: none;
-    margin-left: auto;
+    margin-left: 0;
 }
 
 .library-empty {
@@ -372,16 +376,27 @@ select {
     background: #050505;
     border-radius: var(--radius);
     overflow: hidden;
+    aspect-ratio: 16 / 9;
 }
 
 .match-video {
+    position: absolute;
+    inset: 0;
     width: 100%;
-    aspect-ratio: 16 / 9;
+    height: 100%;
+    object-fit: contain;
     background: #050505;
     border: 1px solid var(--ink);
     border-radius: var(--radius);
     cursor: pointer;
     display: block;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.match-video.is-active {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 .preview-status {
@@ -394,6 +409,7 @@ select {
     font-weight: 700;
     letter-spacing: 0;
     pointer-events: none;
+    z-index: 2;
 }
 
 .preview-status::after {
@@ -422,15 +438,42 @@ select {
     justify-content: center;
     align-items: center;
     gap: 0.55rem;
-    margin-top: 0.7rem;
+}
+
+.viewer-overlay {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 3;
+    display: grid;
+    gap: 0.6rem;
+    padding: 1rem 1.1rem 0.85rem;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.76), rgba(0, 0, 0, 0));
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(0.35rem);
+    transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.viewer-video-wrap:hover .viewer-overlay,
+.viewer-video-wrap:focus-within .viewer-overlay,
+.viewer-video-wrap.is-controls-visible .viewer-overlay {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+}
+
+.viewer-video-wrap.is-controls-idle .match-video.is-active {
+    cursor: none;
 }
 
 .viewer-control-btn {
     appearance: none;
-    border: 1px solid var(--hairline);
+    border: 1px solid rgba(255, 255, 255, 0.5);
     border-radius: 999px;
-    background: var(--canvas);
-    color: var(--ink);
+    background: rgba(0, 0, 0, 0.72);
+    color: var(--white);
     min-width: 3.25rem;
     height: 2rem;
     padding: 0 0.85rem;
@@ -447,7 +490,7 @@ select {
 
 .viewer-control-btn:hover:not(:disabled),
 .viewer-control-btn:focus-visible {
-    border-color: var(--ink);
+    border-color: var(--white);
     outline: none;
 }
 
@@ -461,8 +504,7 @@ select {
     grid-template-columns: 4rem 1fr 4rem;
     align-items: center;
     gap: 0.85rem;
-    margin-top: 0.85rem;
-    color: var(--ink-soft);
+    color: rgba(255, 255, 255, 0.86);
     font-size: 0.86rem;
     font-weight: 400;
 }
@@ -480,7 +522,7 @@ select {
     right: 0;
     height: 0.28rem;
     border-radius: 999px;
-    background: var(--viewer-buffer-track);
+    background: rgba(255, 255, 255, 0.22);
     overflow: hidden;
     pointer-events: none;
 }
@@ -490,14 +532,14 @@ select {
     top: 0;
     bottom: 0;
     border-radius: inherit;
-    background: var(--viewer-buffer-loaded);
+    background: rgba(255, 255, 255, 0.46);
 }
 
 .viewer-seek-wrap input[type="range"] {
     position: relative;
     width: 100%;
     margin: 0;
-    accent-color: var(--ink);
+    accent-color: var(--white);
     background: transparent;
     cursor: pointer;
 }
