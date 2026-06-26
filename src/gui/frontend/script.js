@@ -46,6 +46,7 @@ class RallyClipApp {
         this.previewRequestSeq = 0;
         this.previewLoadInProgress = false;
         this.previewSpinnerTimeout = null;
+        this.viewerControlsHideTimeout = null;
         this.welcomeTypeTimers = [];
         this.welcomeCursor = null;
         this.systemThemeQuery = window.matchMedia ? window.matchMedia(SYSTEM_DARK_QUERY) : null;
@@ -87,8 +88,13 @@ class RallyClipApp {
         this.backFromViewer = document.getElementById("backFromViewer");
         this.viewerTitle = document.getElementById("viewerTitle");
         this.viewerMeta = document.getElementById("viewerMeta");
-        this.matchVideo = document.getElementById("matchVideo");
+        this.viewerVideoWrap = document.querySelector(".viewer-video-wrap");
+        this.primaryMatchVideo = document.getElementById("matchVideo");
+        this.secondaryMatchVideo = document.getElementById("matchVideoBuffer");
+        this.matchVideo = this.primaryMatchVideo;
+        this.matchVideoBuffer = this.secondaryMatchVideo;
         this.previewStatus = document.getElementById("previewStatus");
+        this.viewerOverlay = document.getElementById("viewerOverlay");
         this.viewerControls = document.getElementById("viewerControls");
         this.viewerBackBtn = document.getElementById("viewerBackBtn");
         this.viewerPlayPauseBtn = document.getElementById("viewerPlayPauseBtn");
@@ -154,20 +160,10 @@ class RallyClipApp {
         this.viewerCsvBtn.addEventListener("click", () => {
             if (this.viewingItemId) this.triggerDownload(`/api/library/${this.viewingItemId}/csv`);
         });
-        this.matchVideo.addEventListener("timeupdate", () => this.handleViewerTimeUpdate());
-        this.matchVideo.addEventListener("play", () => this.updateViewerControls());
-        this.matchVideo.addEventListener("pause", () => this.updateViewerControls());
-        this.matchVideo.addEventListener("loadedmetadata", () => this.updateViewerControls());
-        this.matchVideo.addEventListener("seeking", () => {
-            this.viewerSeekInProgress = true;
-        });
-        this.matchVideo.addEventListener("seeked", () => {
-            this.viewerSeekInProgress = false;
-            this.lastViewerTime = this.getViewerSourceTime();
-        });
-        this.matchVideo.addEventListener("ended", () => this.handleViewerWindowEnded());
-        this.matchVideo.addEventListener("error", () => this.handleViewerVideoError());
-        this.matchVideo.addEventListener("click", (e) => this.toggleViewerPlayback(e));
+        [this.primaryMatchVideo, this.secondaryMatchVideo].forEach((video) => this.bindViewerVideoEvents(video));
+        this.viewerVideoWrap.addEventListener("pointermove", () => this.showViewerControls());
+        this.viewerVideoWrap.addEventListener("pointerenter", () => this.showViewerControls());
+        this.viewerVideoWrap.addEventListener("focusin", () => this.showViewerControls());
         this.viewerBackBtn.addEventListener("click", () => this.skipViewerBy(-this.viewerSkipSeconds));
         this.viewerPlayPauseBtn.addEventListener("click", (e) => this.toggleViewerPlayback(e));
         this.viewerForwardBtn.addEventListener("click", () => this.skipViewerBy(this.viewerSkipSeconds));
@@ -212,6 +208,39 @@ class RallyClipApp {
             this.showToast("Advanced settings reset", "success");
         });
         this.yoloDevice.addEventListener("change", () => this.updateDeviceNote());
+    }
+
+    bindViewerVideoEvents(video) {
+        if (!video) return;
+        video.addEventListener("timeupdate", () => {
+            if (video === this.matchVideo) this.handleViewerTimeUpdate();
+        });
+        video.addEventListener("play", () => {
+            if (video === this.matchVideo) this.updateViewerControls();
+        });
+        video.addEventListener("pause", () => {
+            if (video === this.matchVideo) this.updateViewerControls();
+        });
+        video.addEventListener("loadedmetadata", () => {
+            if (video === this.matchVideo) this.updateViewerControls();
+        });
+        video.addEventListener("seeking", () => {
+            if (video === this.matchVideo) this.viewerSeekInProgress = true;
+        });
+        video.addEventListener("seeked", () => {
+            if (video !== this.matchVideo) return;
+            this.viewerSeekInProgress = false;
+            this.lastViewerTime = this.getViewerSourceTime();
+        });
+        video.addEventListener("ended", () => {
+            if (video === this.matchVideo) this.handleViewerWindowEnded();
+        });
+        video.addEventListener("error", () => {
+            if (video === this.matchVideo) this.handleViewerVideoError();
+        });
+        video.addEventListener("click", (e) => {
+            if (video === this.matchVideo) this.toggleViewerPlayback(e);
+        });
     }
 
     bindSystemTheme() {
@@ -364,9 +393,7 @@ class RallyClipApp {
         this.progressCard.hidden = viewName !== "processing";
         if (viewName !== "viewer" && this.matchVideo) {
             this.clearPreviewPoll();
-            this.matchVideo.pause();
-            this.matchVideo.removeAttribute("src");
-            this.matchVideo.load();
+            this.resetViewerVideos();
             this.viewingItemId = null;
             this.pointIntervals = [];
             this.lastViewerTime = null;
@@ -381,9 +408,47 @@ class RallyClipApp {
             this.renderViewerBufferedRanges();
             this.viewerSeekDragging = false;
             this.viewerTimeline.hidden = true;
+            this.hideViewerControls();
             this.updateViewerControls();
             this.hidePreviewLoading();
         }
+    }
+
+    clearVideoElement(video) {
+        if (!video) return;
+        video.pause();
+        video.removeAttribute("src");
+        video.removeAttribute("data-preview-url");
+        video.removeAttribute("data-window-start");
+        video.removeAttribute("data-window-duration");
+        video.load();
+    }
+
+    resetViewerVideos() {
+        this.clearVideoElement(this.primaryMatchVideo);
+        this.clearVideoElement(this.secondaryMatchVideo);
+        this.matchVideo = this.primaryMatchVideo;
+        this.matchVideoBuffer = this.secondaryMatchVideo;
+        this.primaryMatchVideo.classList.add("is-active");
+        this.secondaryMatchVideo.classList.remove("is-active");
+    }
+
+    showViewerControls() {
+        if (!this.viewerVideoWrap || !this.isViewerActive()) return;
+        if (this.viewerControlsHideTimeout) clearTimeout(this.viewerControlsHideTimeout);
+        this.viewerVideoWrap.classList.add("is-controls-visible");
+        this.viewerVideoWrap.classList.remove("is-controls-idle");
+        this.viewerControlsHideTimeout = setTimeout(() => this.hideViewerControls(), 2600);
+    }
+
+    hideViewerControls() {
+        if (this.viewerControlsHideTimeout) {
+            clearTimeout(this.viewerControlsHideTimeout);
+            this.viewerControlsHideTimeout = null;
+        }
+        if (!this.viewerVideoWrap) return;
+        this.viewerVideoWrap.classList.remove("is-controls-visible");
+        this.viewerVideoWrap.classList.add("is-controls-idle");
     }
 
     showLibrary() {
@@ -538,11 +603,11 @@ class RallyClipApp {
         this.viewerTitle.textContent = item.name || "Match";
         this.viewerMeta.textContent = item.metaText || this.cardMeta(item);
         this.viewerCsvBtn.hidden = !item.has_csv;
-        this.matchVideo.removeAttribute("src");
-        this.matchVideo.load();
+        this.resetViewerVideos();
         this.updateViewerControls();
         this.showPreviewLoading();
         this.showView("viewer");
+        this.showViewerControls();
         await this.loadPointIntervals(item.id);
         const start = this.pointIntervals.length ? this.pointIntervals[0].start : 0;
         this.loadPreviewWindowAt(start, true);
@@ -589,31 +654,70 @@ class RallyClipApp {
         return `/api/library/${itemId}/preview/window${suffix}?start=${start.toFixed(3)}&duration=${duration.toFixed(3)}`;
     }
 
+    setPreviewVideoSource(video, previewUrl, start, duration) {
+        if (!video || !previewUrl) return;
+        if (video.dataset.previewUrl !== previewUrl) {
+            video.src = previewUrl;
+            video.dataset.previewUrl = previewUrl;
+            video.load();
+        }
+        video.dataset.windowStart = String(start);
+        video.dataset.windowDuration = String(duration);
+    }
+
+    preloadNearestReadyWindow() {
+        if (!this.matchVideoBuffer || !this.viewingItemId) return;
+        const next = Array.from(this.readyPreviewWindows.values())
+            .filter((windowInfo) => windowInfo.previewUrl && windowInfo.start > this.currentPreviewWindowStart + 0.001)
+            .sort((a, b) => a.start - b.start)[0];
+        if (!next) return;
+        this.setPreviewVideoSource(this.matchVideoBuffer, next.previewUrl, next.start, next.duration);
+    }
+
     activatePreviewWindow(itemId, requestId, payload, targetSourceTime, autoplay) {
         if (this.viewingItemId !== itemId || requestId !== this.previewRequestSeq) return;
         const previewUrl = payload.preview_url || payload.previewUrl;
         if (!previewUrl) return;
-        this.currentPreviewWindowStart = Number(payload.start) || 0;
-        this.currentPreviewWindowDuration = Number(payload.duration) || this.previewWindowDuration;
-        this.markPreviewWindowReady(this.currentPreviewWindowStart, this.currentPreviewWindowDuration, previewUrl);
-        this.hidePreviewLoading();
-        this.matchVideo.src = `${previewUrl}&t=${Date.now()}`;
-        this.lastViewerTime = null;
-        this.viewerSeekInProgress = false;
-        this.matchVideo.load();
-        this.updateViewerControls();
-        const seekAfterLoad = () => {
+        const windowStart = Number(payload.start) || 0;
+        const windowDuration = Number(payload.duration) || this.previewWindowDuration;
+        this.markPreviewWindowReady(windowStart, windowDuration, previewUrl);
+
+        const hasCurrentVideo = this.viewerHasVideo();
+        const alreadyBuffered = [this.matchVideo, this.matchVideoBuffer].find((video) => (
+            video?.dataset.previewUrl === previewUrl && video.readyState >= 2
+        ));
+        const targetVideo = alreadyBuffered || (hasCurrentVideo ? this.matchVideoBuffer : this.matchVideo);
+        this.setPreviewVideoSource(targetVideo, previewUrl, windowStart, windowDuration);
+
+        const finishActivation = () => {
             if (this.viewingItemId !== itemId || requestId !== this.previewRequestSeq) return;
-            const offset = Math.max(0, Math.min(targetSourceTime - this.currentPreviewWindowStart, this.matchVideo.duration || this.currentPreviewWindowDuration));
-            this.matchVideo.currentTime = offset;
-            this.lastViewerTime = this.currentPreviewWindowStart + offset;
+            this.currentPreviewWindowStart = windowStart;
+            this.currentPreviewWindowDuration = windowDuration;
+            const offset = Math.max(0, Math.min(targetSourceTime - windowStart, targetVideo.duration || windowDuration));
+            targetVideo.currentTime = offset;
+            if (targetVideo !== this.matchVideo) {
+                const previousVideo = this.matchVideo;
+                previousVideo.pause();
+                previousVideo.classList.remove("is-active");
+                targetVideo.classList.add("is-active");
+                targetVideo.tabIndex = 0;
+                previousVideo.tabIndex = -1;
+                this.matchVideo = targetVideo;
+                this.matchVideoBuffer = previousVideo;
+                this.clearVideoElement(previousVideo);
+            }
+            this.hidePreviewLoading();
+            this.lastViewerTime = windowStart + offset;
             this.updateViewerTimeline(this.lastViewerTime);
+            this.updateViewerControls();
             this.prefetchPointAwareWindows(this.lastViewerTime);
+            this.preloadNearestReadyWindow();
             this.previewLoadInProgress = false;
             if (autoplay) this.startViewerPlayback();
         };
-        if (this.matchVideo.readyState >= 1) seekAfterLoad();
-        else this.matchVideo.addEventListener("loadedmetadata", seekAfterLoad, { once: true });
+
+        if (targetVideo.readyState >= 2) finishActivation();
+        else targetVideo.addEventListener("canplay", finishActivation, { once: true });
     }
 
     loadPreviewWindowAt(sourceTime, autoplay = true) {
@@ -623,7 +727,8 @@ class RallyClipApp {
         const targetSourceTime = Math.max(0, Number(sourceTime) || 0);
         this.clearPreviewPoll();
         this.previewLoadInProgress = true;
-        this.showPreviewLoading();
+        if (this.viewerHasVideo()) this.hidePreviewLoading();
+        else this.showPreviewLoading();
         const readyWindow = this.getReadyPreviewWindow(targetSourceTime);
         if (readyWindow?.previewUrl) {
             this.activatePreviewWindow(itemId, requestId, {
@@ -683,6 +788,7 @@ class RallyClipApp {
             this.prefetchWindowTimers.delete(key);
         }
         this.renderViewerBufferedRanges();
+        this.preloadNearestReadyWindow();
     }
 
     getReadyPreviewWindow(sourceTime) {
@@ -881,12 +987,14 @@ class RallyClipApp {
     toggleViewerPlayback(event) {
         if (event && typeof event.preventDefault === "function") event.preventDefault();
         if (!this.matchVideo.src) return;
+        this.showViewerControls();
         if (this.matchVideo.paused) this.startViewerPlayback();
         else this.matchVideo.pause();
     }
 
     skipViewerBy(deltaSeconds) {
         if (!this.viewerHasVideo()) return;
+        this.showViewerControls();
         const wasPlaying = !this.matchVideo.paused;
         const current = this.getViewerSourceTime();
         this.seekViewerToSourceTime(this.clampViewerSourceTime(current + deltaSeconds), wasPlaying);
@@ -910,9 +1018,11 @@ class RallyClipApp {
         if (isTextEntry && target !== this.viewerSeek) return;
         if (event.key === "ArrowLeft") {
             event.preventDefault();
+            this.showViewerControls();
             this.skipViewerBy(-this.viewerSkipSeconds);
         } else if (event.key === "ArrowRight") {
             event.preventDefault();
+            this.showViewerControls();
             this.skipViewerBy(this.viewerSkipSeconds);
         }
     }

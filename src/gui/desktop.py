@@ -144,6 +144,8 @@ def main() -> int:
 
     window = QMainWindow()
     window.setWindowTitle("RallyClip")
+    if sys.platform == "darwin":
+        window.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
     if not app_icon.isNull():
         window.setWindowIcon(app_icon)
     window.resize(1280, 840)
