@@ -1,5 +1,40 @@
 const WELCOME_SEEN_KEY = "rallyclip_welcome_seen";
+const THEME_MODE_KEY = "rallyclip_theme_mode";
 const JOB_ID_KEY = "rallyclip_job_id";
+const WELCOME_TYPE_START_DELAY_MS = 504;
+const WELCOME_TYPE_LINE_DELAY_MS = WELCOME_TYPE_START_DELAY_MS;
+const WELCOME_TYPE_FIRST_CHAR_MS = 110;
+const WELCOME_TYPE_CHAR_MS = 89;
+const SYSTEM_DARK_QUERY = "(prefers-color-scheme: dark)";
+const THEME_MODES = ["system", "dark"];
+const WELCOME_LAYOUT = [
+    [{ text: "RallyClip.", immediate: true }],
+    [{ text: "AI Match Segmentation." }],
+    [{ text: "Free, Forever.", className: "welcome-free" }],
+];
+
+function readStoredThemeMode() {
+    try {
+        const stored = localStorage.getItem(THEME_MODE_KEY);
+        return THEME_MODES.includes(stored) ? stored : "system";
+    } catch (_) {
+        return "system";
+    }
+}
+
+function resolveThemeMode(mode) {
+    if (mode === "dark") return "dark";
+    const isDark = window.matchMedia && window.matchMedia(SYSTEM_DARK_QUERY).matches;
+    return isDark ? "dark" : "light";
+}
+
+function applyThemeMode(mode = readStoredThemeMode()) {
+    const normalized = THEME_MODES.includes(mode) ? mode : "system";
+    document.documentElement.dataset.themeMode = normalized;
+    document.documentElement.dataset.systemTheme = resolveThemeMode(normalized);
+}
+
+applyThemeMode();
 
 class RallyClipApp {
     constructor() {
@@ -19,12 +54,19 @@ class RallyClipApp {
         this.pointIntervals = [];
         this.lastViewerTime = null;
         this.viewerSeekInProgress = false;
-        this.previewWindowDuration = 45;
+        this.previewWindowDuration = 8;
+        this.previewLookaheadChunks = 7;
+        this.pointBufferSeconds = 5;
         this.currentPreviewWindowStart = 0;
         this.currentPreviewWindowDuration = 0;
         this.sourceDuration = 0;
         this.previewRequestSeq = 0;
-        this.prefetchWindowKey = null;
+        this.previewSpinnerTimeout = null;
+        this.welcomeTypeTimers = [];
+        this.welcomeCursor = null;
+        this.themeMode = this.readThemeMode();
+        this.systemThemeQuery = window.matchMedia ? window.matchMedia(SYSTEM_DARK_QUERY) : null;
+        this.prefetchedWindowKeys = new Set();
         this.viewerSeekDragging = false;
         this.steps = ["pose", "preprocess", "feature", "inference", "output"];
         this.stepLabels = {
@@ -37,24 +79,26 @@ class RallyClipApp {
 
         this.cacheElements();
         this.bindEvents();
+        this.bindSystemTheme();
+        this.applyThemeMode(this.themeMode);
         this.loadDefaults();
         this.restoreJobIfAny().then((restored) => {
             if (restored) return;
-            if (this.hasSeenWelcome()) this.showLibrary();
-            else this.showWelcome();
+            this.showWelcome();
         });
     }
 
     cacheElements() {
         this.welcomeScreen = document.getElementById("welcomeScreen");
+        this.welcomeHeadline = document.getElementById("welcomeHeadline");
         this.welcomeStartBtn = document.getElementById("welcomeStartBtn");
+        this.themeModeBtns = Array.from(document.querySelectorAll("#themePicker button[data-theme-mode]"));
         this.appShell = document.getElementById("appShell");
 
         this.libraryView = document.getElementById("libraryView");
         this.libraryGrid = document.getElementById("libraryGrid");
         this.libraryEmpty = document.getElementById("libraryEmpty");
         this.newMatchBtn = document.getElementById("newMatchBtn");
-        this.emptyNewMatchBtn = document.getElementById("emptyNewMatchBtn");
 
         this.viewerView = document.getElementById("viewerView");
         this.backFromViewer = document.getElementById("backFromViewer");
@@ -112,8 +156,10 @@ class RallyClipApp {
 
     bindEvents() {
         this.welcomeStartBtn.addEventListener("click", () => this.dismissWelcome());
+        this.themeModeBtns.forEach((btn) => {
+            btn.addEventListener("click", () => this.setThemeMode(btn.dataset.themeMode));
+        });
         this.newMatchBtn.addEventListener("click", () => this.showUpload());
-        this.emptyNewMatchBtn.addEventListener("click", () => this.showUpload());
         this.backToLibrary.addEventListener("click", () => this.showLibrary());
         this.backFromViewer.addEventListener("click", () => this.showLibrary());
         this.viewerExportBtn.addEventListener("click", () => {
@@ -132,6 +178,7 @@ class RallyClipApp {
         });
         this.matchVideo.addEventListener("ended", () => this.handleViewerWindowEnded());
         this.matchVideo.addEventListener("error", () => this.handleViewerVideoError());
+        this.matchVideo.addEventListener("click", (e) => this.toggleViewerPlayback(e));
         this.viewerSeek.addEventListener("input", () => {
             this.viewerSeekDragging = true;
             this.updateViewerTimeline(Number(this.viewerSeek.value));
@@ -173,6 +220,16 @@ class RallyClipApp {
         this.yoloDevice.addEventListener("change", () => this.updateDeviceNote());
     }
 
+    bindSystemTheme() {
+        if (!this.systemThemeQuery) return;
+        const updateTheme = () => this.applyThemeMode(this.themeMode);
+        if (typeof this.systemThemeQuery.addEventListener === "function") {
+            this.systemThemeQuery.addEventListener("change", updateTheme);
+        } else if (typeof this.systemThemeQuery.addListener === "function") {
+            this.systemThemeQuery.addListener(updateTheme);
+        }
+    }
+
     hasSeenWelcome() {
         try {
             return localStorage.getItem(WELCOME_SEEN_KEY) === "1";
@@ -189,15 +246,142 @@ class RallyClipApp {
 
     dismissWelcome() {
         this.markWelcomeSeen();
+        this.clearWelcomeTypewriter();
         this.showLibrary();
     }
 
     showWelcome() {
         this.welcomeScreen.hidden = false;
         this.appShell.hidden = true;
+        this.runWelcomeTypewriter();
+    }
+
+    readThemeMode() {
+        return readStoredThemeMode();
+    }
+
+    setThemeMode(mode) {
+        if (!THEME_MODES.includes(String(mode))) return;
+        this.themeMode = String(mode);
+        try {
+            localStorage.setItem(THEME_MODE_KEY, this.themeMode);
+        } catch (_) {}
+        this.applyThemeMode(this.themeMode);
+    }
+
+    applyThemeMode(mode) {
+        applyThemeMode(mode);
+        this.themeModeBtns.forEach((btn) => {
+            btn.setAttribute("aria-pressed", btn.dataset.themeMode === this.themeMode ? "true" : "false");
+        });
+    }
+
+    clearWelcomeTypewriter() {
+        this.welcomeTypeTimers.forEach((timer) => clearTimeout(timer));
+        this.welcomeTypeTimers = [];
+        this.welcomeHeadline?.querySelectorAll(".is-typing").forEach((item) => item.classList.remove("is-typing"));
+        this.welcomeCursor?.remove();
+        this.welcomeCursor = null;
+    }
+
+    welcomeTimeout(callback, delay) {
+        const timer = setTimeout(() => {
+            this.welcomeTypeTimers = this.welcomeTypeTimers.filter((item) => item !== timer);
+            callback();
+        }, delay);
+        this.welcomeTypeTimers.push(timer);
+    }
+
+    runWelcomeTypewriter() {
+        this.clearWelcomeTypewriter();
+        this.welcomeScreen.classList.remove("is-ready");
+        const pieces = this.renderWelcomeLayout();
+
+        const prefersReducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (prefersReducedMotion) {
+            pieces.forEach((piece) => {
+                piece.element.textContent = piece.text;
+            });
+            this.welcomeCursor?.remove();
+            this.welcomeCursor = null;
+            this.welcomeScreen.classList.add("is-ready");
+            return;
+        }
+
+        this.welcomeTimeout(() => {
+            this.typeWelcomePieces(pieces, 0);
+        }, WELCOME_TYPE_START_DELAY_MS);
+    }
+
+    renderWelcomeLayout() {
+        const piecesToType = [];
+        this.welcomeHeadline.replaceChildren();
+        this.welcomeCursor = document.createElement("span");
+        this.welcomeCursor.className = "typing-cursor";
+        this.welcomeCursor.setAttribute("aria-hidden", "true");
+        WELCOME_LAYOUT.forEach((line) => {
+            const lineEl = document.createElement("span");
+            lineEl.className = "welcome-line";
+            line.forEach((piece) => {
+                const pieceEl = document.createElement("span");
+                if (piece.className) pieceEl.className = piece.className;
+                if (piece.immediate) {
+                    pieceEl.textContent = piece.text;
+                }
+                else piecesToType.push({ element: pieceEl, text: piece.text });
+                lineEl.appendChild(pieceEl);
+            });
+            this.welcomeHeadline.appendChild(lineEl);
+        });
+        if (piecesToType.length) this.moveWelcomeCursor(piecesToType[0].element);
+        return piecesToType;
+    }
+
+    typeWelcomePieces(pieces, index) {
+        if (index >= pieces.length) {
+            this.welcomeCursor?.remove();
+            this.welcomeCursor = null;
+            this.welcomeScreen.classList.add("is-ready");
+            return;
+        }
+        this.typeWelcomeText(pieces[index].element, pieces[index].text, () => {
+            const nextPiece = pieces[index + 1];
+            if (nextPiece) this.moveWelcomeCursor(nextPiece.element);
+            this.welcomeTimeout(() => this.typeWelcomePieces(pieces, index + 1), WELCOME_TYPE_LINE_DELAY_MS);
+        });
+    }
+
+    typeWelcomeText(element, text, done, index = 0) {
+        this.setActiveWelcomeTypingElement(element);
+        if (index >= text.length) {
+            element.classList.remove("is-typing");
+            done();
+            return;
+        }
+        if (this.welcomeCursor?.parentElement === element) this.welcomeCursor.remove();
+        element.textContent += text[index];
+        this.moveWelcomeCursor(element);
+        this.welcomeTimeout(
+            () => this.typeWelcomeText(element, text, done, index + 1),
+            index < 1 ? WELCOME_TYPE_FIRST_CHAR_MS : WELCOME_TYPE_CHAR_MS,
+        );
+    }
+
+    setActiveWelcomeTypingElement(element) {
+        this.welcomeHeadline.querySelectorAll(".is-typing").forEach((item) => {
+            if (item !== element) item.classList.remove("is-typing");
+        });
+        element.classList.add("is-typing");
+        this.moveWelcomeCursor(element);
+    }
+
+    moveWelcomeCursor(element) {
+        if (!this.welcomeCursor) return;
+        element.appendChild(this.welcomeCursor);
     }
 
     showView(viewName) {
+        this.clearWelcomeTypewriter();
         this.welcomeScreen.hidden = true;
         this.appShell.hidden = false;
         this.libraryView.hidden = viewName !== "library";
@@ -216,10 +400,10 @@ class RallyClipApp {
             this.currentPreviewWindowStart = 0;
             this.currentPreviewWindowDuration = 0;
             this.sourceDuration = 0;
-            this.prefetchWindowKey = null;
+            this.prefetchedWindowKeys.clear();
             this.viewerSeekDragging = false;
             this.viewerTimeline.hidden = true;
-            this.previewStatus.hidden = true;
+            this.hidePreviewLoading();
         }
     }
 
@@ -248,8 +432,10 @@ class RallyClipApp {
     }
 
     renderLibrary(items) {
+        const hasItems = items.length > 0;
         this.libraryGrid.innerHTML = "";
-        this.libraryEmpty.hidden = items.length > 0;
+        this.libraryEmpty.hidden = hasItems;
+        this.newMatchBtn.textContent = hasItems ? "New Match" : "Process a Match";
         items.forEach((item) => this.libraryGrid.appendChild(this.buildCard(item)));
     }
 
@@ -364,15 +550,14 @@ class RallyClipApp {
         this.currentPreviewWindowStart = 0;
         this.currentPreviewWindowDuration = 0;
         this.sourceDuration = Number(item.duration_s) || 0;
-        this.prefetchWindowKey = null;
+        this.prefetchedWindowKeys.clear();
         this.configureViewerTimeline(this.sourceDuration);
         this.viewerTitle.textContent = item.name || "Match";
         this.viewerMeta.textContent = item.metaText || this.cardMeta(item);
         this.viewerCsvBtn.hidden = !item.has_csv;
         this.matchVideo.removeAttribute("src");
         this.matchVideo.load();
-        this.previewStatus.textContent = "Preparing video preview...";
-        this.previewStatus.hidden = false;
+        this.showPreviewLoading();
         this.showView("viewer");
         await this.loadPointIntervals(item.id);
         const start = this.pointIntervals.length ? this.pointIntervals[0].start : 0;
@@ -386,6 +571,30 @@ class RallyClipApp {
         }
     }
 
+    clearPreviewSpinner() {
+        if (this.previewSpinnerTimeout) {
+            clearTimeout(this.previewSpinnerTimeout);
+            this.previewSpinnerTimeout = null;
+        }
+    }
+
+    showPreviewLoading() {
+        this.previewStatus.textContent = "";
+        if (!this.previewStatus.hidden) return;
+        this.clearPreviewSpinner();
+        this.previewStatus.hidden = false;
+        this.previewStatus.classList.remove("is-slow");
+        this.previewSpinnerTimeout = setTimeout(() => {
+            if (!this.previewStatus.hidden) this.previewStatus.classList.add("is-slow");
+        }, 2000);
+    }
+
+    hidePreviewLoading() {
+        this.clearPreviewSpinner();
+        this.previewStatus.hidden = true;
+        this.previewStatus.classList.remove("is-slow");
+    }
+
     buildPreviewWindowUrl(itemId, start, duration, status = false) {
         const suffix = status ? "/status" : "";
         return `/api/library/${itemId}/preview/window${suffix}?start=${start.toFixed(3)}&duration=${duration.toFixed(3)}`;
@@ -397,8 +606,7 @@ class RallyClipApp {
         const requestId = ++this.previewRequestSeq;
         const targetSourceTime = Math.max(0, Number(sourceTime) || 0);
         this.clearPreviewPoll();
-        this.previewStatus.textContent = "Preparing video preview...";
-        this.previewStatus.hidden = false;
+        this.showPreviewLoading();
         const poll = async () => {
             if (this.viewingItemId !== itemId || requestId !== this.previewRequestSeq) return;
             try {
@@ -413,7 +621,7 @@ class RallyClipApp {
                 if (payload.ready && payload.preview_url) {
                     this.currentPreviewWindowStart = Number(payload.start) || 0;
                     this.currentPreviewWindowDuration = Number(payload.duration) || this.previewWindowDuration;
-                    this.previewStatus.hidden = true;
+                    this.hidePreviewLoading();
                     this.matchVideo.src = `${payload.preview_url}&t=${Date.now()}`;
                     this.lastViewerTime = null;
                     this.viewerSeekInProgress = false;
@@ -424,34 +632,124 @@ class RallyClipApp {
                         this.matchVideo.currentTime = offset;
                         this.lastViewerTime = this.currentPreviewWindowStart + offset;
                         this.updateViewerTimeline(this.lastViewerTime);
-                        this.prefetchPreviewWindow(this.currentPreviewWindowStart + this.currentPreviewWindowDuration);
+                        this.prefetchPointAwareWindows(this.lastViewerTime);
                         if (autoplay) this.startViewerPlayback();
                     };
                     if (this.matchVideo.readyState >= 1) seekAfterLoad();
                     else this.matchVideo.addEventListener("loadedmetadata", seekAfterLoad, { once: true });
                     return;
                 }
-                this.previewStatus.textContent = "Preparing video preview...";
-                this.previewStatus.hidden = false;
                 this.previewPollTimeout = setTimeout(poll, 750);
             } catch (err) {
                 console.error(err);
                 if (this.viewingItemId !== itemId || requestId !== this.previewRequestSeq) return;
-                this.previewStatus.textContent = "Still preparing preview...";
-                this.previewStatus.hidden = false;
                 this.previewPollTimeout = setTimeout(poll, 1500);
             }
         };
         poll();
     }
 
+    canonicalPreviewChunkStart(sourceTime) {
+        const chunk = Math.max(1, Number(this.previewWindowDuration) || 8);
+        return Math.max(0, Math.floor((Number(sourceTime) || 0) / chunk) * chunk);
+    }
+
+    previewChunkKey(sourceTime) {
+        return `${this.viewingItemId}:${this.canonicalPreviewChunkStart(sourceTime).toFixed(1)}:${this.previewWindowDuration.toFixed(1)}`;
+    }
+
+    previewChunkStartsForRange(start, end) {
+        const chunk = Math.max(1, Number(this.previewWindowDuration) || 8);
+        const rangeStart = Math.max(0, Number(start) || 0);
+        const rangeEnd = Math.max(rangeStart, Number(end) || rangeStart);
+        const first = this.canonicalPreviewChunkStart(rangeStart);
+        const last = this.canonicalPreviewChunkStart(Math.max(rangeStart, rangeEnd - 0.001));
+        const starts = [];
+        for (let value = first; value <= last + 0.001; value += chunk) {
+            if (this.sourceDuration > 0 && value >= this.sourceDuration - 0.1) break;
+            starts.push(Number(value.toFixed(3)));
+        }
+        return starts;
+    }
+
+    findLookaheadPointIndex(sourceTime) {
+        if (!this.pointIntervals.length) return -1;
+        const t = Number(sourceTime) || 0;
+        return this.pointIntervals.findIndex((seg) => t <= seg.end + this.pointBufferSeconds);
+    }
+
+    getPointAwarePrefetchStarts(sourceTime) {
+        const limit = Math.max(0, Number(this.previewLookaheadChunks) || 0);
+        if (!limit) return [];
+
+        const currentStart = this.canonicalPreviewChunkStart(sourceTime);
+        const selected = [];
+        const seen = new Set([this.previewChunkKey(currentStart)]);
+
+        const addChunk = (start) => {
+            const canonicalStart = this.canonicalPreviewChunkStart(start);
+            if (canonicalStart < currentStart - 0.001) return true;
+            if (this.sourceDuration > 0 && canonicalStart >= this.sourceDuration - 0.1) return true;
+            const key = this.previewChunkKey(canonicalStart);
+            if (seen.has(key)) return true;
+            seen.add(key);
+            selected.push(canonicalStart);
+            return selected.length < limit;
+        };
+
+        const addBufferedPoint = (seg, allowPartial) => {
+            const bufferedStart = Math.max(0, seg.start - this.pointBufferSeconds);
+            const bufferedEnd = seg.end + this.pointBufferSeconds;
+            const candidates = this.previewChunkStartsForRange(bufferedStart, bufferedEnd)
+                .filter((start) => start >= currentStart - 0.001 && !seen.has(this.previewChunkKey(start)));
+            const remaining = limit - selected.length;
+            if (!allowPartial && candidates.length > remaining) return false;
+            for (const start of candidates.slice(0, remaining)) {
+                if (!addChunk(start)) return candidates.length <= remaining;
+            }
+            return candidates.length <= remaining;
+        };
+
+        const pointIdx = this.findLookaheadPointIndex(sourceTime);
+        if (pointIdx >= 0) {
+            for (let idx = pointIdx; idx < this.pointIntervals.length && selected.length < limit; idx += 1) {
+                const allowPartial = selected.length === 0;
+                if (!addBufferedPoint(this.pointIntervals[idx], allowPartial)) break;
+            }
+        }
+
+        if (!this.pointIntervals.length) {
+            const chunk = Math.max(1, Number(this.previewWindowDuration) || 8);
+            for (let start = currentStart + chunk; selected.length < limit; start += chunk) {
+                if (!addChunk(start)) break;
+            }
+        }
+
+        return selected;
+    }
+
+    trimPrefetchedWindowKeys(sourceTime) {
+        const minStart = this.canonicalPreviewChunkStart(sourceTime) - (this.previewWindowDuration * 2);
+        for (const key of Array.from(this.prefetchedWindowKeys)) {
+            const parts = key.split(":");
+            const start = Number(parts[parts.length - 2]);
+            if (Number.isFinite(start) && start < minStart) this.prefetchedWindowKeys.delete(key);
+        }
+    }
+
+    prefetchPointAwareWindows(sourceTime) {
+        if (!this.viewingItemId) return;
+        this.trimPrefetchedWindowKeys(sourceTime);
+        this.getPointAwarePrefetchStarts(sourceTime).forEach((start) => this.prefetchPreviewWindow(start));
+    }
+
     prefetchPreviewWindow(sourceTime) {
         if (!this.viewingItemId || !Number.isFinite(sourceTime)) return;
         if (this.sourceDuration > 0 && sourceTime >= this.sourceDuration - 0.1) return;
-        const start = Math.max(0, sourceTime);
-        const key = `${this.viewingItemId}:${start.toFixed(1)}`;
-        if (this.prefetchWindowKey === key) return;
-        this.prefetchWindowKey = key;
+        const start = this.canonicalPreviewChunkStart(sourceTime);
+        const key = this.previewChunkKey(start);
+        if (this.prefetchedWindowKeys.has(key)) return;
+        this.prefetchedWindowKeys.add(key);
         fetch(this.buildPreviewWindowUrl(this.viewingItemId, start, this.previewWindowDuration, true)).catch(() => {});
     }
 
@@ -463,6 +761,16 @@ class RallyClipApp {
                 // is not treated as the media gesture. The controls remain usable.
             });
         }
+    }
+
+    toggleViewerPlayback(event) {
+        if (!this.matchVideo.src) return;
+        if (event && typeof event.clientY === "number") {
+            const rect = this.matchVideo.getBoundingClientRect();
+            if (rect.height > 0 && rect.bottom - event.clientY < 54) return;
+        }
+        if (this.matchVideo.paused) this.startViewerPlayback();
+        else this.matchVideo.pause();
     }
 
     async loadPointIntervals(itemId) {
@@ -537,18 +845,39 @@ class RallyClipApp {
         const t = this.getViewerSourceTime();
         this.updateViewerTimeline(t);
         const remaining = this.currentPreviewWindowStart + this.currentPreviewWindowDuration - t;
-        if (remaining < 8) this.prefetchPreviewWindow(this.currentPreviewWindowStart + this.currentPreviewWindowDuration);
+        if (remaining < 8) this.prefetchPointAwareWindows(t);
         if (!this.pointIntervals.length || this.matchVideo.paused) return;
         const previous = this.lastViewerTime;
         this.lastViewerTime = t;
         if (this.viewerSeekInProgress || previous === null || t <= previous) return;
 
-        const elapsed = t - previous;
-        if (elapsed > 3.0) return;
-
         const idx = this.findCrossedPointIndex(previous, t);
         if (idx < 0) return;
 
+        this.advanceAfterPointIndex(idx);
+    }
+
+    handleViewerWindowEnded() {
+        if (!this.matchVideo.src || !this.viewingItemId) return;
+        const sourceTime = this.currentPreviewWindowStart + this.currentPreviewWindowDuration;
+        this.updateViewerTimeline(sourceTime);
+        if (this.pointIntervals.length && this.lastViewerTime !== null) {
+            const idx = this.findCrossedPointIndex(this.lastViewerTime, sourceTime);
+            this.lastViewerTime = sourceTime;
+            if (idx >= 0) {
+                this.advanceAfterPointIndex(idx);
+                return;
+            }
+        }
+        if (this.sourceDuration > 0 && sourceTime >= this.sourceDuration - 0.25) return;
+        this.loadPreviewWindowAt(sourceTime, true);
+    }
+
+    findCrossedPointIndex(previous, current) {
+        return this.pointIntervals.findIndex((seg) => previous < seg.end && current >= seg.end);
+    }
+
+    advanceAfterPointIndex(idx) {
         const next = this.pointIntervals[idx + 1];
         if (!next) {
             this.matchVideo.pause();
@@ -556,19 +885,17 @@ class RallyClipApp {
             this.updateViewerTimeline(this.lastViewerTime);
             return;
         }
+        this.prefetchPointAwareWindows(next.start);
         this.seekViewerToSourceTime(next.start, true);
     }
 
-    handleViewerWindowEnded() {
-        if (!this.matchVideo.src || !this.viewingItemId) return;
-        const sourceTime = this.getViewerSourceTime();
-        this.updateViewerTimeline(sourceTime);
-        if (this.sourceDuration > 0 && sourceTime >= this.sourceDuration - 0.25) return;
-        this.loadPreviewWindowAt(sourceTime, true);
+    findPointIndexAt(sourceTime) {
+        const t = Number(sourceTime) || 0;
+        return this.pointIntervals.findIndex((seg) => t >= seg.start && t < seg.end);
     }
 
-    findCrossedPointIndex(previous, current) {
-        return this.pointIntervals.findIndex((seg) => previous < seg.end && current >= seg.end);
+    prefetchUpcomingPointWindow(sourceTime) {
+        this.prefetchPointAwareWindows(sourceTime);
     }
 
     // A real navigation to an attachment URL: the browser downloads it, and in
