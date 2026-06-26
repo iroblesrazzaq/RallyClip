@@ -112,6 +112,10 @@ def _fabricate_library_item(library_dir: Path, *, n_segments: int = 3, with_csv:
     item_dir = library_dir / item_id
     item_dir.mkdir(parents=True, exist_ok=True)
     (item_dir / "source.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42fake-video-bytes")
+    (item_dir / "preview.webm").write_bytes(b"fake-webm-preview")
+    preview_windows = item_dir / "preview_windows"
+    preview_windows.mkdir()
+    (preview_windows / "000000001000_005000.webm").write_bytes(b"fake-webm-window")
     if with_csv:
         (item_dir / "segments.csv").write_text("start_time,end_time\n1.000,3.500\n", encoding="utf-8")
     if with_thumb:
@@ -242,6 +246,8 @@ def test_library_item_downloads(backend: BackendClient, library_dir: Path):
     assert thumb.status_code == 200 and thumb.content
     video = backend.get(f"/api/library/{item_id}/preview")
     assert video.status_code == 200 and video.content
+    window = backend.get(f"/api/library/{item_id}/preview/window?start=1.0&duration=5.0")
+    assert window.status_code == 200 and window.content
     segments = backend.get(f"/api/library/{item_id}/segments")
     assert segments.status_code == 200
     assert segments.json()["segments"] == [{"start": 1.0, "end": 3.5}]

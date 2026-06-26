@@ -105,6 +105,32 @@ def _fabricate_ui_item() -> str:
     return item_id
 
 
+def _fabricate_viewer_item() -> str:
+    """Create a real, short source clip so the saved-match viewer can exercise
+    preview-window generation instead of reading a prebuilt fake."""
+    import json
+    import time
+    import uuid
+
+    from gui import app as gui_app
+    from make_smoke_clip import make_clip
+
+    item_id = f"20990101-000000-{uuid.uuid4().hex[:6]}"
+    item_dir = Path(gui_app.LIBRARY_DIR) / item_id
+    item_dir.mkdir(parents=True, exist_ok=True)
+    make_clip(item_dir / "source.mp4", duration_s=12.0)
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,2.0\n4.0,5.0\n", encoding="utf-8")
+    (item_dir / "thumb.jpg").write_bytes(b"\xff\xd8\xff\xe0fake")
+    (item_dir / "meta.json").write_text(
+        json.dumps({
+            "id": item_id, "name": "Viewer Window Match", "created": "2099-01-01T00:00:00",
+            "created_ts": time.time(), "duration_s": 12.0, "point_duration_s": 2.0, "n_segments": 2,
+        }),
+        encoding="utf-8",
+    )
+    return item_id
+
+
 def _open_to_library(page: Page, base_url: str) -> None:
     page.goto(base_url)
     # Fresh browser context -> no localStorage -> welcome screen is shown.
@@ -134,6 +160,50 @@ def test_ui_library_renders_and_deletes_item(page: Page, ui_backend: BackendClie
     page.on("dialog", lambda dialog: dialog.accept())  # auto-confirm the delete prompt
     card.locator('button[data-action="delete"]').click()
     expect(page.locator(f'.lib-card[data-id="{item_id}"]')).to_have_count(0)
+
+
+def test_ui_viewer_uses_preview_windows_and_point_crossing(page: Page, ui_backend: BackendClient):
+    """Saved-match viewer loads bounded preview windows and detects point-end
+    crossings in source-video time."""
+    item_id = _fabricate_viewer_item()
+    _open_to_library(page, ui_backend.base_url)
+
+    page.locator(f'.lib-card[data-id="{item_id}"]').click()
+    expect(page.locator("#viewerView")).to_be_visible()
+    expect(page.locator("#viewerTimeline")).to_be_visible(timeout=30_000)
+    page.wait_for_function(
+        "() => window.rallyClipApp?.matchVideo?.src.includes('/preview/window')",
+        timeout=30_000,
+    )
+    result = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }];
+            return {
+                crosses: app.findCrossedPointIndex(1.95, 2.10),
+                gap: app.findCrossedPointIndex(2.10, 3.90),
+                later: app.findCrossedPointIndex(4.90, 5.05),
+            };
+        }"""
+    )
+    assert result == {"crosses": 0, "gap": -1, "later": 1}
+
+    jump = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }];
+            app.currentPreviewWindowStart = 1;
+            app.currentPreviewWindowDuration = 11;
+            app.matchVideo.play = () => Promise.resolve();
+            Object.defineProperty(app.matchVideo, "paused", { value: false, configurable: true });
+            app.matchVideo.currentTime = 1.1;
+            app.lastViewerTime = 1.95;
+            app.handleViewerTimeUpdate();
+            return { videoTime: app.matchVideo.currentTime, sourceTime: app.lastViewerTime };
+        }"""
+    )
+    assert jump["videoTime"] == pytest.approx(3.0, abs=0.1)
+    assert jump["sourceTime"] == pytest.approx(4.0, abs=0.1)
 
 
 def test_ui_new_match_runs_to_library(page: Page, ui_backend: BackendClient, ui_clip: Path):

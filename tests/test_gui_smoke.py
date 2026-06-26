@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -113,7 +114,7 @@ def test_persist_library_item_saves_source_without_cutting(tmp_path, monkeypatch
     monkeypatch.setattr(gui_app, "write_segments_csv", fake_write_segments_csv)
     monkeypatch.setattr(gui_app, "segment_video", fail_segment_video)
     monkeypatch.setattr(gui_app, "_write_thumbnail", lambda video_path, thumb_path: True)
-    monkeypatch.setattr(gui_app, "_start_web_preview_background", lambda item_id, source_path: "processing")
+    monkeypatch.setattr(gui_app, "_start_preview_window_background", lambda item_id, source_path, start_s, duration_s: "processing")
     job = gui_app._new_job_state("job-1", gui_app._normalize_config({}))
 
     library_id, source_out, csv_out = gui_app._persist_library_item(
@@ -220,6 +221,108 @@ def test_library_preview_returns_accepted_while_processing(tmp_path, monkeypatch
 
     assert response.status_code == 202
     assert response.get_json()["status"] == "processing"
+
+
+def test_library_preview_window_streams_video_inline(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    window_dir = item_dir / "preview_windows"
+    window_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"fake mp4 bytes")
+    (window_dir / "000000001000_005000.webm").write_bytes(b"fake window bytes")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
+    (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+
+    client = gui_app.app.test_client()
+    response = client.get("/api/library/match-1/preview/window?start=1.0&duration=5.0")
+
+    assert response.status_code == 200
+    assert response.mimetype == "video/webm"
+    assert response.data == b"fake window bytes"
+
+
+def test_library_preview_window_returns_accepted_while_processing(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    item_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"fake mp4 bytes")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
+    (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    monkeypatch.setattr(gui_app, "_start_preview_window_background", lambda item_id, source_path, start_s, duration_s: "processing")
+
+    client = gui_app.app.test_client()
+    response = client.get("/api/library/match-1/preview/window?start=1.0&duration=5.0")
+
+    assert response.status_code == 202
+    payload = response.get_json()
+    assert payload["status"] == "processing"
+    assert payload["ready"] is False
+    assert payload["start"] == 1.0
+    assert payload["duration"] == 5.0
+
+
+def test_web_preview_generation_latency_benchmark(tmp_path):
+    from gui import app as gui_app
+    from test_segment import _make_clip
+
+    av = pytest.importorskip("av")
+    source = tmp_path / "source.mp4"
+    preview = tmp_path / "preview.webm"
+    try:
+        _make_clip(source, seconds=8, fps=10, with_audio=True)
+    except Exception as exc:
+        pytest.skip(f"cannot encode benchmark clip: {exc}")
+
+    started = time.perf_counter()
+    gui_app._write_web_preview(source, preview, max_width=640)
+    elapsed = time.perf_counter() - started
+
+    assert preview.exists()
+    assert preview.stat().st_size > 0
+    with av.open(str(preview)) as container:
+        streams = {stream.type for stream in container.streams}
+
+    print(f"viewer_preview_benchmark elapsed_s={elapsed:.3f} input_s=8.000 realtime_factor={elapsed / 8.0:.3f}")
+    assert "video" in streams
+    assert elapsed < 20.0
+
+
+def test_preview_window_generation_latency_benchmark(tmp_path, monkeypatch):
+    from gui import app as gui_app
+    from test_segment import _make_clip
+
+    av = pytest.importorskip("av")
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    item_dir.mkdir(parents=True)
+    source = item_dir / "source.mp4"
+    try:
+        _make_clip(source, seconds=20, fps=10, with_audio=True)
+    except Exception as exc:
+        pytest.skip(f"cannot encode benchmark clip: {exc}")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    start_s, duration_s = gui_app._preview_window_values(source, 4.0, 6.0)
+
+    started = time.perf_counter()
+    preview = gui_app._ensure_preview_window("match-1", source, start_s, duration_s)
+    elapsed = time.perf_counter() - started
+
+    assert preview.exists()
+    assert preview.stat().st_size > 0
+    with av.open(str(preview)) as container:
+        streams = {stream.type for stream in container.streams}
+        duration = (container.duration or 0) / av.time_base
+
+    print(f"viewer_window_benchmark elapsed_s={elapsed:.3f} window_s={duration_s:.3f} realtime_factor={elapsed / duration_s:.3f}")
+    assert "video" in streams
+    assert duration <= duration_s + 1.0
+    assert elapsed < 10.0
 
 
 def test_library_video_export_generates_cut_on_demand(tmp_path, monkeypatch):
