@@ -188,12 +188,95 @@ def test_ui_viewer_uses_preview_windows_and_point_crossing(page: Page, ui_backen
     )
     assert result == {"crosses": 0, "gap": -1, "later": 1}
 
+    prefetch_plan = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            app.previewWindowDuration = 8;
+            app.previewLookaheadChunks = 12;
+            app.pointBufferSeconds = 5;
+            app.sourceDuration = 200;
+            app.pointIntervals = [
+                { start: 30, end: 40 },
+                { start: 70, end: 74 },
+                { start: 100, end: 104 },
+            ];
+            return {
+                canonical: [
+                    app.canonicalPreviewChunkStart(30),
+                    app.canonicalPreviewChunkStart(41.9),
+                    app.canonicalPreviewChunkStart(42),
+                ],
+                starts: app.getPointAwarePrefetchStarts(30),
+                gapStarts: app.getPointAwarePrefetchStarts(55),
+            };
+        }"""
+    )
+    assert prefetch_plan == {
+        "canonical": [24, 40, 40],
+        "starts": [32, 40, 64, 72],
+        "gapStarts": [56, 64, 72, 88, 96, 104],
+    }
+
+    loading_state = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            app.hidePreviewLoading();
+            app.showPreviewLoading();
+            const state = {
+                hidden: app.previewStatus.hidden,
+                slow: app.previewStatus.classList.contains("is-slow"),
+                text: app.previewStatus.textContent,
+            };
+            app.hidePreviewLoading();
+            return state;
+        }"""
+    )
+    assert loading_state == {"hidden": False, "slow": False, "text": ""}
+
+    click_toggle = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            const rect = app.matchVideo.getBoundingClientRect();
+            const originalPlay = app.matchVideo.play;
+            const originalPause = app.matchVideo.pause;
+            const pausedDescriptor = Object.getOwnPropertyDescriptor(app.matchVideo, "paused");
+            let paused = true;
+            let plays = 0;
+            let pauses = 0;
+            app.matchVideo.play = () => {
+                plays += 1;
+                paused = false;
+                return Promise.resolve();
+            };
+            Object.defineProperty(app.matchVideo, "pause", {
+                value: () => {
+                    pauses += 1;
+                    paused = true;
+                },
+                configurable: true,
+            });
+            Object.defineProperty(app.matchVideo, "paused", {
+                get: () => paused,
+                configurable: true,
+            });
+            app.toggleViewerPlayback({ clientY: rect.top + rect.height / 2 });
+            app.toggleViewerPlayback({ clientY: rect.top + rect.height / 2 });
+            app.matchVideo.play = originalPlay;
+            app.matchVideo.pause = originalPause;
+            if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
+            else delete app.matchVideo.paused;
+            return { plays, pauses };
+        }"""
+    )
+    assert click_toggle == {"plays": 1, "pauses": 1}
+
     jump = page.evaluate(
         """() => {
             const app = window.rallyClipApp;
             app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }];
             app.currentPreviewWindowStart = 1;
             app.currentPreviewWindowDuration = 11;
+            app.viewerSeekInProgress = false;
             app.matchVideo.play = () => Promise.resolve();
             Object.defineProperty(app.matchVideo, "paused", { value: false, configurable: true });
             app.matchVideo.currentTime = 1.1;
@@ -204,6 +287,59 @@ def test_ui_viewer_uses_preview_windows_and_point_crossing(page: Page, ui_backen
     )
     assert jump["videoTime"] == pytest.approx(3.0, abs=0.1)
     assert jump["sourceTime"] == pytest.approx(4.0, abs=0.1)
+
+    delayed_jump = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }];
+            app.currentPreviewWindowStart = 1;
+            app.currentPreviewWindowDuration = 11;
+            app.viewerSeekInProgress = false;
+            app.matchVideo.play = () => Promise.resolve();
+            Object.defineProperty(app.matchVideo, "paused", { value: false, configurable: true });
+            app.matchVideo.currentTime = 3.2;
+            app.lastViewerTime = 1.0;
+            app.handleViewerTimeUpdate();
+            return { videoTime: app.matchVideo.currentTime, sourceTime: app.lastViewerTime };
+        }"""
+    )
+    assert delayed_jump["videoTime"] == pytest.approx(3.0, abs=0.1)
+    assert delayed_jump["sourceTime"] == pytest.approx(4.0, abs=0.1)
+
+    ended_jump = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }];
+            app.currentPreviewWindowStart = 1;
+            app.currentPreviewWindowDuration = 3.2;
+            app.viewerSeekInProgress = false;
+            app.matchVideo.play = () => Promise.resolve();
+            app.matchVideo.currentTime = 3.2;
+            app.lastViewerTime = 1.5;
+            app.handleViewerWindowEnded();
+            return { videoTime: app.matchVideo.currentTime, sourceTime: app.lastViewerTime };
+        }"""
+    )
+    assert ended_jump["videoTime"] == pytest.approx(3.0, abs=0.1)
+    assert ended_jump["sourceTime"] == pytest.approx(4.0, abs=0.1)
+
+    chunk_continue = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            const calls = [];
+            const originalLoad = app.loadPreviewWindowAt.bind(app);
+            app.loadPreviewWindowAt = (time, autoplay) => calls.push({ time, autoplay });
+            app.pointIntervals = [{ start: 24, end: 44 }, { start: 70, end: 74 }];
+            app.currentPreviewWindowStart = 24;
+            app.currentPreviewWindowDuration = 8;
+            app.sourceDuration = 120;
+            app.lastViewerTime = 24.5;
+            app.handleViewerWindowEnded();
+            app.loadPreviewWindowAt = originalLoad;
+            return calls;
+        }"""
+    )
+    assert chunk_continue == [{"time": 32, "autoplay": True}]
 
 
 def test_ui_new_match_runs_to_library(page: Page, ui_backend: BackendClient, ui_clip: Path):

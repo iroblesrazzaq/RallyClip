@@ -15,10 +15,11 @@
     --warning: #9a6200;
     --thumb: #efeee9;
     --bar-track: #e7e5df;
+    --viewer-buffer-track: rgba(0, 0, 0, 0.13);
+    --viewer-buffer-loaded: rgba(0, 0, 0, 0.28);
     --toast-bg: #050505;
     --toast-fg: #ffffff;
     --free-accent: #2f8f3a;
-    --picker-bg: rgba(255, 255, 255, 0.88);
     --logo-filter: none;
     --radius: 8px;
 }
@@ -35,10 +36,11 @@
     --on-accent: #050505;
     --thumb: #151515;
     --bar-track: #2a2a2a;
+    --viewer-buffer-track: rgba(255, 255, 255, 0.18);
+    --viewer-buffer-loaded: rgba(255, 255, 255, 0.42);
     --toast-bg: #f7f6ef;
     --toast-fg: #050505;
     --free-accent: #7bd63a;
-    --picker-bg: rgba(5, 5, 5, 0.72);
     --logo-filter: invert(1);
 }
 
@@ -81,75 +83,6 @@ select {
     isolation: isolate;
     background: var(--canvas);
     color: var(--ink);
-}
-
-.welcome-screen::before,
-.welcome-screen::after {
-    content: "";
-    position: absolute;
-    pointer-events: none;
-    z-index: -1;
-}
-
-.welcome-screen::before {
-    inset: 5.25rem clamp(1rem, 8vw, 8rem) 4.25rem;
-    border: 1px solid currentColor;
-    opacity: 0.1;
-}
-
-.welcome-screen::after {
-    left: 50%;
-    top: 58%;
-    width: min(46rem, 72vw);
-    aspect-ratio: 2.1 / 1;
-    border: 1px solid currentColor;
-    border-radius: 50%;
-    opacity: 0.08;
-    transform: translate(-50%, -50%);
-}
-
-.welcome-mast {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    z-index: -1;
-}
-
-.welcome-mast span {
-    position: absolute;
-    display: block;
-    border-color: currentColor;
-    opacity: 0.16;
-}
-
-.welcome-mast span:nth-child(1) {
-    top: 3rem;
-    left: 50%;
-    width: 1px;
-    height: 8rem;
-    border-left: 1px solid;
-}
-
-.welcome-mast span:nth-child(2) {
-    right: clamp(1.5rem, 7vw, 7rem);
-    top: 18vh;
-    width: 4rem;
-    border-top: 1px solid;
-}
-
-.welcome-mast span:nth-child(3) {
-    left: clamp(1.5rem, 7vw, 7rem);
-    bottom: 19vh;
-    width: 4rem;
-    border-top: 1px solid;
-}
-
-.welcome-mast span:nth-child(4) {
-    left: 50%;
-    bottom: 4rem;
-    width: min(30rem, 58vw);
-    border-top: 1px solid;
-    transform: translateX(-50%);
 }
 
 .welcome-composition {
@@ -241,48 +174,6 @@ select {
     pointer-events: auto;
 }
 
-.home-controls {
-    position: absolute;
-    left: 50%;
-    bottom: 1.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 0.65rem;
-    transform: translate(-50%, 0);
-    width: min(100% - 2rem, 36rem);
-}
-
-.theme-picker {
-    display: flex;
-    gap: 0.35rem;
-    padding: 0.3rem;
-    border: 1px solid currentColor;
-    border-radius: 999px;
-    background: var(--picker-bg);
-    opacity: 1;
-    transition: opacity 0.25s ease, transform 0.25s ease;
-}
-
-.theme-picker button {
-    min-width: 4.4rem;
-    height: 2.35rem;
-    padding: 0 0.9rem;
-    border: 0;
-    border-radius: 999px;
-    background: transparent;
-    color: currentColor;
-    cursor: pointer;
-    font-size: 0.76rem;
-    font-weight: 700;
-}
-
-.theme-picker button[aria-pressed="true"] {
-    background: var(--ink);
-    color: var(--canvas);
-}
-
 .app-shell {
     min-height: 100vh;
     padding: 2rem 3rem 3rem;
@@ -290,31 +181,6 @@ select {
     position: relative;
     isolation: isolate;
     overflow: hidden;
-}
-
-.app-shell::before,
-.app-shell::after {
-    content: "";
-    position: fixed;
-    pointer-events: none;
-    z-index: 0;
-}
-
-.app-shell::before {
-    inset: 5.25rem clamp(1rem, 8vw, 8rem) 4.25rem;
-    border: 1px solid var(--ink);
-    opacity: 0.055;
-}
-
-.app-shell::after {
-    left: 50%;
-    top: 42%;
-    width: min(54rem, 78vw);
-    aspect-ratio: 2.2 / 1;
-    border: 1px solid var(--ink);
-    border-radius: 50%;
-    opacity: 0.05;
-    transform: translate(-50%, -50%);
 }
 
 .workspace {
@@ -469,7 +335,7 @@ select {
 
 .viewer-view {
     display: grid;
-    gap: 1rem;
+    gap: 0.8rem;
 }
 
 .viewer-head {
@@ -481,15 +347,17 @@ select {
 
 .viewer-head h2 {
     margin: 0;
-    font-size: 2.2rem;
+    font-size: 1.45rem;
+    font-weight: 500;
     letter-spacing: 0;
     overflow-wrap: anywhere;
 }
 
 .viewer-head p {
-    margin: 0.25rem 0 0;
+    margin: 0.2rem 0 0;
     color: var(--ink-soft);
-    font-size: 0.95rem;
+    font-size: 0.88rem;
+    font-weight: 400;
 }
 
 .viewer-actions {
@@ -556,13 +424,42 @@ select {
     gap: 0.85rem;
     margin-top: 0.85rem;
     color: var(--ink-soft);
-    font-size: 0.92rem;
-    font-weight: 700;
+    font-size: 0.86rem;
+    font-weight: 400;
 }
 
-.viewer-timeline input[type="range"] {
+.viewer-seek-wrap {
+    position: relative;
+    display: grid;
+    align-items: center;
+    min-height: 1.25rem;
+}
+
+.viewer-buffer-track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 0.28rem;
+    border-radius: 999px;
+    background: var(--viewer-buffer-track);
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.viewer-buffer-segment {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-radius: inherit;
+    background: var(--viewer-buffer-loaded);
+}
+
+.viewer-seek-wrap input[type="range"] {
+    position: relative;
     width: 100%;
+    margin: 0;
     accent-color: var(--ink);
+    background: transparent;
 }
 
 .empty-title {
@@ -869,16 +766,8 @@ select {
         padding: 4.5rem 1rem 5.5rem;
     }
 
-    .welcome-screen::before {
-        inset: 4rem 1rem 4.5rem;
-    }
-
     .welcome-headline {
         font-size: 1.95rem;
-    }
-
-    .home-controls {
-        bottom: 1rem;
     }
 
     .app-shell {
@@ -895,7 +784,7 @@ select {
 
     .library-title,
     .viewer-head h2 {
-        font-size: 1.65rem;
+        font-size: 1.5rem;
     }
 
     .drop-title {

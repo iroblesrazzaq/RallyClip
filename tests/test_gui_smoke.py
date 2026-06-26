@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 
@@ -233,7 +234,7 @@ def test_library_preview_window_streams_video_inline(tmp_path, monkeypatch):
     window_dir = item_dir / "preview_windows"
     window_dir.mkdir(parents=True)
     (item_dir / "source.mp4").write_bytes(b"fake mp4 bytes")
-    (window_dir / "000000001000_005000.webm").write_bytes(b"fake window bytes")
+    (window_dir / "000000000000_008000.webm").write_bytes(b"fake window bytes")
     (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
     (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
     monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
@@ -265,8 +266,56 @@ def test_library_preview_window_returns_accepted_while_processing(tmp_path, monk
     payload = response.get_json()
     assert payload["status"] == "processing"
     assert payload["ready"] is False
-    assert payload["start"] == 1.0
-    assert payload["duration"] == 5.0
+    assert payload["start"] == 0.0
+    assert payload["duration"] == 8.0
+
+
+def test_preview_window_values_use_canonical_non_overlapping_chunks(monkeypatch):
+    from gui import app as gui_app
+
+    monkeypatch.setattr(gui_app, "_estimate_duration_seconds", lambda _path: 120.0)
+
+    assert gui_app._preview_window_values(Path("source.mp4"), 7.9, None) == (0.0, 8.0)
+    assert gui_app._preview_window_values(Path("source.mp4"), 8.0, 5.0) == (8.0, 8.0)
+    assert gui_app._preview_window_values(Path("source.mp4"), 10.0, None) == (8.0, 8.0)
+    assert gui_app._preview_window_values(Path("source.mp4"), 119.9, None) == (112.0, 8.0)
+
+
+def test_preview_cache_prunes_to_one_active_match_and_ttl(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    active = library / "match-1"
+    inactive = library / "match-2"
+    active_windows = active / "preview_windows"
+    inactive_windows = inactive / "preview_windows"
+    active_windows.mkdir(parents=True)
+    inactive_windows.mkdir(parents=True)
+    stale = active_windows / "000000000000_008000.webm"
+    fresh = active_windows / "000000008000_008000.webm"
+    inactive_chunk = inactive_windows / "000000000000_008000.webm"
+    inactive_preview = inactive / "preview.webm"
+    for path in (stale, fresh, inactive_chunk, inactive_preview):
+        path.write_bytes(b"cache")
+    old = time.time() - gui_app.PREVIEW_CACHE_TTL_SECONDS - 10
+    stale.touch()
+    inactive_chunk.touch()
+    inactive_preview.touch()
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    monkeypatch.setattr(gui_app, "active_preview_item_id", None)
+    monkeypatch.setattr(gui_app, "last_preview_cache_prune", 0.0)
+    monkeypatch.setitem(gui_app.preview_jobs, "match-2:window:0:8000", "ready")
+
+    os.utime(stale, (old, old))
+    os.utime(inactive_chunk, (old, old))
+    os.utime(inactive_preview, (old, old))
+    gui_app._activate_preview_cache("match-1", force=True)
+
+    assert not stale.exists()
+    assert fresh.exists()
+    assert not inactive_windows.exists()
+    assert not inactive_preview.exists()
+    assert "match-2:window:0:8000" not in gui_app.preview_jobs
 
 
 def test_web_preview_generation_latency_benchmark(tmp_path):
@@ -331,6 +380,7 @@ def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch):
     from gui import app as gui_app
 
     calls: list[str] = []
+    progress_snapshots = []
     upload = tmp_path / "match.mp4"
     model_path = tmp_path / "model.onnx"
     scaler_path = tmp_path / "scaler.json"
@@ -339,7 +389,7 @@ def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch):
     scaler_path.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(gui_app, "JOBS_DIR", tmp_path / "jobs")
     monkeypatch.setattr(gui_app, "LIBRARY_DIR", tmp_path / "library")
-    monkeypatch.setattr(gui_app, "_estimate_duration_seconds", lambda _path: 10.0)
+    monkeypatch.setattr(gui_app, "_estimate_duration_seconds", lambda _path: 20.2)
     monkeypatch.setattr(gui_app, "_resolve_yolo_weights", lambda _cfg: "yolov8n-pose.pt")
     monkeypatch.setattr(gui_app, "_resolve_model_paths", lambda _cfg: (model_path, scaler_path))
     monkeypatch.setattr(gui_app, "candidate_roots", lambda: [tmp_path])
@@ -393,13 +443,18 @@ def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch):
             assert row.shape == (1, FEATURE_DIM)
             return row
 
-    def fake_onnx_stream(model_path_arg, feature_rows, sequence_length, overlap, **_kwargs):
+    def fake_onnx_stream(model_path_arg, feature_rows, sequence_length, overlap, **kwargs):
         calls.append("inference:onnx")
         assert model_path_arg == str(model_path)
         assert sequence_length == 100
         assert overlap == 50
+        assert kwargs["total_windows"] == 1
         rows = list(feature_rows)
         assert len(rows) == 100
+        kwargs["progress_callback"](0.5)
+        response = gui_app.app.test_client().get("/api/progress/job-1")
+        assert response.status_code == 200
+        progress_snapshots.append(response.get_json())
         return np.zeros(len(rows), dtype=np.float32)
 
     monkeypatch.setattr(gui_app, "DataPreprocessor", FakePreprocessor)
@@ -414,7 +469,6 @@ def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch):
             "fps": 5,
             "seq_len": 100,
             "overlap": 50,
-            "duration": 10,
             "model_path": str(model_path),
             "scaler_path": str(scaler_path),
         }
@@ -439,6 +493,13 @@ def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch):
         "inference:onnx",
         "features:iter",
     ]
+    live_steps = progress_snapshots[0]["steps"]
+    assert live_steps["preprocess"]["status"] == "in_progress"
+    assert live_steps["preprocess"]["progress"] > 1
+    assert live_steps["feature"]["status"] == "in_progress"
+    assert live_steps["feature"]["progress"] > 1
+    assert live_steps["inference"]["status"] == "in_progress"
+    assert live_steps["inference"]["progress"] > 5
 
 
 def test_library_video_export_generates_cut_on_demand(tmp_path, monkeypatch):
