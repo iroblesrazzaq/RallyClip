@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1400" width="1024" height="1400" role="img" aria-label="RallyClip court play logo">
+  <g fill="none" stroke="#000000" stroke-width="34" stroke-linecap="butt" stroke-linejoin="miter">
+    <rect x="72" y="72" width="880" height="1256"/>
+    <path d="M 72 234 H 952"/>
+    <path d="M 72 1166 H 952"/>
+  </g>
+
+  <g fill="#000000">
+    <path d="M 502.00 234.00 L 522.00 234.00 Q 527.00 234.00 527.00 239.00 L 527.00 514.46 Q 527.00 519.46 522.62 517.05 L 501.38 505.35 Q 497.00 502.94 497.00 497.94 L 497.00 239.00 Q 497.00 234.00 502.00 234.00 Z"/>
+    <path d="M 501.38 894.65 L 522.62 882.95 Q 527.00 880.54 527.00 885.54 L 527.00 1161.00 Q 527.00 1166.00 522.00 1166.00 L 502.00 1166.00 Q 497.00 1166.00 497.00 1161.00 L 497.00 902.06 Q 497.00 897.06 501.38 894.65 Z"/>
+  </g>
+
+  <path d="M 393.20 537.80 L 393.20 862.20 Q 393.20 896.20 422.98 879.80 L 719.82 716.40 Q 749.60 700.00 719.82 683.60 L 422.98 520.20 Q 393.20 503.80 393.20 537.80 Z" fill="none" stroke="#000000" stroke-width="38" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>
