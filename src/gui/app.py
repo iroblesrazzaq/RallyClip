@@ -6,12 +6,14 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import threading
 import time
 import uuid
 import webbrowser
 from datetime import datetime, timedelta
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -36,8 +38,8 @@ from infer import (
     hysteresis_threshold,
     load_scaler_asset,
     load_model_from_checkpoint,
-    run_windowed_inference_average_onnx,
-    run_windowed_inference_average,
+    run_windowed_inference_average_onnx_stream,
+    run_windowed_inference_average_torch_stream,
     write_segments_csv,
 )
 from preprocessing.data_preprocessor import DataPreprocessor
@@ -224,6 +226,13 @@ def _reject_cross_origin_writes():
 
 jobs_lock = threading.Lock()
 jobs: Dict[str, JobDict] = {}
+preview_locks: Dict[str, threading.Lock] = {}
+preview_jobs: Dict[str, str] = {}
+PREVIEW_WINDOW_DURATION_S = 45.0
+PREVIEW_WINDOW_MIN_DURATION_S = 5.0
+PREVIEW_WINDOW_MAX_DURATION_S = 90.0
+PREVIEW_WINDOW_WIDTH = 640
+PREVIEW_WINDOW_FPS = 30
 
 
 class PipelineCancelled(Exception):
@@ -270,6 +279,394 @@ def _write_thumbnail(video_path: Path, thumb_path: Path, max_width: int = 480) -
     except Exception:
         logging.warning("Could not write thumbnail for %s", video_path, exc_info=True)
     return False
+
+
+def _preview_lock(item_id: str) -> threading.Lock:
+    with jobs_lock:
+        lock = preview_locks.get(item_id)
+        if lock is None:
+            lock = threading.Lock()
+            preview_locks[item_id] = lock
+        return lock
+
+
+def _ffmpeg_executable() -> Optional[str]:
+    env_path = os.environ.get("RALLYCLIP_FFMPEG_PATH")
+    candidates = [
+        env_path,
+        shutil.which("ffmpeg"),
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        "/usr/bin/ffmpeg",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            return str(candidate)
+    return None
+
+
+def _write_web_preview_ffmpeg(
+    source_path: Path,
+    preview_path: Path,
+    max_width: int = 640,
+    *,
+    start_s: float = 0.0,
+    duration_s: Optional[float] = None,
+    fps: int = 15,
+    video_bitrate: str = "700k",
+) -> bool:
+    ffmpeg = _ffmpeg_executable()
+    if ffmpeg is None:
+        return False
+
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = preview_path.with_suffix(".tmp.webm")
+    if tmp_path.exists():
+        tmp_path.unlink()
+
+    command = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+    ]
+    if start_s > 0:
+        command.extend(["-ss", f"{start_s:.3f}"])
+    command.extend(
+        [
+            "-i",
+            str(source_path),
+        ]
+    )
+    if duration_s is not None:
+        command.extend(["-t", f"{duration_s:.3f}"])
+    command.extend(
+        [
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0?",
+            "-vf",
+            f"scale={max_width}:-2:force_original_aspect_ratio=decrease,fps={fps}",
+            "-c:v",
+            "libvpx",
+            "-deadline",
+            "realtime",
+            "-cpu-used",
+            "8",
+            "-b:v",
+            video_bitrate,
+            "-maxrate",
+            video_bitrate,
+            "-bufsize",
+            "1800k",
+            "-threads",
+            "0",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "48k",
+            "-ac",
+            "2",
+            "-ar",
+            "48000",
+            str(tmp_path),
+        ]
+    )
+    try:
+        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        logging.warning("ffmpeg preview transcode failed for %s", source_path, exc_info=True)
+        return False
+
+    tmp_path.replace(preview_path)
+    return True
+
+
+def _write_web_preview(
+    source_path: Path,
+    preview_path: Path,
+    max_width: int = 640,
+    *,
+    start_s: float = 0.0,
+    duration_s: Optional[float] = None,
+    fps: int = 15,
+    video_bitrate: str = "700k",
+) -> None:
+    """Transcode a browser-safe WebM preview for QtWebEngine.
+
+    The packaged QtWebEngine build can parse MP4 metadata/audio but does not
+    decode H.264 video, so the in-app viewer needs a VP8/Opus preview cache.
+    """
+    if _write_web_preview_ffmpeg(
+        source_path,
+        preview_path,
+        max_width=max_width,
+        start_s=start_s,
+        duration_s=duration_s,
+        fps=fps,
+        video_bitrate=video_bitrate,
+    ):
+        return
+
+    preview_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = preview_path.with_suffix(".tmp.webm")
+    if tmp_path.exists():
+        tmp_path.unlink()
+
+    in_container = av.open(str(source_path))
+    try:
+        in_v = next((s for s in in_container.streams if s.type == "video"), None)
+        if in_v is None:
+            raise RuntimeError(f"No video stream found in {source_path}")
+        in_a = next((s for s in in_container.streams if s.type == "audio"), None)
+        out_container = av.open(str(tmp_path), "w")
+    except Exception:
+        in_container.close()
+        raise
+
+    try:
+        width = int(in_v.codec_context.width)
+        height = int(in_v.codec_context.height)
+        if width > max_width:
+            ratio = max_width / width
+            width = max(2, int(round(width * ratio)) // 2 * 2)
+            height = max(2, int(round(height * ratio)) // 2 * 2)
+        else:
+            width = max(2, width // 2 * 2)
+            height = max(2, height // 2 * 2)
+
+        if start_s > 0:
+            in_container.seek(int(start_s * av.time_base), any_frame=False, backward=True)
+        end_s = start_s + duration_s if duration_s is not None else None
+
+        source_rate = in_v.average_rate or Fraction(30, 1)
+        rate = min(source_rate, Fraction(fps, 1))
+        video_tb = Fraction(1, 1) / rate
+        out_v = out_container.add_stream("libvpx", rate=rate)
+        out_v.width = width
+        out_v.height = height
+        out_v.pix_fmt = "yuv420p"
+        out_v.options = {
+            "deadline": "realtime",
+            "cpu-used": "8",
+            "crf": "12",
+            "b:v": video_bitrate,
+        }
+
+        out_a = resampler = fifo = None
+        if in_a is not None:
+            out_a = out_container.add_stream("libopus", rate=48000)
+            out_a.layout = "stereo"
+            resampler = av.AudioResampler(format=out_a.format, layout=out_a.layout, rate=out_a.rate)
+            fifo = av.AudioFifo()
+
+        video_index = 0
+        audio_pts = 0
+
+        def drain_audio(flush: bool = False) -> None:
+            nonlocal audio_pts
+            if out_a is None or fifo is None:
+                return
+            frame_size = out_a.frame_size or 960
+            while fifo.samples >= frame_size or (flush and fifo.samples > 0):
+                take = frame_size if fifo.samples >= frame_size else fifo.samples
+                a_frame = fifo.read(take)
+                if a_frame is None:
+                    break
+                a_frame.pts = audio_pts
+                a_frame.time_base = Fraction(1, out_a.rate)
+                audio_pts += a_frame.samples
+                for packet in out_a.encode(a_frame):
+                    out_container.mux(packet)
+
+        decode_streams = [s for s in (in_v, in_a) if s is not None]
+        next_video_t = 0.0
+        frame_step = 1.0 / float(rate)
+        for frame in in_container.decode(*decode_streams):
+            if isinstance(frame, av.VideoFrame):
+                if frame.pts is not None:
+                    frame_t = float(frame.pts * frame.time_base)
+                    if frame_t + 1e-6 < start_s:
+                        continue
+                    if end_s is not None and frame_t >= end_s:
+                        break
+                else:
+                    frame_t = start_s + (video_index / float(rate))
+                if frame.pts is not None:
+                    if frame_t + 1e-6 < next_video_t:
+                        continue
+                    next_video_t = frame_t + frame_step
+                frame = frame.reformat(width=width, height=height, format="yuv420p")
+                frame.pts = video_index
+                frame.time_base = video_tb
+                frame.pict_type = av.video.frame.PictureType.NONE
+                video_index += 1
+                for packet in out_v.encode(frame):
+                    out_container.mux(packet)
+            elif out_a is not None and isinstance(frame, av.AudioFrame):
+                if frame.pts is not None:
+                    audio_t = float(frame.pts * frame.time_base)
+                    if audio_t + (frame.samples / frame.sample_rate) < start_s:
+                        continue
+                    if end_s is not None and audio_t >= end_s:
+                        continue
+                frame.pts = None
+                for r_frame in resampler.resample(frame):
+                    fifo.write(r_frame)
+                drain_audio()
+
+        for packet in out_v.encode():
+            out_container.mux(packet)
+        if out_a is not None:
+            for r_frame in resampler.resample(None):
+                fifo.write(r_frame)
+            drain_audio(flush=True)
+            for packet in out_a.encode():
+                out_container.mux(packet)
+    finally:
+        out_container.close()
+        in_container.close()
+
+    tmp_path.replace(preview_path)
+
+
+def _ensure_web_preview(item_id: str, source_path: Path) -> Path:
+    item_dir = _library_item_dir(item_id)
+    preview_path = item_dir / "preview.webm"
+    if preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime:
+        return preview_path
+    lock = _preview_lock(item_id)
+    with lock:
+        if preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime:
+            return preview_path
+        _write_web_preview(source_path, preview_path)
+        return preview_path
+
+
+def _web_preview_path(item_id: str) -> Path:
+    return _library_item_dir(item_id) / "preview.webm"
+
+
+def _preview_window_values(source_path: Path, start_s: float, duration_s: Optional[float] = None) -> tuple[float, float]:
+    duration = PREVIEW_WINDOW_DURATION_S if duration_s is None else duration_s
+    duration = min(PREVIEW_WINDOW_MAX_DURATION_S, max(PREVIEW_WINDOW_MIN_DURATION_S, duration))
+    source_duration = _estimate_duration_seconds(source_path)
+    start = max(0.0, start_s)
+    if source_duration > 0:
+        start = min(start, max(0.0, source_duration - 0.1))
+        duration = min(duration, max(0.1, source_duration - start))
+    return round(start, 3), round(duration, 3)
+
+
+def _preview_window_path(item_id: str, start_s: float, duration_s: float) -> Path:
+    start_ms = int(round(start_s * 1000))
+    duration_ms = int(round(duration_s * 1000))
+    return _library_item_dir(item_id) / "preview_windows" / f"{start_ms:012d}_{duration_ms:06d}.webm"
+
+
+def _preview_window_job_key(item_id: str, start_s: float, duration_s: float) -> str:
+    return f"{item_id}:window:{int(round(start_s * 1000))}:{int(round(duration_s * 1000))}"
+
+
+def _preview_window_ready(item_id: str, source_path: Path, start_s: float, duration_s: float) -> bool:
+    preview_path = _preview_window_path(item_id, start_s, duration_s)
+    return preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime
+
+
+def _preview_window_state(item_id: str, source_path: Path, start_s: float, duration_s: float) -> str:
+    if _preview_window_ready(item_id, source_path, start_s, duration_s):
+        return "ready"
+    with jobs_lock:
+        return preview_jobs.get(_preview_window_job_key(item_id, start_s, duration_s), "missing")
+
+
+def _ensure_preview_window(item_id: str, source_path: Path, start_s: float, duration_s: float) -> Path:
+    preview_path = _preview_window_path(item_id, start_s, duration_s)
+    if preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime:
+        return preview_path
+    lock = _preview_lock(_preview_window_job_key(item_id, start_s, duration_s))
+    with lock:
+        if preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime:
+            return preview_path
+        _write_web_preview(
+            source_path,
+            preview_path,
+            max_width=PREVIEW_WINDOW_WIDTH,
+            start_s=start_s,
+            duration_s=duration_s,
+            fps=PREVIEW_WINDOW_FPS,
+            video_bitrate="1200k",
+        )
+        return preview_path
+
+
+def _prepare_preview_window_background(item_id: str, source_path: Path, start_s: float, duration_s: float) -> None:
+    key = _preview_window_job_key(item_id, start_s, duration_s)
+    with jobs_lock:
+        preview_jobs[key] = "processing"
+    try:
+        _ensure_preview_window(item_id, source_path, start_s, duration_s)
+        with jobs_lock:
+            preview_jobs[key] = "ready"
+    except Exception:
+        with jobs_lock:
+            preview_jobs[key] = "error"
+        logging.warning("Could not prepare preview window for %s at %.3fs", item_id, start_s, exc_info=True)
+
+
+def _start_preview_window_background(item_id: str, source_path: Path, start_s: float, duration_s: float) -> str:
+    state = _preview_window_state(item_id, source_path, start_s, duration_s)
+    if state in {"ready", "processing"}:
+        return state
+    threading.Thread(
+        target=_prepare_preview_window_background,
+        args=(item_id, source_path, start_s, duration_s),
+        daemon=True,
+        name=f"rallyclip-preview-window-{item_id}",
+    ).start()
+    return "processing"
+
+
+def _web_preview_ready(item_id: str, source_path: Path) -> bool:
+    preview_path = _web_preview_path(item_id)
+    return preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime
+
+
+def _web_preview_state(item_id: str, source_path: Path) -> str:
+    if _web_preview_ready(item_id, source_path):
+        return "ready"
+    with jobs_lock:
+        return preview_jobs.get(item_id, "missing")
+
+
+def _prepare_web_preview_background(item_id: str, source_path: Path) -> None:
+    with jobs_lock:
+        preview_jobs[item_id] = "processing"
+    try:
+        _ensure_web_preview(item_id, source_path)
+        with jobs_lock:
+            preview_jobs[item_id] = "ready"
+    except Exception:
+        with jobs_lock:
+            preview_jobs[item_id] = "error"
+        logging.warning("Could not prepare web preview for %s", item_id, exc_info=True)
+
+
+def _start_web_preview_background(item_id: str, source_path: Path) -> str:
+    state = _web_preview_state(item_id, source_path)
+    if state in {"ready", "processing"}:
+        return state
+    threading.Thread(
+        target=_prepare_web_preview_background,
+        args=(item_id, source_path),
+        daemon=True,
+        name=f"rallyclip-preview-{item_id}",
+    ).start()
+    return "processing"
 
 
 def _read_library_items() -> list[Dict[str, Any]]:
@@ -332,6 +729,9 @@ def _persist_library_item(
             "n_segments": len(segments),
         }
         (item_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        if intervals_sec:
+            start_s, duration_s = _preview_window_values(source_out, intervals_sec[0][0], PREVIEW_WINDOW_DURATION_S)
+            _start_preview_window_background(library_id, source_out, start_s, duration_s)
         return library_id, source_out, csv_out
     except Exception:
         shutil.rmtree(item_dir, ignore_errors=True)
@@ -615,41 +1015,43 @@ def _run_pipeline(job_id: str) -> None:
             screen_height=int(cfg["screen_height"]),
             target_fps=float(cfg["fps"]),
         )
-        feature_rows = [feature_vector for feature_vector, _target in fe.iter_build_features(preprocessed_stream)]
-        if feature_rows:
-            features = np.array(feature_rows, dtype=np.float32)
-        else:
-            features = np.empty((0, fe.feature_vector_size), dtype=np.float32)
-        del feature_rows
-        _set_step(job, "pose", "completed", 100)
-        _set_step(job, "preprocess", "completed", 100)
-        _set_step(job, "feature", "completed", 100)
+        feature_stream = fe.iter_build_features(preprocessed_stream)
 
         _check_cancel(job)
+        _set_step(job, "preprocess", "in_progress", 1)
+        _set_step(job, "feature", "in_progress", 1)
         _set_step(job, "inference", "in_progress", 5)
         scaler = load_scaler_asset(str(scaler_path))
-        features = scaler.transform(features)
+
+        def scaled_feature_rows():
+            for feature_vector, _target in feature_stream:
+                _check_cancel(job)
+                row = np.asarray(feature_vector, dtype=np.float32).reshape(1, -1)
+                yield scaler.transform(row)[0].astype(np.float32)
 
         def infer_progress(frac: float) -> None:
             _set_step(job, "inference", "in_progress", int(1 + max(0.0, min(1.0, frac)) * 94))
         if model_path.suffix.lower() == ".onnx":
-            avg_probs = run_windowed_inference_average_onnx(
+            avg_probs = run_windowed_inference_average_onnx_stream(
                 str(model_path),
-                features,
+                scaled_feature_rows(),
                 sequence_length=int(cfg["seq_len"]),
                 overlap=int(cfg["overlap"]),
                 progress_callback=infer_progress,
             )
         else:
             model, device = load_model_from_checkpoint(str(model_path), return_logits=False)
-            avg_probs = run_windowed_inference_average(
+            avg_probs = run_windowed_inference_average_torch_stream(
                 model,
                 device,
-                features,
+                scaled_feature_rows(),
                 sequence_length=int(cfg["seq_len"]),
                 overlap=int(cfg["overlap"]),
                 progress_callback=infer_progress,
             )
+        _set_step(job, "pose", "completed", 100)
+        _set_step(job, "preprocess", "completed", 100)
+        _set_step(job, "feature", "completed", 100)
         smoothed_probs = gaussian_filter1d(avg_probs.astype(np.float32), sigma=float(cfg["sigma"]))
         min_duration_frames = int(round(max(0.0, float(cfg["min_dur_sec"])) * float(cfg["fps"])))
         binary_pred = hysteresis_threshold(
@@ -935,7 +1337,96 @@ def library_video_preview(item_id: str):
     path = _resolve_library_source(item_id)
     if path is None:
         return jsonify({"error": "Video not available"}), 404
-    return send_file(str(path), mimetype="video/mp4")
+    if not _web_preview_ready(item_id, path):
+        state = _start_web_preview_background(item_id, path)
+        return jsonify({"status": state}), 202
+    try:
+        preview_path = _web_preview_path(item_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logging.exception("Could not prepare library preview %s", item_id)
+        return jsonify({"error": f"Could not prepare preview: {exc}"}), 500
+    return send_file(str(preview_path), mimetype="video/webm")
+
+
+@app.route("/api/library/<item_id>/preview/status", methods=["GET"])
+def library_video_preview_status(item_id: str):
+    path = _resolve_library_source(item_id)
+    if path is None:
+        return jsonify({"error": "Video not available"}), 404
+    state = _start_web_preview_background(item_id, path)
+    preview_path = _web_preview_path(item_id)
+    payload = {
+        "status": state,
+        "ready": state == "ready",
+        "preview_url": f"/api/library/{item_id}/preview" if state == "ready" else None,
+    }
+    if preview_path.exists():
+        payload["bytes"] = preview_path.stat().st_size
+    return jsonify(payload), 200
+
+
+def _preview_window_from_request(source_path: Path) -> tuple[float, float]:
+    try:
+        start_s = float(request.args.get("start", "0"))
+        duration_arg = request.args.get("duration")
+        duration_s = float(duration_arg) if duration_arg is not None else None
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Invalid preview window") from exc
+    return _preview_window_values(source_path, start_s, duration_s)
+
+
+def _preview_window_payload(item_id: str, source_path: Path, start_s: float, duration_s: float, state: str) -> Dict[str, Any]:
+    source_duration = _estimate_duration_seconds(source_path)
+    preview_path = _preview_window_path(item_id, start_s, duration_s)
+    payload: Dict[str, Any] = {
+        "status": state,
+        "ready": state == "ready",
+        "start": start_s,
+        "duration": duration_s,
+        "source_duration": round(source_duration, 3) if source_duration > 0 else None,
+        "preview_url": (
+            f"/api/library/{item_id}/preview/window?start={start_s:.3f}&duration={duration_s:.3f}"
+            if state == "ready"
+            else None
+        ),
+    }
+    if preview_path.exists():
+        payload["bytes"] = preview_path.stat().st_size
+    return payload
+
+
+@app.route("/api/library/<item_id>/preview/window/status", methods=["GET"])
+def library_video_preview_window_status(item_id: str):
+    path = _resolve_library_source(item_id)
+    if path is None:
+        return jsonify({"error": "Video not available"}), 404
+    try:
+        start_s, duration_s = _preview_window_from_request(path)
+        state = _start_preview_window_background(item_id, path, start_s, duration_s)
+        return jsonify(_preview_window_payload(item_id, path, start_s, duration_s, state)), 200
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/library/<item_id>/preview/window", methods=["GET"])
+def library_video_preview_window(item_id: str):
+    path = _resolve_library_source(item_id)
+    if path is None:
+        return jsonify({"error": "Video not available"}), 404
+    try:
+        start_s, duration_s = _preview_window_from_request(path)
+        if not _preview_window_ready(item_id, path, start_s, duration_s):
+            state = _start_preview_window_background(item_id, path, start_s, duration_s)
+            return jsonify(_preview_window_payload(item_id, path, start_s, duration_s, state)), 202
+        preview_path = _preview_window_path(item_id, start_s, duration_s)
+        return send_file(str(preview_path), mimetype="video/webm")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logging.exception("Could not prepare preview window %s", item_id)
+        return jsonify({"error": f"Could not prepare preview window: {exc}"}), 500
 
 
 @app.route("/api/library/<item_id>/segments", methods=["GET"])

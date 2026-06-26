@@ -47,7 +47,15 @@
                         <button type="button" class="btn btn-primary" id="viewerExportBtn">Export video</button>
                     </div>
                 </div>
-                <video class="match-video" id="matchVideo" controls playsinline preload="metadata"></video>
+                <div class="viewer-video-wrap">
+                    <video class="match-video" id="matchVideo" controls playsinline preload="auto"></video>
+                    <div class="preview-status" id="previewStatus" hidden>Preparing video preview...</div>
+                </div>
+                <div class="viewer-timeline" id="viewerTimeline" hidden>
+                    <span id="viewerCurrentTime">0:00</span>
+                    <input type="range" id="viewerSeek" min="0" max="0" step="0.1" value="0" aria-label="Match timeline">
+                    <span id="viewerDuration">0:00</span>
+                </div>
             </section>
 
             <section class="run-card" id="uploadView" hidden>
