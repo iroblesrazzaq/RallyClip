@@ -46,8 +46,13 @@
                     </div>
                 </div>
                 <div class="viewer-video-wrap">
-                    <video class="match-video" id="matchVideo" playsinline preload="auto"></video>
+                    <video class="match-video" id="matchVideo" playsinline preload="auto" tabindex="0" aria-label="Match video"></video>
                     <div class="preview-status" id="previewStatus" aria-label="Loading video preview" hidden></div>
+                </div>
+                <div class="viewer-controls" id="viewerControls">
+                    <button type="button" class="viewer-control-btn" id="viewerBackBtn" aria-label="Back 5 seconds">← 5s</button>
+                    <button type="button" class="viewer-control-btn viewer-play-btn" id="viewerPlayPauseBtn" aria-label="Play video">Play</button>
+                    <button type="button" class="viewer-control-btn" id="viewerForwardBtn" aria-label="Forward 5 seconds">5s →</button>
                 </div>
                 <div class="viewer-timeline" id="viewerTimeline" hidden>
                     <span id="viewerCurrentTime">0:00</span>
