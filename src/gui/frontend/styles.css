@@ -417,6 +417,45 @@ select {
     }
 }
 
+.viewer-controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.55rem;
+    margin-top: 0.7rem;
+}
+
+.viewer-control-btn {
+    appearance: none;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+    background: var(--canvas);
+    color: var(--ink);
+    min-width: 3.25rem;
+    height: 2rem;
+    padding: 0 0.85rem;
+    font: inherit;
+    font-size: 0.84rem;
+    font-weight: 500;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.viewer-play-btn {
+    min-width: 4.25rem;
+}
+
+.viewer-control-btn:hover:not(:disabled),
+.viewer-control-btn:focus-visible {
+    border-color: var(--ink);
+    outline: none;
+}
+
+.viewer-control-btn:disabled {
+    cursor: default;
+    opacity: 0.45;
+}
+
 .viewer-timeline {
     display: grid;
     grid-template-columns: 4rem 1fr 4rem;
@@ -460,6 +499,7 @@ select {
     margin: 0;
     accent-color: var(--ink);
     background: transparent;
+    cursor: pointer;
 }
 
 .empty-title {

@@ -36,6 +36,7 @@ class RallyClipApp {
         this.pointIntervals = [];
         this.lastViewerTime = null;
         this.viewerSeekInProgress = false;
+        this.viewerSkipSeconds = 5;
         this.previewWindowDuration = 8;
         this.previewLookaheadChunks = 12;
         this.pointBufferSeconds = 5;
@@ -88,8 +89,13 @@ class RallyClipApp {
         this.viewerMeta = document.getElementById("viewerMeta");
         this.matchVideo = document.getElementById("matchVideo");
         this.previewStatus = document.getElementById("previewStatus");
+        this.viewerControls = document.getElementById("viewerControls");
+        this.viewerBackBtn = document.getElementById("viewerBackBtn");
+        this.viewerPlayPauseBtn = document.getElementById("viewerPlayPauseBtn");
+        this.viewerForwardBtn = document.getElementById("viewerForwardBtn");
         this.viewerTimeline = document.getElementById("viewerTimeline");
         this.viewerSeek = document.getElementById("viewerSeek");
+        this.viewerSeekWrap = document.querySelector(".viewer-seek-wrap");
         this.viewerBufferTrack = document.getElementById("viewerBufferTrack");
         this.viewerCurrentTime = document.getElementById("viewerCurrentTime");
         this.viewerDuration = document.getElementById("viewerDuration");
@@ -149,6 +155,9 @@ class RallyClipApp {
             if (this.viewingItemId) this.triggerDownload(`/api/library/${this.viewingItemId}/csv`);
         });
         this.matchVideo.addEventListener("timeupdate", () => this.handleViewerTimeUpdate());
+        this.matchVideo.addEventListener("play", () => this.updateViewerControls());
+        this.matchVideo.addEventListener("pause", () => this.updateViewerControls());
+        this.matchVideo.addEventListener("loadedmetadata", () => this.updateViewerControls());
         this.matchVideo.addEventListener("seeking", () => {
             this.viewerSeekInProgress = true;
         });
@@ -159,14 +168,19 @@ class RallyClipApp {
         this.matchVideo.addEventListener("ended", () => this.handleViewerWindowEnded());
         this.matchVideo.addEventListener("error", () => this.handleViewerVideoError());
         this.matchVideo.addEventListener("click", (e) => this.toggleViewerPlayback(e));
+        this.viewerBackBtn.addEventListener("click", () => this.skipViewerBy(-this.viewerSkipSeconds));
+        this.viewerPlayPauseBtn.addEventListener("click", (e) => this.toggleViewerPlayback(e));
+        this.viewerForwardBtn.addEventListener("click", () => this.skipViewerBy(this.viewerSkipSeconds));
         this.viewerSeek.addEventListener("input", () => {
             this.viewerSeekDragging = true;
             this.updateViewerTimeline(Number(this.viewerSeek.value));
         });
         this.viewerSeek.addEventListener("change", () => {
             this.viewerSeekDragging = false;
-            this.seekViewerToSourceTime(Number(this.viewerSeek.value), true);
+            this.seekViewerToSourceTime(Number(this.viewerSeek.value), this.viewerHasVideo() && !this.matchVideo.paused);
         });
+        this.viewerSeekWrap.addEventListener("pointerdown", (e) => this.seekViewerFromTimelinePointer(e));
+        document.addEventListener("keydown", (e) => this.handleViewerKeyboardShortcuts(e));
         this.libraryGrid.addEventListener("click", (e) => this.onLibraryClick(e));
 
         this.dropZone.addEventListener("dragover", (e) => {
@@ -367,6 +381,7 @@ class RallyClipApp {
             this.renderViewerBufferedRanges();
             this.viewerSeekDragging = false;
             this.viewerTimeline.hidden = true;
+            this.updateViewerControls();
             this.hidePreviewLoading();
         }
     }
@@ -525,6 +540,7 @@ class RallyClipApp {
         this.viewerCsvBtn.hidden = !item.has_csv;
         this.matchVideo.removeAttribute("src");
         this.matchVideo.load();
+        this.updateViewerControls();
         this.showPreviewLoading();
         this.showView("viewer");
         await this.loadPointIntervals(item.id);
@@ -585,6 +601,7 @@ class RallyClipApp {
         this.lastViewerTime = null;
         this.viewerSeekInProgress = false;
         this.matchVideo.load();
+        this.updateViewerControls();
         const seekAfterLoad = () => {
             if (this.viewingItemId !== itemId || requestId !== this.previewRequestSeq) return;
             const offset = Math.max(0, Math.min(targetSourceTime - this.currentPreviewWindowStart, this.matchVideo.duration || this.currentPreviewWindowDuration));
@@ -834,11 +851,70 @@ class RallyClipApp {
         }
     }
 
+    viewerHasVideo() {
+        return Boolean(this.matchVideo && this.matchVideo.src);
+    }
+
+    isViewerActive() {
+        return this.viewerView && !this.viewerView.hidden && Boolean(this.viewingItemId);
+    }
+
+    clampViewerSourceTime(sourceTime) {
+        const target = Math.max(0, Number(sourceTime) || 0);
+        if (this.sourceDuration > 0) return Math.min(target, Math.max(0, this.sourceDuration - 0.05));
+        return target;
+    }
+
+    updateViewerControls() {
+        const hasVideo = this.viewerHasVideo();
+        const isPaused = !hasVideo || this.matchVideo.paused;
+        const disabled = !hasVideo;
+        [this.viewerBackBtn, this.viewerPlayPauseBtn, this.viewerForwardBtn].forEach((btn) => {
+            if (btn) btn.disabled = disabled;
+        });
+        if (this.viewerPlayPauseBtn) {
+            this.viewerPlayPauseBtn.textContent = isPaused ? "Play" : "Pause";
+            this.viewerPlayPauseBtn.setAttribute("aria-label", isPaused ? "Play video" : "Pause video");
+        }
+    }
+
     toggleViewerPlayback(event) {
         if (event && typeof event.preventDefault === "function") event.preventDefault();
         if (!this.matchVideo.src) return;
         if (this.matchVideo.paused) this.startViewerPlayback();
         else this.matchVideo.pause();
+    }
+
+    skipViewerBy(deltaSeconds) {
+        if (!this.viewerHasVideo()) return;
+        const wasPlaying = !this.matchVideo.paused;
+        const current = this.getViewerSourceTime();
+        this.seekViewerToSourceTime(this.clampViewerSourceTime(current + deltaSeconds), wasPlaying);
+    }
+
+    seekViewerFromTimelinePointer(event) {
+        if (!this.isViewerActive() || !this.sourceDuration || event.target === this.viewerSeek) return;
+        const rect = this.viewerSeekWrap.getBoundingClientRect();
+        if (!rect.width) return;
+        const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+        const target = this.clampViewerSourceTime(ratio * this.sourceDuration);
+        this.updateViewerTimeline(target);
+        this.seekViewerToSourceTime(target, this.viewerHasVideo() && !this.matchVideo.paused);
+    }
+
+    handleViewerKeyboardShortcuts(event) {
+        if (!this.isViewerActive() || event.defaultPrevented) return;
+        const target = event.target;
+        const tagName = target?.tagName;
+        const isTextEntry = target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(tagName);
+        if (isTextEntry && target !== this.viewerSeek) return;
+        if (event.key === "ArrowLeft") {
+            event.preventDefault();
+            this.skipViewerBy(-this.viewerSkipSeconds);
+        } else if (event.key === "ArrowRight") {
+            event.preventDefault();
+            this.skipViewerBy(this.viewerSkipSeconds);
+        }
     }
 
     async loadPointIntervals(itemId) {

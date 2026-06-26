@@ -175,6 +175,9 @@ def test_ui_viewer_uses_preview_windows_and_point_crossing(page: Page, ui_backen
         "() => window.rallyClipApp?.matchVideo?.src.includes('/preview/window')",
         timeout=30_000,
     )
+    expect(page.locator("#viewerBackBtn")).to_be_visible()
+    expect(page.locator("#viewerPlayPauseBtn")).to_be_visible()
+    expect(page.locator("#viewerForwardBtn")).to_be_visible()
     result = page.evaluate(
         """() => {
             const app = window.rallyClipApp;
@@ -270,6 +273,79 @@ def test_ui_viewer_uses_preview_windows_and_point_crossing(page: Page, ui_backen
     )
     assert click_toggle == {"plays": 1, "pauses": 1}
 
+    controls = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            const pausedDescriptor = Object.getOwnPropertyDescriptor(app.matchVideo, "paused");
+            let paused = true;
+            Object.defineProperty(app.matchVideo, "paused", {
+                get: () => paused,
+                configurable: true,
+            });
+            app.updateViewerControls();
+            const pausedLabel = app.viewerPlayPauseBtn.textContent;
+            paused = false;
+            app.updateViewerControls();
+            const playingLabel = app.viewerPlayPauseBtn.textContent;
+
+            app.currentPreviewWindowStart = 20;
+            app.currentPreviewWindowDuration = 20;
+            app.sourceDuration = 120;
+            app.matchVideo.currentTime = 10;
+            const calls = [];
+            const originalSeek = app.seekViewerToSourceTime.bind(app);
+            app.seekViewerToSourceTime = (time, autoplay) => calls.push({ time, autoplay });
+            let prevented = 0;
+            app.handleViewerKeyboardShortcuts({
+                key: "ArrowLeft",
+                target: app.viewerSeek,
+                defaultPrevented: false,
+                preventDefault: () => { prevented += 1; },
+            });
+            app.handleViewerKeyboardShortcuts({
+                key: "ArrowRight",
+                target: app.viewerSeek,
+                defaultPrevented: false,
+                preventDefault: () => { prevented += 1; },
+            });
+            app.seekViewerToSourceTime = originalSeek;
+
+            if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
+            else delete app.matchVideo.paused;
+            return { pausedLabel, playingLabel, calls, prevented };
+        }"""
+    )
+    assert controls == {
+        "pausedLabel": "Play",
+        "playingLabel": "Pause",
+        "calls": [{"time": 23, "autoplay": True}, {"time": 33, "autoplay": True}],
+        "prevented": 2,
+    }
+
+    timeline_seek = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            const originalSeek = app.seekViewerToSourceTime.bind(app);
+            const originalRect = app.viewerSeekWrap.getBoundingClientRect.bind(app.viewerSeekWrap);
+            const pausedDescriptor = Object.getOwnPropertyDescriptor(app.matchVideo, "paused");
+            const calls = [];
+            app.sourceDuration = 100;
+            app.viewerSeekWrap.getBoundingClientRect = () => ({ left: 100, width: 200 });
+            Object.defineProperty(app.matchVideo, "paused", { value: true, configurable: true });
+            app.seekViewerToSourceTime = (time, autoplay) => calls.push({ time, autoplay });
+            app.seekViewerFromTimelinePointer({
+                target: app.viewerBufferTrack,
+                clientX: 200,
+            });
+            app.seekViewerToSourceTime = originalSeek;
+            app.viewerSeekWrap.getBoundingClientRect = originalRect;
+            if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
+            else delete app.matchVideo.paused;
+            return calls;
+        }"""
+    )
+    assert timeline_seek == [{"time": 50, "autoplay": False}]
+
     jump = page.evaluate(
         """() => {
             const app = window.rallyClipApp;
@@ -313,6 +389,7 @@ def test_ui_viewer_uses_preview_windows_and_point_crossing(page: Page, ui_backen
             app.currentPreviewWindowStart = 1;
             app.currentPreviewWindowDuration = 3.2;
             app.viewerSeekInProgress = false;
+            app.previewLoadInProgress = false;
             app.matchVideo.play = () => Promise.resolve();
             app.matchVideo.currentTime = 3.2;
             app.lastViewerTime = 1.5;
@@ -334,6 +411,7 @@ def test_ui_viewer_uses_preview_windows_and_point_crossing(page: Page, ui_backen
             app.currentPreviewWindowDuration = 8;
             app.sourceDuration = 120;
             app.lastViewerTime = 24.5;
+            app.previewLoadInProgress = false;
             app.handleViewerWindowEnded();
             app.loadPreviewWindowAt = originalLoad;
             return calls;
