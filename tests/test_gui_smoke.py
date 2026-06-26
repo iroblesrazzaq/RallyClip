@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 pytest.importorskip("flask")
 
+from helpers.runtime_fixtures import FEATURE_DIM
 from helpers.runtime_fixtures import write_manifest_model_dir
 from runtime.paths import resolve_frontend_dir
 
@@ -113,6 +116,7 @@ def test_persist_library_item_saves_source_without_cutting(tmp_path, monkeypatch
     monkeypatch.setattr(gui_app, "write_segments_csv", fake_write_segments_csv)
     monkeypatch.setattr(gui_app, "segment_video", fail_segment_video)
     monkeypatch.setattr(gui_app, "_write_thumbnail", lambda video_path, thumb_path: True)
+    monkeypatch.setattr(gui_app, "_start_preview_window_background", lambda item_id, source_path, start_s, duration_s: "processing")
     job = gui_app._new_job_state("job-1", gui_app._normalize_config({}))
 
     library_id, source_out, csv_out = gui_app._persist_library_item(
@@ -139,21 +143,302 @@ def test_library_preview_streams_video_inline(tmp_path, monkeypatch):
     item_dir = library / "match-1"
     item_dir.mkdir(parents=True)
     (item_dir / "source.mp4").write_bytes(b"fake mp4 bytes")
+    (item_dir / "preview.webm").write_bytes(b"fake webm bytes")
     (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
     (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
     monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    monkeypatch.setattr(gui_app, "_ensure_web_preview", lambda item_id, source_path: item_dir / "preview.webm")
 
     client = gui_app.app.test_client()
     response = client.get("/api/library/match-1/preview")
 
     assert response.status_code == 200
-    assert response.mimetype == "video/mp4"
+    assert response.mimetype == "video/webm"
     assert "attachment" not in response.headers.get("Content-Disposition", "")
-    assert response.data == b"fake mp4 bytes"
+    assert response.data == b"fake webm bytes"
 
     segments = client.get("/api/library/match-1/segments")
     assert segments.status_code == 200
     assert segments.get_json()["segments"] == [{"start": 1.0, "end": 3.0}]
+
+
+def test_library_preview_supports_range_requests(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    item_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"fake mp4 bytes")
+    (item_dir / "preview.webm").write_bytes(b"fake webm bytes")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
+    (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    monkeypatch.setattr(gui_app, "_ensure_web_preview", lambda item_id, source_path: item_dir / "preview.webm")
+
+    client = gui_app.app.test_client()
+    response = client.get("/api/library/match-1/preview", headers={"Range": "bytes=0-3"})
+
+    assert response.status_code == 206
+    assert response.headers["Accept-Ranges"] == "bytes"
+    assert response.headers["Content-Range"] == "bytes 0-3/15"
+    assert response.data == b"fake"
+
+
+def test_library_preview_status_starts_background_work(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    item_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"fake mp4 bytes")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
+    (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    monkeypatch.setattr(gui_app, "_start_web_preview_background", lambda item_id, source_path: "processing")
+
+    client = gui_app.app.test_client()
+    response = client.get("/api/library/match-1/preview/status")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["status"] == "processing"
+    assert payload["ready"] is False
+    assert payload["preview_url"] is None
+
+
+def test_library_preview_returns_accepted_while_processing(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    item_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"fake mp4 bytes")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
+    (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    monkeypatch.setattr(gui_app, "_start_web_preview_background", lambda item_id, source_path: "processing")
+
+    client = gui_app.app.test_client()
+    response = client.get("/api/library/match-1/preview")
+
+    assert response.status_code == 202
+    assert response.get_json()["status"] == "processing"
+
+
+def test_library_preview_window_streams_video_inline(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    window_dir = item_dir / "preview_windows"
+    window_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"fake mp4 bytes")
+    (window_dir / "000000001000_005000.webm").write_bytes(b"fake window bytes")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
+    (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+
+    client = gui_app.app.test_client()
+    response = client.get("/api/library/match-1/preview/window?start=1.0&duration=5.0")
+
+    assert response.status_code == 200
+    assert response.mimetype == "video/webm"
+    assert response.data == b"fake window bytes"
+
+
+def test_library_preview_window_returns_accepted_while_processing(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    item_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"fake mp4 bytes")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
+    (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    monkeypatch.setattr(gui_app, "_start_preview_window_background", lambda item_id, source_path, start_s, duration_s: "processing")
+
+    client = gui_app.app.test_client()
+    response = client.get("/api/library/match-1/preview/window?start=1.0&duration=5.0")
+
+    assert response.status_code == 202
+    payload = response.get_json()
+    assert payload["status"] == "processing"
+    assert payload["ready"] is False
+    assert payload["start"] == 1.0
+    assert payload["duration"] == 5.0
+
+
+def test_web_preview_generation_latency_benchmark(tmp_path):
+    from gui import app as gui_app
+    from test_segment import _make_clip
+
+    av = pytest.importorskip("av")
+    source = tmp_path / "source.mp4"
+    preview = tmp_path / "preview.webm"
+    try:
+        _make_clip(source, seconds=8, fps=10, with_audio=True)
+    except Exception as exc:
+        pytest.skip(f"cannot encode benchmark clip: {exc}")
+
+    started = time.perf_counter()
+    gui_app._write_web_preview(source, preview, max_width=640)
+    elapsed = time.perf_counter() - started
+
+    assert preview.exists()
+    assert preview.stat().st_size > 0
+    with av.open(str(preview)) as container:
+        streams = {stream.type for stream in container.streams}
+
+    print(f"viewer_preview_benchmark elapsed_s={elapsed:.3f} input_s=8.000 realtime_factor={elapsed / 8.0:.3f}")
+    assert "video" in streams
+    assert elapsed < 20.0
+
+
+def test_preview_window_generation_latency_benchmark(tmp_path, monkeypatch):
+    from gui import app as gui_app
+    from test_segment import _make_clip
+
+    av = pytest.importorskip("av")
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    item_dir.mkdir(parents=True)
+    source = item_dir / "source.mp4"
+    try:
+        _make_clip(source, seconds=20, fps=10, with_audio=True)
+    except Exception as exc:
+        pytest.skip(f"cannot encode benchmark clip: {exc}")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    start_s, duration_s = gui_app._preview_window_values(source, 4.0, 6.0)
+
+    started = time.perf_counter()
+    preview = gui_app._ensure_preview_window("match-1", source, start_s, duration_s)
+    elapsed = time.perf_counter() - started
+
+    assert preview.exists()
+    assert preview.stat().st_size > 0
+    with av.open(str(preview)) as container:
+        streams = {stream.type for stream in container.streams}
+        duration = (container.duration or 0) / av.time_base
+
+    print(f"viewer_window_benchmark elapsed_s={elapsed:.3f} window_s={duration_s:.3f} realtime_factor={elapsed / duration_s:.3f}")
+    assert "video" in streams
+    assert duration <= duration_s + 1.0
+    assert elapsed < 10.0
+
+
+def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    calls: list[str] = []
+    upload = tmp_path / "match.mp4"
+    model_path = tmp_path / "model.onnx"
+    scaler_path = tmp_path / "scaler.json"
+    upload.write_bytes(b"fake video")
+    model_path.write_bytes(b"fake onnx")
+    scaler_path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(gui_app, "JOBS_DIR", tmp_path / "jobs")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", tmp_path / "library")
+    monkeypatch.setattr(gui_app, "_estimate_duration_seconds", lambda _path: 10.0)
+    monkeypatch.setattr(gui_app, "_resolve_yolo_weights", lambda _cfg: "yolov8n-pose.pt")
+    monkeypatch.setattr(gui_app, "_resolve_model_paths", lambda _cfg: (model_path, scaler_path))
+    monkeypatch.setattr(gui_app, "candidate_roots", lambda: [tmp_path])
+    monkeypatch.setattr(gui_app, "apply_pose_device", lambda *args, **kwargs: "cpu")
+    monkeypatch.setattr(gui_app, "_persist_library_item", lambda **_kwargs: ("match-1", upload, tmp_path / "segments.csv"))
+
+    class FakePreprocessor:
+        def __init__(self, **_kwargs):
+            calls.append("preprocess:init")
+
+        def compute_court_mask(self, video_path):
+            calls.append("court:detect")
+            assert video_path == str(upload)
+            return "COURT_MASK", {}
+
+        def _source_frame_shape(self, video_path):
+            calls.append("preprocess:srcshape")
+            assert video_path == str(upload)
+            return (720, 1280, 3)
+
+        def iter_preprocess_frames(self, pose_stream, court_mask, src_width, src_height):
+            calls.append("preprocess:iter")
+            assert list(pose_stream) == ["POSE_STREAM"]
+            assert court_mask == "COURT_MASK"
+            assert (src_width, src_height) == (1280, 720)
+            return iter(["PRE_STREAM"])
+
+    class FakePoseExtractor:
+        def __init__(self, **_kwargs):
+            calls.append("pose:init")
+
+        def iter_pose_frames(self, **kwargs):
+            calls.append("pose:iter")
+            assert kwargs["target_fps"] == 5
+            return iter(["POSE_STREAM"])
+
+    class FakeFeatureEngineer:
+        feature_vector_size = FEATURE_DIM
+
+        def __init__(self, **_kwargs):
+            calls.append("features:init")
+
+        def iter_build_features(self, preprocessed_stream):
+            calls.append("features:iter")
+            assert list(preprocessed_stream) == ["PRE_STREAM"]
+            for _ in range(100):
+                yield np.ones(FEATURE_DIM, dtype=np.float32), 0
+
+    class FakeScaler:
+        def transform(self, row):
+            assert row.shape == (1, FEATURE_DIM)
+            return row
+
+    def fake_onnx_stream(model_path_arg, feature_rows, sequence_length, overlap, **_kwargs):
+        calls.append("inference:onnx")
+        assert model_path_arg == str(model_path)
+        assert sequence_length == 100
+        assert overlap == 50
+        rows = list(feature_rows)
+        assert len(rows) == 100
+        return np.zeros(len(rows), dtype=np.float32)
+
+    monkeypatch.setattr(gui_app, "DataPreprocessor", FakePreprocessor)
+    monkeypatch.setattr(gui_app, "PoseExtractor", FakePoseExtractor)
+    monkeypatch.setattr(gui_app, "FeatureEngineer", FakeFeatureEngineer)
+    monkeypatch.setattr(gui_app, "load_scaler_asset", lambda _path: FakeScaler())
+    monkeypatch.setattr(gui_app, "run_windowed_inference_average_onnx_stream", fake_onnx_stream)
+    monkeypatch.setattr(gui_app, "gaussian_filter1d", lambda values, sigma: values)
+
+    cfg = gui_app._normalize_config(
+        {
+            "fps": 5,
+            "seq_len": 100,
+            "overlap": 50,
+            "duration": 10,
+            "model_path": str(model_path),
+            "scaler_path": str(scaler_path),
+        }
+    )
+    job = gui_app._new_job_state("job-1", cfg)
+    job["paths"]["upload"] = str(upload)
+    job["paths"]["job_dir"] = str(tmp_path / "jobs" / "job-1")
+    gui_app.jobs.clear()
+    gui_app.jobs["job-1"] = job
+
+    gui_app._run_pipeline("job-1")
+
+    assert job["status"] == "completed"
+    assert calls == [
+        "preprocess:init",
+        "court:detect",
+        "pose:init",
+        "preprocess:srcshape",
+        "pose:iter",
+        "preprocess:iter",
+        "features:init",
+        "inference:onnx",
+        "features:iter",
+    ]
 
 
 def test_library_video_export_generates_cut_on_demand(tmp_path, monkeypatch):

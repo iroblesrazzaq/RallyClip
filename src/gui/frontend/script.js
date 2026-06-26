@@ -15,7 +15,17 @@ class RallyClipApp {
         this.etaSeconds = null;
         this.libraryId = null;
         this.viewingItemId = null;
+        this.previewPollTimeout = null;
         this.pointIntervals = [];
+        this.lastViewerTime = null;
+        this.viewerSeekInProgress = false;
+        this.previewWindowDuration = 45;
+        this.currentPreviewWindowStart = 0;
+        this.currentPreviewWindowDuration = 0;
+        this.sourceDuration = 0;
+        this.previewRequestSeq = 0;
+        this.prefetchWindowKey = null;
+        this.viewerSeekDragging = false;
         this.steps = ["pose", "preprocess", "feature", "inference", "output"];
         this.stepLabels = {
             pose: "Extracting pose",
@@ -51,6 +61,11 @@ class RallyClipApp {
         this.viewerTitle = document.getElementById("viewerTitle");
         this.viewerMeta = document.getElementById("viewerMeta");
         this.matchVideo = document.getElementById("matchVideo");
+        this.previewStatus = document.getElementById("previewStatus");
+        this.viewerTimeline = document.getElementById("viewerTimeline");
+        this.viewerSeek = document.getElementById("viewerSeek");
+        this.viewerCurrentTime = document.getElementById("viewerCurrentTime");
+        this.viewerDuration = document.getElementById("viewerDuration");
         this.viewerExportBtn = document.getElementById("viewerExportBtn");
         this.viewerCsvBtn = document.getElementById("viewerCsvBtn");
 
@@ -108,6 +123,23 @@ class RallyClipApp {
             if (this.viewingItemId) this.triggerDownload(`/api/library/${this.viewingItemId}/csv`);
         });
         this.matchVideo.addEventListener("timeupdate", () => this.handleViewerTimeUpdate());
+        this.matchVideo.addEventListener("seeking", () => {
+            this.viewerSeekInProgress = true;
+        });
+        this.matchVideo.addEventListener("seeked", () => {
+            this.viewerSeekInProgress = false;
+            this.lastViewerTime = this.getViewerSourceTime();
+        });
+        this.matchVideo.addEventListener("ended", () => this.handleViewerWindowEnded());
+        this.matchVideo.addEventListener("error", () => this.handleViewerVideoError());
+        this.viewerSeek.addEventListener("input", () => {
+            this.viewerSeekDragging = true;
+            this.updateViewerTimeline(Number(this.viewerSeek.value));
+        });
+        this.viewerSeek.addEventListener("change", () => {
+            this.viewerSeekDragging = false;
+            this.seekViewerToSourceTime(Number(this.viewerSeek.value), true);
+        });
         this.libraryGrid.addEventListener("click", (e) => this.onLibraryClick(e));
 
         this.dropZone.addEventListener("dragover", (e) => {
@@ -173,11 +205,21 @@ class RallyClipApp {
         this.uploadView.hidden = viewName !== "upload";
         this.progressCard.hidden = viewName !== "processing";
         if (viewName !== "viewer" && this.matchVideo) {
+            this.clearPreviewPoll();
             this.matchVideo.pause();
             this.matchVideo.removeAttribute("src");
             this.matchVideo.load();
             this.viewingItemId = null;
             this.pointIntervals = [];
+            this.lastViewerTime = null;
+            this.viewerSeekInProgress = false;
+            this.currentPreviewWindowStart = 0;
+            this.currentPreviewWindowDuration = 0;
+            this.sourceDuration = 0;
+            this.prefetchWindowKey = null;
+            this.viewerSeekDragging = false;
+            this.viewerTimeline.hidden = true;
+            this.previewStatus.hidden = true;
         }
     }
 
@@ -215,6 +257,7 @@ class RallyClipApp {
         const card = document.createElement("div");
         card.className = "lib-card";
         card.dataset.id = item.id;
+        if (typeof item.duration_s === "number") card.dataset.duration = String(item.duration_s);
         card.tabIndex = 0;
         card.setAttribute("role", "button");
         card.setAttribute("aria-label", `View ${item.name || "saved match"}`);
@@ -306,6 +349,7 @@ class RallyClipApp {
             id: card.dataset.id,
             name: card.querySelector(".lib-name")?.textContent || card.dataset.id,
             metaText: card.querySelector(".lib-meta")?.textContent || "",
+            duration_s: Number(card.dataset.duration) || 0,
             has_csv: Boolean(card.querySelector("button[data-action='csv']")),
         };
         this.showViewer(item);
@@ -315,13 +359,110 @@ class RallyClipApp {
         if (!item || !item.id) return;
         this.viewingItemId = item.id;
         this.pointIntervals = [];
+        this.lastViewerTime = null;
+        this.viewerSeekInProgress = false;
+        this.currentPreviewWindowStart = 0;
+        this.currentPreviewWindowDuration = 0;
+        this.sourceDuration = Number(item.duration_s) || 0;
+        this.prefetchWindowKey = null;
+        this.configureViewerTimeline(this.sourceDuration);
         this.viewerTitle.textContent = item.name || "Match";
         this.viewerMeta.textContent = item.metaText || this.cardMeta(item);
         this.viewerCsvBtn.hidden = !item.has_csv;
-        this.matchVideo.src = `/api/library/${item.id}/preview`;
+        this.matchVideo.removeAttribute("src");
         this.matchVideo.load();
+        this.previewStatus.textContent = "Preparing video preview...";
+        this.previewStatus.hidden = false;
         this.showView("viewer");
         await this.loadPointIntervals(item.id);
+        const start = this.pointIntervals.length ? this.pointIntervals[0].start : 0;
+        this.loadPreviewWindowAt(start, true);
+    }
+
+    clearPreviewPoll() {
+        if (this.previewPollTimeout) {
+            clearTimeout(this.previewPollTimeout);
+            this.previewPollTimeout = null;
+        }
+    }
+
+    buildPreviewWindowUrl(itemId, start, duration, status = false) {
+        const suffix = status ? "/status" : "";
+        return `/api/library/${itemId}/preview/window${suffix}?start=${start.toFixed(3)}&duration=${duration.toFixed(3)}`;
+    }
+
+    loadPreviewWindowAt(sourceTime, autoplay = true) {
+        if (!this.viewingItemId) return;
+        const itemId = this.viewingItemId;
+        const requestId = ++this.previewRequestSeq;
+        const targetSourceTime = Math.max(0, Number(sourceTime) || 0);
+        this.clearPreviewPoll();
+        this.previewStatus.textContent = "Preparing video preview...";
+        this.previewStatus.hidden = false;
+        const poll = async () => {
+            if (this.viewingItemId !== itemId || requestId !== this.previewRequestSeq) return;
+            try {
+                const resp = await fetch(this.buildPreviewWindowUrl(itemId, targetSourceTime, this.previewWindowDuration, true));
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                const payload = await resp.json();
+                if (this.viewingItemId !== itemId || requestId !== this.previewRequestSeq) return;
+                if (typeof payload.source_duration === "number" && payload.source_duration > 0) {
+                    this.sourceDuration = payload.source_duration;
+                    this.configureViewerTimeline(this.sourceDuration);
+                }
+                if (payload.ready && payload.preview_url) {
+                    this.currentPreviewWindowStart = Number(payload.start) || 0;
+                    this.currentPreviewWindowDuration = Number(payload.duration) || this.previewWindowDuration;
+                    this.previewStatus.hidden = true;
+                    this.matchVideo.src = `${payload.preview_url}&t=${Date.now()}`;
+                    this.lastViewerTime = null;
+                    this.viewerSeekInProgress = false;
+                    this.matchVideo.load();
+                    const seekAfterLoad = () => {
+                        if (this.viewingItemId !== itemId || requestId !== this.previewRequestSeq) return;
+                        const offset = Math.max(0, Math.min(targetSourceTime - this.currentPreviewWindowStart, this.matchVideo.duration || this.currentPreviewWindowDuration));
+                        this.matchVideo.currentTime = offset;
+                        this.lastViewerTime = this.currentPreviewWindowStart + offset;
+                        this.updateViewerTimeline(this.lastViewerTime);
+                        this.prefetchPreviewWindow(this.currentPreviewWindowStart + this.currentPreviewWindowDuration);
+                        if (autoplay) this.startViewerPlayback();
+                    };
+                    if (this.matchVideo.readyState >= 1) seekAfterLoad();
+                    else this.matchVideo.addEventListener("loadedmetadata", seekAfterLoad, { once: true });
+                    return;
+                }
+                this.previewStatus.textContent = "Preparing video preview...";
+                this.previewStatus.hidden = false;
+                this.previewPollTimeout = setTimeout(poll, 750);
+            } catch (err) {
+                console.error(err);
+                if (this.viewingItemId !== itemId || requestId !== this.previewRequestSeq) return;
+                this.previewStatus.textContent = "Still preparing preview...";
+                this.previewStatus.hidden = false;
+                this.previewPollTimeout = setTimeout(poll, 1500);
+            }
+        };
+        poll();
+    }
+
+    prefetchPreviewWindow(sourceTime) {
+        if (!this.viewingItemId || !Number.isFinite(sourceTime)) return;
+        if (this.sourceDuration > 0 && sourceTime >= this.sourceDuration - 0.1) return;
+        const start = Math.max(0, sourceTime);
+        const key = `${this.viewingItemId}:${start.toFixed(1)}`;
+        if (this.prefetchWindowKey === key) return;
+        this.prefetchWindowKey = key;
+        fetch(this.buildPreviewWindowUrl(this.viewingItemId, start, this.previewWindowDuration, true)).catch(() => {});
+    }
+
+    startViewerPlayback() {
+        const playPromise = this.matchVideo.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+            playPromise.catch(() => {
+                // Browser autoplay policy can still block this if the card click
+                // is not treated as the media gesture. The controls remain usable.
+            });
+        }
     }
 
     async loadPointIntervals(itemId) {
@@ -334,7 +475,7 @@ class RallyClipApp {
                 .map((seg) => ({ start: Number(seg.start), end: Number(seg.end) }))
                 .filter((seg) => Number.isFinite(seg.start) && Number.isFinite(seg.end) && seg.end > seg.start)
                 .sort((a, b) => a.start - b.start || a.end - b.end);
-            this.seekToFirstPoint();
+            this.lastViewerTime = null;
         } catch (err) {
             console.error(err);
             this.pointIntervals = [];
@@ -342,33 +483,92 @@ class RallyClipApp {
         }
     }
 
-    seekToFirstPoint() {
-        if (!this.pointIntervals.length) return;
-        const seek = () => {
-            if (!this.pointIntervals.length) return;
-            this.matchVideo.currentTime = this.pointIntervals[0].start;
-        };
-        if (this.matchVideo.readyState >= 1) seek();
-        else this.matchVideo.addEventListener("loadedmetadata", seek, { once: true });
+    configureViewerTimeline(duration) {
+        const safeDuration = Math.max(0, Number(duration) || 0);
+        this.viewerTimeline.hidden = safeDuration <= 0;
+        this.viewerSeek.min = "0";
+        this.viewerSeek.max = safeDuration > 0 ? String(safeDuration) : "0";
+        this.viewerSeek.step = "0.1";
+        this.viewerDuration.textContent = this.formatClock(safeDuration);
+        this.updateViewerTimeline(0);
+    }
+
+    formatClock(seconds) {
+        const safe = Math.max(0, Math.floor(Number(seconds) || 0));
+        const hours = Math.floor(safe / 3600);
+        const minutes = Math.floor((safe % 3600) / 60);
+        const secs = safe % 60;
+        if (hours > 0) return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+        return `${minutes}:${String(secs).padStart(2, "0")}`;
+    }
+
+    updateViewerTimeline(sourceTime) {
+        const safeTime = Math.max(0, Number(sourceTime) || 0);
+        this.viewerCurrentTime.textContent = this.formatClock(safeTime);
+        if (!this.viewerSeekDragging) {
+            this.viewerSeek.value = String(Math.min(safeTime, Number(this.viewerSeek.max) || safeTime));
+        }
+    }
+
+    getViewerSourceTime() {
+        return this.currentPreviewWindowStart + (Number(this.matchVideo.currentTime) || 0);
+    }
+
+    seekViewerToSourceTime(sourceTime, autoplay = true) {
+        const target = Math.max(0, Number(sourceTime) || 0);
+        const windowEnd = this.currentPreviewWindowStart + this.currentPreviewWindowDuration;
+        if (this.matchVideo.src && target >= this.currentPreviewWindowStart && target < windowEnd - 0.15) {
+            this.matchVideo.currentTime = Math.max(0, target - this.currentPreviewWindowStart);
+            this.lastViewerTime = target;
+            this.updateViewerTimeline(target);
+            if (autoplay) this.startViewerPlayback();
+            return;
+        }
+        this.loadPreviewWindowAt(target, autoplay);
+    }
+
+    handleViewerVideoError() {
+        if (!this.matchVideo.src || !this.matchVideo.error) return;
+        this.showToast("Could not play this video in the viewer.", "error");
     }
 
     handleViewerTimeUpdate() {
-        if (!this.pointIntervals.length || !this.matchVideo.src || this.matchVideo.paused) return;
-        const t = this.matchVideo.currentTime;
-        const idx = this.pointIntervals.findIndex((seg) => t >= seg.start && t <= seg.end);
-        if (idx < 0) return;
+        if (!this.matchVideo.src) return;
+        const t = this.getViewerSourceTime();
+        this.updateViewerTimeline(t);
+        const remaining = this.currentPreviewWindowStart + this.currentPreviewWindowDuration - t;
+        if (remaining < 8) this.prefetchPreviewWindow(this.currentPreviewWindowStart + this.currentPreviewWindowDuration);
+        if (!this.pointIntervals.length || this.matchVideo.paused) return;
+        const previous = this.lastViewerTime;
+        this.lastViewerTime = t;
+        if (this.viewerSeekInProgress || previous === null || t <= previous) return;
 
-        const segment = this.pointIntervals[idx];
-        const threshold = Math.min(0.15, Math.max(0.04, (segment.end - segment.start) / 4));
-        if (t < segment.end - threshold) return;
+        const elapsed = t - previous;
+        if (elapsed > 3.0) return;
+
+        const idx = this.findCrossedPointIndex(previous, t);
+        if (idx < 0) return;
 
         const next = this.pointIntervals[idx + 1];
         if (!next) {
             this.matchVideo.pause();
+            this.lastViewerTime = this.pointIntervals[idx].end;
+            this.updateViewerTimeline(this.lastViewerTime);
             return;
         }
-        this.matchVideo.currentTime = next.start;
-        this.matchVideo.play().catch(() => {});
+        this.seekViewerToSourceTime(next.start, true);
+    }
+
+    handleViewerWindowEnded() {
+        if (!this.matchVideo.src || !this.viewingItemId) return;
+        const sourceTime = this.getViewerSourceTime();
+        this.updateViewerTimeline(sourceTime);
+        if (this.sourceDuration > 0 && sourceTime >= this.sourceDuration - 0.25) return;
+        this.loadPreviewWindowAt(sourceTime, true);
+    }
+
+    findCrossedPointIndex(previous, current) {
+        return this.pointIntervals.findIndex((seg) => previous < seg.end && current >= seg.end);
     }
 
     // A real navigation to an attachment URL: the browser downloads it, and in
@@ -754,5 +954,5 @@ class RallyClipApp {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-    new RallyClipApp();
+    window.rallyClipApp = new RallyClipApp();
 });
