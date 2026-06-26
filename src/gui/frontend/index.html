@@ -8,29 +8,39 @@
 </head>
 <body>
     <section class="welcome-screen" id="welcomeScreen" hidden>
-        <div class="welcome-card">
-            <div class="brand">RallyClip</div>
-            <h1>Drop in a full tennis match. Get back just the points.</h1>
-            <p>Recommended: 1080p MP4, minimum 720p.</p>
-            <button type="button" class="btn btn-primary" id="welcomeStartBtn">Get started</button>
+        <div class="welcome-mast" aria-hidden="true">
+            <span></span>
+            <span></span>
+            <span></span>
+            <span></span>
+        </div>
+        <div class="welcome-composition">
+            <div class="welcome-content">
+                <h1 class="welcome-headline" id="welcomeHeadline" aria-live="polite"></h1>
+                <button type="button" class="btn btn-primary welcome-start" id="welcomeStartBtn">Get started</button>
+            </div>
+        </div>
+        <div class="home-controls">
+            <div class="theme-picker" id="themePicker" aria-label="Color mode">
+                <button type="button" data-theme-mode="system" aria-pressed="true">System</button>
+                <button type="button" data-theme-mode="dark" aria-pressed="false">Dark</button>
+            </div>
         </div>
     </section>
 
     <div class="app-shell" id="appShell" hidden>
-        <header class="app-header">
-            <div class="brand">RallyClip</div>
-        </header>
-
         <main class="workspace">
             <section class="run-card library-view" id="libraryView" hidden>
                 <div class="library-head">
-                    <h2>Saved matches</h2>
-                    <button type="button" class="btn btn-primary" id="newMatchBtn">New match</button>
+                    <div class="library-title">
+                        <img class="library-logo" src="rallyclip_logo_cropped.png" alt="" aria-hidden="true">
+                        <h2>Saved matches</h2>
+                    </div>
+                    <button type="button" class="btn btn-primary" id="newMatchBtn">Process a Match</button>
                 </div>
                 <div class="library-empty" id="libraryEmpty" hidden>
                     <p class="empty-title">No matches yet</p>
                     <p class="empty-sub">Drop in a full match and RallyClip saves just the points here.</p>
-                    <button type="button" class="btn btn-primary" id="emptyNewMatchBtn">Process a match</button>
                 </div>
                 <div class="library-grid" id="libraryGrid"></div>
             </section>
@@ -49,7 +59,7 @@
                 </div>
                 <div class="viewer-video-wrap">
                     <video class="match-video" id="matchVideo" controls playsinline preload="auto"></video>
-                    <div class="preview-status" id="previewStatus" hidden>Preparing video preview...</div>
+                    <div class="preview-status" id="previewStatus" aria-label="Loading video preview" hidden></div>
                 </div>
                 <div class="viewer-timeline" id="viewerTimeline" hidden>
                     <span id="viewerCurrentTime">0:00</span>
