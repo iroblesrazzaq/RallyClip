@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -20,8 +19,8 @@ from infer import (
     hysteresis_threshold,
     load_scaler_asset,
     load_model_from_checkpoint,
-    run_windowed_inference_average_onnx,
-    run_windowed_inference_average,
+    run_windowed_inference_average_onnx_stream,
+    run_windowed_inference_average_torch_stream,
     write_segments_csv,
 )
 from preprocessing.data_preprocessor import DataPreprocessor
@@ -291,7 +290,14 @@ def run_pipeline(cfg: RunConfig) -> int:
     court_mask, _ = pre.compute_court_mask(str(cfg.video_path))
 
     pose_extractor = PoseExtractor(model_path=cfg.yolo_weights, model_dir=models_dir)
-    raw_npz = pose_extractor.extract_pose_data(
+    # Fully streaming release path: pose -> preprocess -> features -> inference. Every stage is
+    # a generator, so frames are produced-and-discarded one at a time with no intermediate NPZ
+    # round-trips and no full-length buffer -- peak memory is O(batch + seq_len), independent of
+    # video length. (iter_pose_frames also avoids the old output_dir-less extract_pose_data call
+    # that littered a persistent pose_data/raw/ directory.)
+    # Native source resolution (identity rescale at 720p), as preprocess_single_video did.
+    src_height, src_width, _ = pre._source_frame_shape(str(cfg.video_path))
+    pose_stream = pose_extractor.iter_pose_frames(
         video_path=str(cfg.video_path),
         confidence_threshold=float(cfg.conf),
         start_time_seconds=int(cfg.start_time),
@@ -300,45 +306,41 @@ def run_pipeline(cfg: RunConfig) -> int:
         imgsz=int(cfg.imgsz),
         annotations_csv=None,
     )
+    preprocessed_stream = pre.iter_preprocess_frames(pose_stream, court_mask, src_width, src_height)
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_dir = Path(tmp)
-        preprocessed_npz = tmp_dir / "preprocessed.npz"
-        features_npz = tmp_dir / "features.npz"
+    fe = FeatureEngineer(
+        screen_width=int(cfg.screen_width),
+        screen_height=int(cfg.screen_height),
+        target_fps=float(cfg.fps),
+    )
+    scaler = load_scaler_asset(str(cfg.scaler_path))
 
-        pre.preprocess_single_video(
-            raw_npz, str(cfg.video_path), str(preprocessed_npz), overwrite=True, court_mask=court_mask
+    def _scaled_feature_rows():
+        # Scale each feature row as it streams. StandardScaler is per-feature, so row-wise
+        # scaling is identical to transforming the whole matrix at once.
+        for feature_vector, _target in fe.iter_build_features(preprocessed_stream):
+            row = np.asarray(feature_vector, dtype=np.float32).reshape(1, -1)
+            yield scaler.transform(row)[0].astype(np.float32)
+
+    if cfg.model_path.suffix.lower() == ".onnx":
+        avg_probs = run_windowed_inference_average_onnx_stream(
+            str(cfg.model_path),
+            _scaled_feature_rows(),
+            sequence_length=int(cfg.seq_len),
+            overlap=int(cfg.overlap),
         )
-
-        fe = FeatureEngineer(
-            screen_width=int(cfg.screen_width),
-            screen_height=int(cfg.screen_height),
-            target_fps=float(cfg.fps),
+    else:
+        model, device = load_model_from_checkpoint(str(cfg.model_path), return_logits=False)
+        avg_probs = run_windowed_inference_average_torch_stream(
+            model, device, _scaled_feature_rows(),
+            sequence_length=int(cfg.seq_len), overlap=int(cfg.overlap),
         )
-        fe.create_features_from_preprocessed(str(preprocessed_npz), str(features_npz), overwrite=True)
-
-        with np.load(str(features_npz)) as data:
-            features = data["features"].copy()
-        scaler = load_scaler_asset(str(cfg.scaler_path))
-        features = scaler.transform(features)
-        if cfg.model_path.suffix.lower() == ".onnx":
-            avg_probs = run_windowed_inference_average_onnx(
-                str(cfg.model_path),
-                features,
-                sequence_length=int(cfg.seq_len),
-                overlap=int(cfg.overlap),
-            )
-        else:
-            model, device = load_model_from_checkpoint(str(cfg.model_path), return_logits=False)
-            avg_probs = run_windowed_inference_average(
-                model, device, features, sequence_length=int(cfg.seq_len), overlap=int(cfg.overlap)
-            )
-        smoothed_probs = gaussian_filter1d(avg_probs.astype(np.float32), sigma=float(cfg.sigma))
-        min_duration_frames = int(round(max(0.0, float(cfg.min_dur_sec)) * float(cfg.fps)))
-        binary_pred = hysteresis_threshold(
-            smoothed_probs, low=float(cfg.low), high=float(cfg.high), min_duration=min_duration_frames
-        )
-        segments = extract_segments_from_binary(binary_pred)
+    smoothed_probs = gaussian_filter1d(avg_probs.astype(np.float32), sigma=float(cfg.sigma))
+    min_duration_frames = int(round(max(0.0, float(cfg.min_dur_sec)) * float(cfg.fps)))
+    binary_pred = hysteresis_threshold(
+        smoothed_probs, low=float(cfg.low), high=float(cfg.high), min_duration=min_duration_frames
+    )
+    segments = extract_segments_from_binary(binary_pred)
 
     if cfg.write_csv:
         cfg.csv_output_dir.mkdir(parents=True, exist_ok=True)

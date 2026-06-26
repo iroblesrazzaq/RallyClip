@@ -1,0 +1,33 @@
+{
+  "mode": "stub",
+  "frames": 27000,
+  "fps": 15.0,
+  "stage_time_s": {
+    "pose": 1.1663,
+    "preprocess": 1.185,
+    "features": 3.1979
+  },
+  "handoff_time_s": 5.5492,
+  "serialization": {
+    "write_s": 1.5706,
+    "write_mb": 4.412,
+    "read_s": 0.0011,
+    "read_mb": 4.412,
+    "total_s": 1.5717,
+    "total_mb": 8.824,
+    "writes": 3,
+    "reads": 3
+  },
+  "peak_rss_delta_mb": 201.8,
+  "elapsed_total_s": 5.6002,
+  "correctness": {
+    "features_shape": [
+      26999,
+      362
+    ],
+    "features_sha256": "a8c09cb78e60142d",
+    "targets_sha256": "548964d5d24daec0",
+    "num_segments": 540,
+    "segments_sha256": "173a354afa9665f5"
+  }
+}

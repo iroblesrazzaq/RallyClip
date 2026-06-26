@@ -851,7 +851,13 @@ def _run_pipeline(job_id: str) -> None:
                 job["pose_eta_seconds"] = pose_eta
                 job["pose_throughput_fps"] = smoothed_fps
 
-        raw_npz = extractor.extract_pose_data(
+        # Streaming hand-off: pose -> preprocess -> features chain through their generators, so
+        # pose_data and the preprocessed records are produced-and-discarded one frame at a time
+        # (no intermediate NPZ, no full-length pose/preprocess buffers). The pose progress
+        # callback drives the bar while the chain is consumed. Native source resolution gives an
+        # identity rescale at 720p, exactly as preprocess_single_video did internally.
+        src_height, src_width, _ = pre._source_frame_shape(str(upload_path))
+        pose_stream = extractor.iter_pose_frames(
             video_path=str(upload_path),
             confidence_threshold=float(cfg["conf"]),
             start_time_seconds=int(cfg["start_time"]),
@@ -860,40 +866,25 @@ def _run_pipeline(job_id: str) -> None:
             imgsz=int(cfg["imgsz"]),
             annotations_csv=None,
             progress_callback=pose_progress,
-            output_dir=str(job_dir),
         )
-        job["paths"]["raw_npz"] = raw_npz
-        _set_step(job, "pose", "completed", 100)
-
-        _check_cancel(job)
-        _set_step(job, "preprocess", "in_progress", 5)
-        preprocessed_npz = str(job_dir / "preprocessed.npz")
-        success_pre = pre.preprocess_single_video(
-            raw_npz, str(upload_path), preprocessed_npz, overwrite=True, court_mask=court_mask
-        )
-        if not success_pre or not Path(preprocessed_npz).exists():
-            raise RuntimeError("Preprocessing failed")
-        job["paths"]["preprocessed_npz"] = preprocessed_npz
-        _set_step(job, "preprocess", "completed", 100)
-
-        _check_cancel(job)
-        _set_step(job, "feature", "in_progress", 5)
+        preprocessed_stream = pre.iter_preprocess_frames(pose_stream, court_mask, src_width, src_height)
         fe = FeatureEngineer(
             screen_width=int(cfg["screen_width"]),
             screen_height=int(cfg["screen_height"]),
             target_fps=float(cfg["fps"]),
         )
-        features_npz = str(job_dir / "features.npz")
-        success_fe = fe.create_features_from_preprocessed(preprocessed_npz, features_npz, overwrite=True)
-        if not success_fe or not Path(features_npz).exists():
-            raise RuntimeError("Feature engineering failed")
-        job["paths"]["features_npz"] = features_npz
+        feature_rows = [feature_vector for feature_vector, _target in fe.iter_build_features(preprocessed_stream)]
+        if feature_rows:
+            features = np.array(feature_rows, dtype=np.float32)
+        else:
+            features = np.empty((0, fe.feature_vector_size), dtype=np.float32)
+        del feature_rows
+        _set_step(job, "pose", "completed", 100)
+        _set_step(job, "preprocess", "completed", 100)
         _set_step(job, "feature", "completed", 100)
 
         _check_cancel(job)
         _set_step(job, "inference", "in_progress", 5)
-        with np.load(features_npz) as data:
-            features = data["features"].copy()
         scaler = load_scaler_asset(str(scaler_path))
         features = scaler.transform(features)
 
@@ -953,14 +944,8 @@ def _run_pipeline(job_id: str) -> None:
         _set_step(job, "output", "completed", 100)
         job["status"] = "completed"
         job["eta_seconds"] = 0.0
-        # Cleanup intermediates now that outputs are ready
-        for key in ("raw_npz", "preprocessed_npz", "features_npz"):
-            path = job["paths"].get(key)
-            if path and os.path.exists(path):
-                try:
-                    os.remove(path)
-                except Exception:
-                    pass
+        # No intermediate NPZs are written anymore (stages hand off in memory), so there
+        # is nothing to clean up between stages.
         # Remove uploaded input and optionally job dir if outputs are elsewhere and keep flag not set
         if not _keep_jobs():
             upload_path.unlink(missing_ok=True)
