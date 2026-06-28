@@ -1,0 +1,77 @@
+[
+  {
+    "id": "runtime-video-validation",
+    "priority": 1,
+    "area": "runtime",
+    "title": "Validate input videos before segmentation",
+    "user_visible_behavior": "CLI and GUI runs reject missing, unreadable, or unsupported video inputs with a clear error before starting expensive pose extraction.",
+    "status": "not_started",
+    "verification": [
+      "Run the standard verification command from AGENTS.md.",
+      "Run the CLI against a missing video path and confirm the error names the invalid input.",
+      "Run the GUI or backend validation path with an invalid file and confirm the user-facing error is clear."
+    ],
+    "evidence": "",
+    "notes": ""
+  },
+  {
+    "id": "cli-config-contract",
+    "priority": 2,
+    "area": "cli",
+    "title": "Keep CLI config behavior stable",
+    "user_visible_behavior": "Users can run RallyClip with a TOML config file or explicit CLI flags and get consistent output paths, CSV options, and inference settings.",
+    "status": "not_started",
+    "verification": [
+      "Run the standard verification command from AGENTS.md.",
+      "Run `rallyclip --help` and confirm documented flags are present.",
+      "Run a config parsing smoke check with a minimal config and verify resolved options match expectations."
+    ],
+    "evidence": "",
+    "notes": ""
+  },
+  {
+    "id": "desktop-gui-processing-flow",
+    "priority": 3,
+    "area": "desktop_gui",
+    "title": "Preserve desktop and browser GUI processing flow",
+    "user_visible_behavior": "Users can select a video, start segmentation, view progress, and receive completion or error status from the local GUI without losing device or output settings.",
+    "status": "not_started",
+    "verification": [
+      "Run the standard verification command from AGENTS.md.",
+      "Start the GUI with the start command from `init.sh`.",
+      "Exercise a short local video through the GUI and record the resulting status, output path, or screenshot."
+    ],
+    "evidence": "",
+    "notes": ""
+  },
+  {
+    "id": "segmentation-postprocess",
+    "priority": 4,
+    "area": "segmentation",
+    "title": "Stabilize rally interval decoding",
+    "user_visible_behavior": "Frame probabilities decode into tennis rally intervals with stable thresholds, minimum duration handling, and CSV/video output timing.",
+    "status": "not_started",
+    "verification": [
+      "Run the standard verification command from AGENTS.md.",
+      "Run a deterministic decode check on representative probability sequences.",
+      "Confirm generated segment timestamps align with expected frame or second boundaries."
+    ],
+    "evidence": "",
+    "notes": ""
+  },
+  {
+    "id": "training-quality-harness",
+    "priority": 5,
+    "area": "training",
+    "title": "Track training and evaluation quality",
+    "user_visible_behavior": "Training changes report repeatable frame and segment metrics so model quality regressions are visible before release.",
+    "status": "not_started",
+    "verification": [
+      "Run the standard verification command from AGENTS.md.",
+      "Run the quality evaluation entry point on a small fixture or cached sample.",
+      "Record metric output and confirm it is stable across a rerun."
+    ],
+    "evidence": "",
+    "notes": ""
+  }
+]
