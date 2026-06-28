@@ -50,18 +50,23 @@
                     <video class="match-video match-video-buffer" id="matchVideoBuffer" playsinline preload="auto" tabindex="-1" aria-hidden="true"></video>
                     <div class="preview-status" id="previewStatus" aria-label="Loading video preview" hidden></div>
                     <div class="viewer-overlay" id="viewerOverlay">
-                        <div class="viewer-controls" id="viewerControls">
-                            <button type="button" class="viewer-control-btn" id="viewerBackBtn" aria-label="Back 5 seconds">← 5s</button>
-                            <button type="button" class="viewer-control-btn viewer-play-btn" id="viewerPlayPauseBtn" aria-label="Play video">Play</button>
-                            <button type="button" class="viewer-control-btn" id="viewerForwardBtn" aria-label="Forward 5 seconds">5s →</button>
-                        </div>
                         <div class="viewer-timeline" id="viewerTimeline" hidden>
-                            <span id="viewerCurrentTime">0:00</span>
                             <div class="viewer-seek-wrap">
                                 <div class="viewer-buffer-track" id="viewerBufferTrack" aria-hidden="true"></div>
+                                <div class="viewer-point-track" id="viewerPointTrack" aria-hidden="true"></div>
                                 <input type="range" id="viewerSeek" min="0" max="0" step="0.1" value="0" aria-label="Match timeline">
                             </div>
-                            <span id="viewerDuration">0:00</span>
+                            <div class="viewer-control-row">
+                                <div class="viewer-left-controls">
+                                    <span class="viewer-time"><span id="viewerCurrentTime">0:00</span> / <span id="viewerDuration">0:00</span></span>
+                                    <div class="viewer-controls" id="viewerControls">
+                                        <button type="button" class="viewer-control-btn" id="viewerBackBtn" aria-label="Back 5 seconds">↺</button>
+                                        <button type="button" class="viewer-control-btn viewer-play-btn" id="viewerPlayPauseBtn" aria-label="Play video">▶</button>
+                                        <button type="button" class="viewer-control-btn" id="viewerForwardBtn" aria-label="Forward 5 seconds">↻</button>
+                                    </div>
+                                </div>
+                                <button type="button" class="viewer-control-btn viewer-fullscreen-btn" id="viewerFullscreenBtn" aria-label="Enter fullscreen">⛶</button>
+                            </div>
                         </div>
                     </div>
                 </div>

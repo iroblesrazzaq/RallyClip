@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="RallyClip logo">
+  <defs>
+    <mask id="ball-cutouts" maskUnits="userSpaceOnUse">
+      <rect width="1024" height="1024" fill="black"/>
+      <circle cx="512" cy="512" r="216" fill="white"/>
+      <circle cx="202" cy="512" r="216" fill="none" stroke="black" stroke-width="34"/>
+      <circle cx="822" cy="512" r="216" fill="none" stroke="black" stroke-width="34"/>
+    </mask>
+  </defs>
+  <g fill="none" stroke="#000000" stroke-width="52" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="4">
+    <path d="M 274 316 L 84 512 L 274 708"/>
+    <path d="M 750 316 L 940 512 L 750 708"/>
+  </g>
+  <circle cx="512" cy="512" r="216" fill="#000000" mask="url(#ball-cutouts)"/>
+</svg>

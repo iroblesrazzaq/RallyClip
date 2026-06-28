@@ -162,9 +162,9 @@ def test_ui_library_renders_and_deletes_item(page: Page, ui_backend: BackendClie
     expect(page.locator(f'.lib-card[data-id="{item_id}"]')).to_have_count(0)
 
 
-def test_ui_viewer_uses_preview_windows_and_point_crossing(page: Page, ui_backend: BackendClient):
-    """Saved-match viewer loads bounded preview windows and detects point-end
-    crossings in source-video time."""
+def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: BackendClient):
+    """Saved-match viewer loads source chunks and schedules point skips from
+    explicit source-time segments."""
     item_id = _fabricate_viewer_item()
     _open_to_library(page, ui_backend.base_url)
 
@@ -172,52 +172,247 @@ def test_ui_viewer_uses_preview_windows_and_point_crossing(page: Page, ui_backen
     expect(page.locator("#viewerView")).to_be_visible()
     expect(page.locator("#viewerTimeline")).to_be_visible(timeout=30_000)
     page.wait_for_function(
-        "() => window.rallyClipApp?.matchVideo?.src.includes('/preview/window')",
+        "() => { const src = window.rallyClipApp?.matchVideo?.src || ''; return src.includes('/preview/window'); }",
+        timeout=30_000,
+    )
+    page.wait_for_function(
+        "() => Boolean(window.rallyClipApp?.viewerHasVideo?.())",
         timeout=30_000,
     )
     expect(page.locator("#viewerBackBtn")).to_be_visible()
     expect(page.locator("#viewerPlayPauseBtn")).to_be_visible()
     expect(page.locator("#viewerForwardBtn")).to_be_visible()
-    result = page.evaluate(
+
+    startup = page.evaluate(
         """() => {
             const app = window.rallyClipApp;
-            app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }];
             return {
-                crosses: app.findCrossedPointIndex(1.95, 2.10),
-                gap: app.findCrossedPointIndex(2.10, 3.90),
-                later: app.findCrossedPointIndex(4.90, 5.05),
+                sourceDuration: app.sourceDuration,
+                chunkDuration: app.previewWindowDuration,
+                points: app.pointIntervals,
+                seekValue: Number(app.viewerSeek.value),
+                pointMarkers: app.viewerPointTrack.querySelectorAll(".viewer-point-segment").length,
             };
         }"""
     )
-    assert result == {"crosses": 0, "gap": -1, "later": 1}
+    assert startup["sourceDuration"] == 12
+    assert startup["chunkDuration"] == 8
+    assert startup["points"] == [{"start": 1, "end": 2}, {"start": 4, "end": 5}]
+    assert startup["seekValue"] == pytest.approx(1.0, abs=0.2)
+    assert startup["pointMarkers"] == 2
 
-    prefetch_plan = page.evaluate(
+    scheduler = page.evaluate(
         """() => {
             const app = window.rallyClipApp;
             app.previewWindowDuration = 8;
             app.previewLookaheadChunks = 12;
-            app.pointBufferSeconds = 5;
-            app.sourceDuration = 200;
+            app.sourceDuration = 120;
             app.pointIntervals = [
                 { start: 30, end: 40 },
                 { start: 70, end: 74 },
                 { start: 100, end: 104 },
             ];
+            const inside = app.playbackSegmentForSourceTime(35);
+            const beforeFirst = app.playbackSegmentForSourceTime(20);
+            const gap = app.playbackSegmentForSourceTime(55);
+            const tail = app.playbackSegmentForSourceTime(110);
+            app.activePlaybackSegment = app.playbackSegmentForSourceTime(35);
+            const insidePrefetch = app.getSchedulerPrefetchStarts(35);
+            app.activePlaybackSegment = app.playbackSegmentForSourceTime(55);
+            const gapPrefetch = app.getSchedulerPrefetchStarts(55);
+            app.activePlaybackSegment = app.playbackSegmentForSourceTime(110);
+            app.setPlaybackSegmentForSourceTime(55);
             return {
                 canonical: [
                     app.canonicalPreviewChunkStart(30),
                     app.canonicalPreviewChunkStart(41.9),
                     app.canonicalPreviewChunkStart(42),
                 ],
-                starts: app.getPointAwarePrefetchStarts(30),
-                gapStarts: app.getPointAwarePrefetchStarts(55),
+                currentWindow: app.previewWindowRequestForSourceTime(30),
+                nextWindow: app.previewWindowRequestForSourceTime(64),
+                inside,
+                beforeFirst,
+                gap,
+                tail,
+                insidePrefetch,
+                gapPrefetch,
+                backwardSeekSegment: app.activePlaybackSegment,
             };
         }"""
     )
-    assert prefetch_plan == {
+    assert scheduler == {
         "canonical": [24, 40, 40],
-        "starts": [32, 40, 64, 72],
-        "gapStarts": [56, 64, 72, 88, 96, 104],
+        "currentWindow": {"start": 24, "duration": 8, "end": 32},
+        "nextWindow": {"start": 64, "duration": 8, "end": 72},
+        "inside": {"kind": "point", "start": 35, "end": 40, "pointIndex": 0, "nextPointIndex": 1},
+        "beforeFirst": {"kind": "gap", "start": 20, "end": 40, "pointIndex": 0, "nextPointIndex": 1},
+        "gap": {"kind": "gap", "start": 55, "end": 74, "pointIndex": 1, "nextPointIndex": 2},
+        "tail": {"kind": "tail", "start": 110, "end": 120, "pointIndex": None, "nextPointIndex": None},
+        "insidePrefetch": [32, 64],
+        "gapPrefetch": [48, 56, 64, 72, 96],
+        "backwardSeekSegment": {"kind": "gap", "start": 55, "end": 74, "pointIndex": 1, "nextPointIndex": 2},
+    }
+
+    default_skip = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            const originalSeek = app.seekViewerToSourceTime.bind(app);
+            const originalGetTime = app.getViewerSourceTime.bind(app);
+            const originalPrefetch = app.prefetchForPlaybackSchedule.bind(app);
+            const pausedDescriptor = Object.getOwnPropertyDescriptor(app.matchVideo, "paused");
+            const calls = [];
+            app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }, { start: 10, end: 12 }];
+            app.activePlaybackSegment = { kind: "point", start: 1.8, end: 2, pointIndex: 0, nextPointIndex: 1 };
+            app.getViewerSourceTime = () => 2.03;
+            app.prefetchForPlaybackSchedule = () => {};
+            app.seekViewerToSourceTime = (time, autoplay) => calls.push({ time, autoplay });
+            Object.defineProperty(app.matchVideo, "paused", { value: false, configurable: true });
+            app.handleViewerTimeUpdate();
+            app.seekViewerToSourceTime = originalSeek;
+            app.getViewerSourceTime = originalGetTime;
+            app.prefetchForPlaybackSchedule = originalPrefetch;
+            if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
+            else delete app.matchVideo.paused;
+            return calls;
+        }"""
+    )
+    assert default_skip == [{"time": 4, "autoplay": True}]
+
+    gap_to_point_start_is_continuous = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            const originalSeek = app.seekViewerToSourceTime.bind(app);
+            const originalGetTime = app.getViewerSourceTime.bind(app);
+            const originalPrefetch = app.prefetchForPlaybackSchedule.bind(app);
+            const originalPause = app.matchVideo.pause;
+            const pausedDescriptor = Object.getOwnPropertyDescriptor(app.matchVideo, "paused");
+            const calls = [];
+            let pauses = 0;
+            app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }, { start: 10, end: 12 }];
+            app.activePlaybackSegment = { kind: "gap", start: 2.5, end: 5, pointIndex: 1, nextPointIndex: 2 };
+            app.lastViewerTime = 3.95;
+            app.getViewerSourceTime = () => 4.03;
+            app.prefetchForPlaybackSchedule = () => {};
+            app.seekViewerToSourceTime = (time, autoplay) => calls.push({ time, autoplay });
+            Object.defineProperty(app.matchVideo, "paused", { value: false, configurable: true });
+            Object.defineProperty(app.matchVideo, "pause", {
+                value: () => { pauses += 1; },
+                configurable: true,
+            });
+            app.handleViewerTimeUpdate();
+            const result = {
+                calls,
+                pauses,
+                lastViewerTime: app.lastViewerTime,
+                activePlaybackSegment: app.activePlaybackSegment,
+            };
+            app.seekViewerToSourceTime = originalSeek;
+            app.getViewerSourceTime = originalGetTime;
+            app.prefetchForPlaybackSchedule = originalPrefetch;
+            app.matchVideo.pause = originalPause;
+            if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
+            else delete app.matchVideo.paused;
+            return result;
+        }"""
+    )
+    assert gap_to_point_start_is_continuous == {
+        "calls": [],
+        "pauses": 0,
+        "lastViewerTime": 4.03,
+        "activePlaybackSegment": {"kind": "gap", "start": 2.5, "end": 5, "pointIndex": 1, "nextPointIndex": 2},
+    }
+
+    manual_gap_bridge = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            const originalSeek = app.seekViewerToSourceTime.bind(app);
+            const originalGetTime = app.getViewerSourceTime.bind(app);
+            const originalPrefetch = app.prefetchForPlaybackSchedule.bind(app);
+            const pausedDescriptor = Object.getOwnPropertyDescriptor(app.matchVideo, "paused");
+            const calls = [];
+            app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }, { start: 10, end: 12 }];
+            app.activePlaybackSegment = { kind: "gap", start: 2.5, end: 5, pointIndex: 1, nextPointIndex: 2 };
+            app.getViewerSourceTime = () => 5.04;
+            app.prefetchForPlaybackSchedule = () => {};
+            app.seekViewerToSourceTime = (time, autoplay) => calls.push({ time, autoplay });
+            Object.defineProperty(app.matchVideo, "paused", { value: false, configurable: true });
+            app.handleViewerTimeUpdate();
+            app.seekViewerToSourceTime = originalSeek;
+            app.getViewerSourceTime = originalGetTime;
+            app.prefetchForPlaybackSchedule = originalPrefetch;
+            if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
+            else delete app.matchVideo.paused;
+            return calls;
+        }"""
+    )
+    assert manual_gap_bridge == [{"time": 10, "autoplay": True}]
+
+    bridge_continues_across_chunks = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            const originalLoad = app.loadPreviewWindowAt.bind(app);
+            const calls = [];
+            app.loadPreviewWindowAt = (time, autoplay, options) => calls.push({
+                time,
+                autoplay,
+                preserveSegment: Boolean(options?.preserveSegment),
+            });
+            app.viewingItemId = "match-ready";
+            app.sourceDuration = 120;
+            app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }, { start: 10, end: 12 }];
+            app.activePlaybackSegment = { kind: "gap", start: 2.5, end: 5, pointIndex: 1, nextPointIndex: 2 };
+            app.currentPreviewWindowStart = 2;
+            app.currentPreviewWindowDuration = 1;
+            app.matchVideo.dataset.windowStart = "2";
+            app.matchVideo.dataset.windowDuration = "1";
+            app.readyPreviewWindows.clear();
+            app.previewLoadInProgress = false;
+            app.handleViewerWindowEnded();
+            app.loadPreviewWindowAt = originalLoad;
+            return calls;
+        }"""
+    )
+    assert bridge_continues_across_chunks == [{"time": 3, "autoplay": True, "preserveSegment": True}]
+
+    chunk_error = page.evaluate(
+        """() => new Promise((resolve) => {
+            const app = window.rallyClipApp;
+            const originalFetch = window.fetch;
+            const originalToast = app.showToast.bind(app);
+            const toasts = [];
+            window.fetch = () => Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({ status: "error", ready: false, error: "Missing VP8 encoder" }),
+            });
+            app.showToast = (message, kind) => toasts.push({ message, kind });
+            app.viewingItemId = "match-error";
+            app.previewRequestSeq = 0;
+            app.previewLoadInProgress = false;
+            app.previewPollTimeout = null;
+            app.hidePreviewLoading();
+            app.loadPreviewWindowAt(12, true);
+            setTimeout(() => {
+                const result = {
+                    loading: app.previewLoadInProgress,
+                    pollActive: Boolean(app.previewPollTimeout),
+                    errorText: app.previewStatus.textContent,
+                    hidden: app.previewStatus.hidden,
+                    isError: app.previewStatus.classList.contains("is-error"),
+                    toasts,
+                };
+                window.fetch = originalFetch;
+                app.showToast = originalToast;
+                resolve(result);
+            }, 0);
+        })"""
+    )
+    assert chunk_error == {
+        "loading": False,
+        "pollActive": False,
+        "errorText": "Missing VP8 encoder",
+        "hidden": False,
+        "isError": True,
+        "toasts": [{"message": "Missing VP8 encoder", "kind": "error"}],
     }
 
     loading_state = page.evaluate(
@@ -287,9 +482,24 @@ def test_ui_viewer_uses_preview_windows_and_point_crossing(page: Page, ui_backen
             paused = false;
             app.updateViewerControls();
             const playingLabel = app.viewerPlayPauseBtn.textContent;
+            const defaultFullscreenLabel = app.viewerFullscreenBtn.textContent;
+            const defaultFullscreenAria = app.viewerFullscreenBtn.getAttribute("aria-label");
+            const originalFullscreenElement = app.viewerFullscreenElement.bind(app);
+            app.viewerFullscreenElement = () => app.viewerVideoWrap;
+            app.updateViewerFullscreenState();
+            const activeFullscreenLabel = app.viewerFullscreenBtn.textContent;
+            const activeFullscreenAria = app.viewerFullscreenBtn.getAttribute("aria-label");
+            const activeFullscreenClass = app.viewerVideoWrap.classList.contains("is-fullscreen");
+            app.viewerFullscreenElement = () => null;
+            app.updateViewerFullscreenState();
+            const resetFullscreenLabel = app.viewerFullscreenBtn.textContent;
+            const resetFullscreenClass = app.viewerVideoWrap.classList.contains("is-fullscreen");
+            app.viewerFullscreenElement = originalFullscreenElement;
 
             app.currentPreviewWindowStart = 20;
             app.currentPreviewWindowDuration = 20;
+            app.matchVideo.dataset.windowStart = "20";
+            app.matchVideo.dataset.windowDuration = "20";
             app.sourceDuration = 120;
             app.matchVideo.currentTime = 10;
             const calls = [];
@@ -312,15 +522,52 @@ def test_ui_viewer_uses_preview_windows_and_point_crossing(page: Page, ui_backen
 
             if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
             else delete app.matchVideo.paused;
-            return { pausedLabel, playingLabel, calls, prevented };
+            return {
+                pausedLabel,
+                playingLabel,
+                defaultFullscreenLabel,
+                defaultFullscreenAria,
+                activeFullscreenLabel,
+                activeFullscreenAria,
+                activeFullscreenClass,
+                resetFullscreenLabel,
+                resetFullscreenClass,
+                calls,
+                prevented,
+            };
         }"""
     )
     assert controls == {
-        "pausedLabel": "Play",
-        "playingLabel": "Pause",
+        "pausedLabel": "▶",
+        "playingLabel": "❚❚",
+        "defaultFullscreenLabel": "⛶",
+        "defaultFullscreenAria": "Enter fullscreen",
+        "activeFullscreenLabel": "×",
+        "activeFullscreenAria": "Exit fullscreen",
+        "activeFullscreenClass": True,
+        "resetFullscreenLabel": "⛶",
+        "resetFullscreenClass": False,
         "calls": [{"time": 23, "autoplay": True}, {"time": 33, "autoplay": True}],
         "prevented": 2,
     }
+
+    skip_buttons = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            const calls = [];
+            const originalSeek = app.seekViewerToSourceTime.bind(app);
+            const originalGetTime = app.getViewerSourceTime.bind(app);
+            app.sourceDuration = 120;
+            app.getViewerSourceTime = () => 30;
+            app.seekViewerToSourceTime = (time, autoplay) => calls.push({ time, autoplay });
+            app.viewerBackBtn.click();
+            app.viewerForwardBtn.click();
+            app.seekViewerToSourceTime = originalSeek;
+            app.getViewerSourceTime = originalGetTime;
+            return calls;
+        }"""
+    )
+    assert skip_buttons == [{"time": 25, "autoplay": True}, {"time": 35, "autoplay": True}]
 
     timeline_seek = page.evaluate(
         """() => {
@@ -346,78 +593,18 @@ def test_ui_viewer_uses_preview_windows_and_point_crossing(page: Page, ui_backen
     )
     assert timeline_seek == [{"time": 50, "autoplay": False}]
 
-    jump = page.evaluate(
+    timeline_config_preserves_time = page.evaluate(
         """() => {
             const app = window.rallyClipApp;
-            app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }];
-            app.currentPreviewWindowStart = 1;
-            app.currentPreviewWindowDuration = 11;
-            app.viewerSeekInProgress = false;
-            app.matchVideo.play = () => Promise.resolve();
-            Object.defineProperty(app.matchVideo, "paused", { value: false, configurable: true });
-            app.matchVideo.currentTime = 1.1;
-            app.lastViewerTime = 1.95;
-            app.handleViewerTimeUpdate();
-            return { videoTime: app.matchVideo.currentTime, sourceTime: app.lastViewerTime };
+            app.configureViewerTimeline(120, 42.5);
+            return {
+                value: Number(app.viewerSeek.value),
+                current: app.viewerCurrentTime.textContent,
+                duration: app.viewerDuration.textContent,
+            };
         }"""
     )
-    assert jump["videoTime"] == pytest.approx(3.0, abs=0.1)
-    assert jump["sourceTime"] == pytest.approx(4.0, abs=0.1)
-
-    delayed_jump = page.evaluate(
-        """() => {
-            const app = window.rallyClipApp;
-            app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }];
-            app.currentPreviewWindowStart = 1;
-            app.currentPreviewWindowDuration = 11;
-            app.viewerSeekInProgress = false;
-            app.matchVideo.play = () => Promise.resolve();
-            Object.defineProperty(app.matchVideo, "paused", { value: false, configurable: true });
-            app.matchVideo.currentTime = 3.2;
-            app.lastViewerTime = 1.0;
-            app.handleViewerTimeUpdate();
-            return { videoTime: app.matchVideo.currentTime, sourceTime: app.lastViewerTime };
-        }"""
-    )
-    assert delayed_jump["videoTime"] == pytest.approx(3.0, abs=0.1)
-    assert delayed_jump["sourceTime"] == pytest.approx(4.0, abs=0.1)
-
-    ended_jump = page.evaluate(
-        """() => {
-            const app = window.rallyClipApp;
-            app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }];
-            app.currentPreviewWindowStart = 1;
-            app.currentPreviewWindowDuration = 3.2;
-            app.viewerSeekInProgress = false;
-            app.previewLoadInProgress = false;
-            app.matchVideo.play = () => Promise.resolve();
-            app.matchVideo.currentTime = 3.2;
-            app.lastViewerTime = 1.5;
-            app.handleViewerWindowEnded();
-            return { videoTime: app.matchVideo.currentTime, sourceTime: app.lastViewerTime };
-        }"""
-    )
-    assert ended_jump["videoTime"] == pytest.approx(3.0, abs=0.1)
-    assert ended_jump["sourceTime"] == pytest.approx(4.0, abs=0.1)
-
-    chunk_continue = page.evaluate(
-        """() => {
-            const app = window.rallyClipApp;
-            const calls = [];
-            const originalLoad = app.loadPreviewWindowAt.bind(app);
-            app.loadPreviewWindowAt = (time, autoplay) => calls.push({ time, autoplay });
-            app.pointIntervals = [{ start: 24, end: 44 }, { start: 70, end: 74 }];
-            app.currentPreviewWindowStart = 24;
-            app.currentPreviewWindowDuration = 8;
-            app.sourceDuration = 120;
-            app.lastViewerTime = 24.5;
-            app.previewLoadInProgress = false;
-            app.handleViewerWindowEnded();
-            app.loadPreviewWindowAt = originalLoad;
-            return calls;
-        }"""
-    )
-    assert chunk_continue == [{"time": 32, "autoplay": True}]
+    assert timeline_config_preserves_time == {"value": 42.5, "current": "0:42", "duration": "2:00"}
 
 
 def test_ui_new_match_runs_to_library(page: Page, ui_backend: BackendClient, ui_clip: Path):
