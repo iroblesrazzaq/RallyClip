@@ -1,0 +1,85 @@
+{
+  "artifact": {
+    "artifact_id": "93fee790f0ac9292c5b9de36e49482b340dd51c90a37fbc2d3931bbfe7cf09b8",
+    "created_at_iso": "2026-03-31T09:40:28.058522Z",
+    "created_at_unix": 1774950028,
+    "description": "Original RallyClip artifact restored from the historical 15 fps / 300 frame checkpoint.",
+    "model_version": "rallyclip_v0.1.0_legacy",
+    "stage": "legacy"
+  },
+  "data": {
+    "mirror_train": false,
+    "notes": "Legacy model trained on an earlier manually annotated dataset. Exact video list was not recovered from tracked metadata.",
+    "split_strategy": "historical_unknown",
+    "video_count": 8,
+    "video_ids": []
+  },
+  "feature_pipeline": {
+    "conf": 0.25,
+    "feature_dim": 360,
+    "feature_set": "v1",
+    "imgsz": null,
+    "sample_fps": 15.0,
+    "sampling_mode": null,
+    "target_fps": 15.0,
+    "yolo_model": "historical_unknown"
+  },
+  "files": {
+    "manifest_file": "manifest.json",
+    "model_file": "model.onnx",
+    "model_sha256": "190a61b309a2604d4dbe94d4dcb4f61053741134b03e32b203f19b9f9e118599",
+    "scaler_file": "scaler.json",
+    "scaler_sha256": "703d5b5adde6dd11305e09eb20bb0e5525c5a85f1e1c399b588212c077940a53"
+  },
+  "inference": {
+    "input_name": "features",
+    "input_shape": [
+      1,
+      300,
+      360
+    ],
+    "onnx_opset": 17,
+    "output_name": "logits",
+    "overlap_frames": 150,
+    "overlap_seconds": 10.0,
+    "seq_len_frames": 300,
+    "seq_len_seconds": 20.0,
+    "threshold": 0.5
+  },
+  "manifest_version": 1,
+  "metrics": {
+    "selected_epoch_metrics": {
+      "epoch": 8,
+      "train_loss": 0.2570257959621293,
+      "val_accuracy": 0.9281097755324328,
+      "val_loss": 0.36630455777049065
+    }
+  },
+  "model": {
+    "architecture": "TennisPointLSTM",
+    "bidirectional": true,
+    "dropout": 0.2,
+    "hidden_size": 128,
+    "num_layers": 2
+  },
+  "postprocess": {
+    "method": "hysteresis",
+    "params": {
+      "high": 0.8,
+      "low": 0.45,
+      "min_dur_sec": 0.5,
+      "sigma": 1.5
+    }
+  },
+  "source_run": {
+    "checkpoint_path": "/Users/ismaelrobles-razzaq/cs_projects/RallyClip/models/lstm_300_v0.1.pth",
+    "git_branch": "main",
+    "git_commit": "",
+    "git_dirty": true,
+    "run_id": "lstm_300_v0.1",
+    "scaler_path": "/Users/ismaelrobles-razzaq/cs_projects/RallyClip/models/scaler_300_v0.1.joblib",
+    "selected_checkpoint": "historical_tracked_model",
+    "selected_epoch": 8,
+    "selection_reason": "Restored from historical tracked assets on older branches."
+  }
+}
