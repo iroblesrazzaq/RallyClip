@@ -5,6 +5,7 @@ const WELCOME_TYPE_LINE_DELAY_MS = WELCOME_TYPE_START_DELAY_MS;
 const WELCOME_TYPE_FIRST_CHAR_MS = 110;
 const WELCOME_TYPE_CHAR_MS = 89;
 const SYSTEM_DARK_QUERY = "(prefers-color-scheme: dark)";
+const MSE_PREVIEW_MIME = 'video/webm; codecs="vp8,opus"';
 const WELCOME_LAYOUT = [
     [{ text: "RallyClip.", immediate: true }],
     [{ text: "AI Match Segmentation." }],
@@ -38,6 +39,7 @@ class RallyClipApp {
         this.viewerSeekInProgress = false;
         this.viewerSkipSeconds = 5;
         this.previewWindowDuration = 8;
+        this.previewMaxWindowDuration = 90;
         this.previewLookaheadChunks = 12;
         this.pointBufferSeconds = 5;
         this.currentPreviewWindowStart = 0;
@@ -53,7 +55,26 @@ class RallyClipApp {
         this.prefetchedWindowKeys = new Set();
         this.prefetchWindowTimers = new Map();
         this.readyPreviewWindows = new Map();
+        this.previewTransitionInProgress = false;
+        this.pendingPreviewTransition = null;
+        this.pendingOutgoingVideo = null;
         this.viewerSeekDragging = false;
+        this.activePlaybackSegment = null;
+        this.viewerFullscreenFallback = false;
+        this.mseActive = false;
+        this.mseDisabled = false;
+        this.mseObjectUrl = null;
+        this.mseMediaSource = null;
+        this.mseSourceBuffer = null;
+        this.mseSessionId = 0;
+        this.mseAppendQueue = [];
+        this.mseCurrentAppend = null;
+        this.mseQueuedWindowKeys = new Set();
+        this.mseAppendedWindowKeys = new Set();
+        this.msePendingSeek = null;
+        this.msePrunePending = false;
+        this.nativeViewer = null;
+        this.nativeBridgeReady = false;
         this.steps = ["pose", "preprocess", "feature", "inference", "output"];
         this.stepLabels = {
             pose: "Extracting pose",
@@ -66,6 +87,7 @@ class RallyClipApp {
         this.cacheElements();
         this.bindEvents();
         this.bindSystemTheme();
+        this.initNativeViewerBridge();
         this.loadDefaults();
         this.restoreJobIfAny().then((restored) => {
             if (restored) return;
@@ -99,10 +121,12 @@ class RallyClipApp {
         this.viewerBackBtn = document.getElementById("viewerBackBtn");
         this.viewerPlayPauseBtn = document.getElementById("viewerPlayPauseBtn");
         this.viewerForwardBtn = document.getElementById("viewerForwardBtn");
+        this.viewerFullscreenBtn = document.getElementById("viewerFullscreenBtn");
         this.viewerTimeline = document.getElementById("viewerTimeline");
         this.viewerSeek = document.getElementById("viewerSeek");
         this.viewerSeekWrap = document.querySelector(".viewer-seek-wrap");
         this.viewerBufferTrack = document.getElementById("viewerBufferTrack");
+        this.viewerPointTrack = document.getElementById("viewerPointTrack");
         this.viewerCurrentTime = document.getElementById("viewerCurrentTime");
         this.viewerDuration = document.getElementById("viewerDuration");
         this.viewerExportBtn = document.getElementById("viewerExportBtn");
@@ -164,9 +188,11 @@ class RallyClipApp {
         this.viewerVideoWrap.addEventListener("pointermove", () => this.showViewerControls());
         this.viewerVideoWrap.addEventListener("pointerenter", () => this.showViewerControls());
         this.viewerVideoWrap.addEventListener("focusin", () => this.showViewerControls());
+        this.viewerVideoWrap.addEventListener("click", (e) => this.handleViewerSurfaceClick(e));
         this.viewerBackBtn.addEventListener("click", () => this.skipViewerBy(-this.viewerSkipSeconds));
         this.viewerPlayPauseBtn.addEventListener("click", (e) => this.toggleViewerPlayback(e));
         this.viewerForwardBtn.addEventListener("click", () => this.skipViewerBy(this.viewerSkipSeconds));
+        this.viewerFullscreenBtn.addEventListener("click", (e) => this.toggleViewerFullscreen(e));
         this.viewerSeek.addEventListener("input", () => {
             this.viewerSeekDragging = true;
             this.updateViewerTimeline(Number(this.viewerSeek.value));
@@ -176,7 +202,9 @@ class RallyClipApp {
             this.seekViewerToSourceTime(Number(this.viewerSeek.value), this.viewerHasVideo() && !this.matchVideo.paused);
         });
         this.viewerSeekWrap.addEventListener("pointerdown", (e) => this.seekViewerFromTimelinePointer(e));
-        document.addEventListener("keydown", (e) => this.handleViewerKeyboardShortcuts(e));
+        document.addEventListener("keydown", (e) => this.handleViewerKeyboardShortcuts(e), true);
+        document.addEventListener("fullscreenchange", () => this.updateViewerFullscreenState());
+        document.addEventListener("webkitfullscreenchange", () => this.updateViewerFullscreenState());
         this.libraryGrid.addEventListener("click", (e) => this.onLibraryClick(e));
 
         this.dropZone.addEventListener("dragover", (e) => {
@@ -235,10 +263,14 @@ class RallyClipApp {
         video.addEventListener("ended", () => {
             if (video === this.matchVideo) this.handleViewerWindowEnded();
         });
+        video.addEventListener("waiting", () => {
+            if (video === this.matchVideo && this.mseActive) this.ensureMsePlaybackRange(this.getViewerSourceTime());
+        });
         video.addEventListener("error", () => {
             if (video === this.matchVideo) this.handleViewerVideoError();
         });
         video.addEventListener("click", (e) => {
+            e.stopPropagation();
             if (video === this.matchVideo) this.toggleViewerPlayback(e);
         });
     }
@@ -393,12 +425,17 @@ class RallyClipApp {
         this.progressCard.hidden = viewName !== "processing";
         if (viewName !== "viewer" && this.matchVideo) {
             this.clearPreviewPoll();
+            this.resetMsePreview();
             this.resetViewerVideos();
             this.viewingItemId = null;
             this.pointIntervals = [];
             this.lastViewerTime = null;
             this.viewerSeekInProgress = false;
             this.previewLoadInProgress = false;
+            this.previewTransitionInProgress = false;
+            this.pendingPreviewTransition = null;
+            this.pendingOutgoingVideo = null;
+            this.activePlaybackSegment = null;
             this.currentPreviewWindowStart = 0;
             this.currentPreviewWindowDuration = 0;
             this.sourceDuration = 0;
@@ -406,6 +443,7 @@ class RallyClipApp {
             this.prefetchedWindowKeys.clear();
             this.readyPreviewWindows.clear();
             this.renderViewerBufferedRanges();
+            this.renderViewerPointRanges();
             this.viewerSeekDragging = false;
             this.viewerTimeline.hidden = true;
             this.hideViewerControls();
@@ -425,12 +463,15 @@ class RallyClipApp {
     }
 
     resetViewerVideos() {
+        this.resetMsePreview();
         this.clearVideoElement(this.primaryMatchVideo);
         this.clearVideoElement(this.secondaryMatchVideo);
         this.matchVideo = this.primaryMatchVideo;
         this.matchVideoBuffer = this.secondaryMatchVideo;
+        this.pendingPreviewTransition = null;
         this.primaryMatchVideo.classList.add("is-active");
-        this.secondaryMatchVideo.classList.remove("is-active");
+        this.primaryMatchVideo.classList.remove("is-outgoing");
+        this.secondaryMatchVideo.classList.remove("is-active", "is-outgoing");
     }
 
     showViewerControls() {
@@ -524,7 +565,7 @@ class RallyClipApp {
             if (e.target.closest("button")) return;
             if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
-                this.showViewer(item);
+                this.openLibraryItem(item);
             }
         });
 
@@ -553,7 +594,13 @@ class RallyClipApp {
 
     formatDate(iso) {
         try {
-            return new Date(iso).toLocaleString();
+            return new Date(iso).toLocaleString(undefined, {
+                year: "numeric",
+                month: "numeric",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+            });
         } catch (_) {
             return iso;
         }
@@ -582,7 +629,52 @@ class RallyClipApp {
             duration_s: Number(card.dataset.duration) || 0,
             has_csv: Boolean(card.querySelector("button[data-action='csv']")),
         };
+        this.openLibraryItem(item);
+    }
+
+    openLibraryItem(item) {
+        if (!item || !item.id) return false;
+        if (this.nativeBridgeReady && this.nativeViewer && typeof this.nativeViewer.openMatch === "function") {
+            try {
+                const fallback = () => {
+                    this.showToast("Could not open native player; using browser preview", "error");
+                    this.showViewer(item);
+                };
+                const result = this.nativeViewer.openMatch(String(item.id), (opened) => {
+                    if (!opened) fallback();
+                });
+                if (result === false) fallback();
+                return true;
+            } catch (err) {
+                console.error("Native viewer bridge failed", err);
+                this.showToast("Could not open native player; using browser preview", "error");
+            }
+        }
         this.showViewer(item);
+        return false;
+    }
+
+    initNativeViewerBridge() {
+        if (!window.qt || !window.qt.webChannelTransport) return;
+        const attach = () => {
+            if (typeof window.QWebChannel !== "function") return;
+            new window.QWebChannel(window.qt.webChannelTransport, (channel) => {
+                this.nativeViewer = channel.objects.nativeViewer || null;
+                this.nativeBridgeReady = Boolean(this.nativeViewer && this.nativeViewer.openMatch);
+                if (this.nativeBridgeReady) {
+                    document.documentElement.dataset.nativeViewer = "available";
+                }
+            });
+        };
+        if (typeof window.QWebChannel === "function") {
+            attach();
+            return;
+        }
+        const script = document.createElement("script");
+        script.src = "qrc:///qtwebchannel/qwebchannel.js";
+        script.onload = attach;
+        script.onerror = () => console.warn("Could not load Qt WebChannel bridge");
+        document.head.appendChild(script);
     }
 
     async showViewer(item) {
@@ -592,6 +684,10 @@ class RallyClipApp {
         this.lastViewerTime = null;
         this.viewerSeekInProgress = false;
         this.previewLoadInProgress = false;
+        this.previewTransitionInProgress = false;
+        this.pendingPreviewTransition = null;
+        this.pendingOutgoingVideo = null;
+        this.activePlaybackSegment = null;
         this.currentPreviewWindowStart = 0;
         this.currentPreviewWindowDuration = 0;
         this.sourceDuration = Number(item.duration_s) || 0;
@@ -599,6 +695,7 @@ class RallyClipApp {
         this.prefetchedWindowKeys.clear();
         this.readyPreviewWindows.clear();
         this.renderViewerBufferedRanges();
+        this.renderViewerPointRanges();
         this.configureViewerTimeline(this.sourceDuration);
         this.viewerTitle.textContent = item.name || "Match";
         this.viewerMeta.textContent = item.metaText || this.cardMeta(item);
@@ -608,9 +705,9 @@ class RallyClipApp {
         this.showPreviewLoading();
         this.showView("viewer");
         this.showViewerControls();
-        await this.loadPointIntervals(item.id);
+        await this.loadPlaybackManifest(item.id);
         const start = this.pointIntervals.length ? this.pointIntervals[0].start : 0;
-        this.loadPreviewWindowAt(start, true);
+        this.seekViewerToSourceTime(start, true);
     }
 
     clearPreviewPoll() {
@@ -634,24 +731,364 @@ class RallyClipApp {
 
     showPreviewLoading() {
         this.previewStatus.textContent = "";
-        if (!this.previewStatus.hidden) return;
+        if (!this.previewStatus.hidden && !this.previewStatus.classList.contains("is-error")) return;
         this.clearPreviewSpinner();
         this.previewStatus.hidden = false;
-        this.previewStatus.classList.remove("is-slow");
+        this.previewStatus.classList.remove("is-slow", "is-error");
         this.previewSpinnerTimeout = setTimeout(() => {
             if (!this.previewStatus.hidden) this.previewStatus.classList.add("is-slow");
         }, 2000);
     }
 
+    showPreviewError(message) {
+        this.clearPreviewSpinner();
+        this.previewStatus.textContent = message || "Could not prepare this video preview.";
+        this.previewStatus.hidden = false;
+        this.previewStatus.classList.remove("is-slow");
+        this.previewStatus.classList.add("is-error");
+    }
+
     hidePreviewLoading() {
         this.clearPreviewSpinner();
         this.previewStatus.hidden = true;
-        this.previewStatus.classList.remove("is-slow");
+        this.previewStatus.classList.remove("is-slow", "is-error");
+        this.previewStatus.textContent = "";
     }
 
     buildPreviewWindowUrl(itemId, start, duration, status = false) {
         const suffix = status ? "/status" : "";
         return `/api/library/${itemId}/preview/window${suffix}?start=${start.toFixed(3)}&duration=${duration.toFixed(3)}`;
+    }
+
+    mediaSourceCtor() {
+        return window.MediaSource || window.WebKitMediaSource || null;
+    }
+
+    canUseMsePreview() {
+        // The source-time scheduler is authoritative for v1; keep MSE dormant
+        // until it applies the same point-skip boundaries.
+        return false;
+    }
+
+    resetMsePreview() {
+        this.mseSessionId += 1;
+        const objectUrl = this.mseObjectUrl;
+        const sourceBuffer = this.mseSourceBuffer;
+        const mediaSource = this.mseMediaSource;
+        this.mseActive = false;
+        this.mseObjectUrl = null;
+        this.mseMediaSource = null;
+        this.mseSourceBuffer = null;
+        this.mseAppendQueue = [];
+        this.mseCurrentAppend = null;
+        this.mseQueuedWindowKeys.clear();
+        this.mseAppendedWindowKeys.clear();
+        this.msePendingSeek = null;
+        this.msePrunePending = false;
+        try {
+            if (sourceBuffer && sourceBuffer.updating) sourceBuffer.abort();
+        } catch (_) {
+            // SourceBuffer abort is best-effort during teardown.
+        }
+        try {
+            if (mediaSource?.readyState === "open") mediaSource.endOfStream();
+        } catch (_) {
+            // The media source may already be closing.
+        }
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
+
+    startMsePreviewAt(sourceTime, autoplay = true) {
+        if (!this.viewingItemId || !this.canUseMsePreview()) {
+            this.loadPreviewWindowAt(sourceTime, autoplay);
+            return;
+        }
+
+        this.resetMsePreview();
+        this.clearPreviewPoll();
+        this.clearVideoElement(this.primaryMatchVideo);
+        this.clearVideoElement(this.secondaryMatchVideo);
+        this.matchVideo = this.primaryMatchVideo;
+        this.matchVideoBuffer = this.secondaryMatchVideo;
+        this.primaryMatchVideo.classList.add("is-active");
+        this.secondaryMatchVideo.classList.remove("is-active", "is-outgoing");
+
+        const MediaSourceCtor = this.mediaSourceCtor();
+        const mediaSource = new MediaSourceCtor();
+        const sessionId = this.mseSessionId + 1;
+        const target = this.clampViewerSourceTime(sourceTime);
+        this.mseSessionId = sessionId;
+        this.mseActive = true;
+        this.previewLoadInProgress = true;
+        this.currentPreviewWindowStart = 0;
+        this.currentPreviewWindowDuration = this.sourceDuration || Number.MAX_SAFE_INTEGER;
+        this.lastViewerTime = target;
+        this.msePendingSeek = { target, autoplay };
+        this.mseMediaSource = mediaSource;
+        this.mseObjectUrl = URL.createObjectURL(mediaSource);
+        this.matchVideo.src = this.mseObjectUrl;
+        this.matchVideo.dataset.previewUrl = "mse";
+        this.updateViewerTimeline(target);
+        this.updateViewerControls();
+        this.showPreviewLoading();
+
+        mediaSource.addEventListener("sourceopen", () => {
+            if (!this.isCurrentMseSession(sessionId)) return;
+            try {
+                const sourceBuffer = mediaSource.addSourceBuffer(MSE_PREVIEW_MIME);
+                sourceBuffer.mode = "segments";
+                sourceBuffer.addEventListener("updateend", () => this.handleMseUpdateEnd(sessionId));
+                sourceBuffer.addEventListener("error", () => this.fallbackFromMse(target, autoplay, new Error("MSE append failed")));
+                this.mseSourceBuffer = sourceBuffer;
+                if (this.sourceDuration > 0) mediaSource.duration = this.sourceDuration;
+                this.ensureMsePlaybackRange(target);
+            } catch (err) {
+                this.fallbackFromMse(target, autoplay, err);
+            }
+        }, { once: true });
+        this.matchVideo.load();
+    }
+
+    isCurrentMseSession(sessionId) {
+        return this.mseActive && sessionId === this.mseSessionId && Boolean(this.mseSourceBuffer || this.mseMediaSource);
+    }
+
+    fallbackFromMse(sourceTime, autoplay = true, err = null) {
+        if (err) console.warn("Falling back from MediaSource preview", err);
+        const target = this.clampViewerSourceTime(sourceTime);
+        this.mseDisabled = true;
+        this.resetMsePreview();
+        this.resetViewerVideos();
+        this.loadPreviewWindowAt(target, autoplay);
+    }
+
+    mseDesiredChunkStarts(sourceTime) {
+        const chunk = Math.max(1, Number(this.previewWindowDuration) || 8);
+        const limit = Math.max(1, Number(this.previewLookaheadChunks) || 12);
+        const starts = [];
+        const seen = new Set();
+        const addStart = (start) => {
+            if (starts.length >= limit) return false;
+            const canonicalStart = this.canonicalPreviewChunkStart(start);
+            if (this.sourceDuration > 0 && canonicalStart >= this.sourceDuration - 0.1) return false;
+            const key = this.previewWindowKeyForStart(canonicalStart, this.previewWindowDuration);
+            if (seen.has(key)) return true;
+            seen.add(key);
+            starts.push(canonicalStart);
+            return starts.length < limit;
+        };
+        const addRange = (start, end) => {
+            for (const candidate of this.previewChunkStartsForRange(start, end)) {
+                if (!addStart(candidate)) return false;
+            }
+            return true;
+        };
+
+        const target = Math.max(0, Number(sourceTime) || 0);
+        const pointIdx = this.findPlaybackTargetPointIndex(target);
+        if (pointIdx >= 0) {
+            const point = this.pointIntervals[pointIdx];
+            const desiredEnd = Math.min(
+                this.sourceDuration > 0 ? this.sourceDuration : target + (chunk * limit),
+                Math.max(target + chunk, point.end + this.pointBufferSeconds),
+            );
+            addRange(target, desiredEnd);
+            const next = this.pointIntervals[pointIdx + 1];
+            if (next && starts.length < limit) {
+                addRange(Math.max(0, next.start - this.pointBufferSeconds), next.end + this.pointBufferSeconds);
+            }
+        } else {
+            addRange(target, target + (chunk * limit));
+        }
+        return starts;
+    }
+
+    ensureMsePlaybackRange(sourceTime) {
+        if (!this.mseActive || !this.mseSourceBuffer || !this.viewingItemId) return;
+        this.mseDesiredChunkStarts(sourceTime).forEach((start) => this.queueMseChunk(start));
+    }
+
+    queueMseChunk(sourceTime) {
+        if (!this.mseActive || !this.viewingItemId) return;
+        const start = this.canonicalPreviewChunkStart(sourceTime);
+        if (this.sourceDuration > 0 && start >= this.sourceDuration - 0.1) return;
+        const duration = this.sourceDuration > 0
+            ? Math.min(this.previewWindowDuration, Math.max(0.1, this.sourceDuration - start))
+            : this.previewWindowDuration;
+        const key = this.previewWindowKeyForStart(start, duration);
+        if (this.mseAppendedWindowKeys.has(key) || this.mseQueuedWindowKeys.has(key)) return;
+        this.mseQueuedWindowKeys.add(key);
+        const readyWindow = this.readyPreviewWindows.get(key);
+        if (readyWindow?.previewUrl) {
+            this.fetchMsePreviewChunk(readyWindow.previewUrl, start, duration, this.mseSessionId);
+            return;
+        }
+        this.pollMsePreviewChunk(start, duration, this.mseSessionId);
+    }
+
+    async fetchMsePreviewChunk(previewUrl, start, duration, sessionId) {
+        try {
+            const videoResp = await fetch(previewUrl);
+            if (!videoResp.ok) throw new Error(`HTTP ${videoResp.status}`);
+            const bytes = await videoResp.arrayBuffer();
+            if (!this.isCurrentMseSession(sessionId)) return;
+            this.enqueueMseAppend({
+                start,
+                duration,
+                previewUrl,
+                bytes,
+                sessionId,
+            });
+        } catch (_) {
+            if (!this.isCurrentMseSession(sessionId)) return;
+            const key = this.previewWindowKeyForStart(start, duration);
+            this.readyPreviewWindows.delete(key);
+            this.mseQueuedWindowKeys.delete(key);
+            this.pollMsePreviewChunk(start, duration, sessionId, 1200);
+        }
+    }
+
+    async pollMsePreviewChunk(start, duration, sessionId, delayMs = 0) {
+        if (!this.isCurrentMseSession(sessionId) || !this.viewingItemId) return;
+        if (delayMs > 0) {
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            if (!this.isCurrentMseSession(sessionId)) return;
+        }
+        try {
+            const statusResp = await fetch(this.buildPreviewWindowUrl(this.viewingItemId, start, duration, true));
+            if (!statusResp.ok) throw new Error(`HTTP ${statusResp.status}`);
+            const payload = await statusResp.json();
+            if (!this.isCurrentMseSession(sessionId)) return;
+            if (payload.status === "error") {
+                this.fallbackFromMse(start, true, new Error(payload.error || "Preview chunk failed"));
+                return;
+            }
+            if (!payload.ready || !payload.preview_url) {
+                this.pollMsePreviewChunk(start, duration, sessionId, 700);
+                return;
+            }
+            const previewUrl = payload.preview_url;
+            this.markPreviewWindowReady(Number(payload.start) || start, Number(payload.duration) || duration, previewUrl);
+            this.fetchMsePreviewChunk(previewUrl, Number(payload.start) || start, Number(payload.duration) || duration, sessionId);
+        } catch (err) {
+            if (!this.isCurrentMseSession(sessionId)) return;
+            this.pollMsePreviewChunk(start, duration, sessionId, 1200);
+        }
+    }
+
+    enqueueMseAppend(segment) {
+        if (!this.isCurrentMseSession(segment.sessionId)) return;
+        this.mseAppendQueue.push(segment);
+        this.mseAppendQueue.sort((a, b) => a.start - b.start);
+        this.pumpMseAppendQueue(segment.sessionId);
+    }
+
+    pumpMseAppendQueue(sessionId = this.mseSessionId) {
+        if (!this.isCurrentMseSession(sessionId) || !this.mseSourceBuffer) return;
+        if (this.mseSourceBuffer.updating || this.mseCurrentAppend || !this.mseAppendQueue.length) return;
+        const segment = this.mseAppendQueue.shift();
+        this.mseCurrentAppend = segment;
+        try {
+            this.mseSourceBuffer.timestampOffset = segment.start;
+            this.mseSourceBuffer.appendBuffer(segment.bytes);
+        } catch (err) {
+            this.mseCurrentAppend = null;
+            this.fallbackFromMse(segment.start, true, err);
+        }
+    }
+
+    handleMseUpdateEnd(sessionId) {
+        if (!this.isCurrentMseSession(sessionId)) return;
+        const appended = this.mseCurrentAppend;
+        this.mseCurrentAppend = null;
+        if (appended) {
+            this.markPreviewWindowReady(appended.start, appended.duration, appended.previewUrl);
+            const key = this.previewWindowKeyForStart(appended.start, appended.duration);
+            this.mseQueuedWindowKeys.delete(key);
+            this.mseAppendedWindowKeys.add(key);
+        }
+        this.resolveMsePendingSeek();
+        if (this.msePrunePending) {
+            this.msePrunePending = false;
+            if (this.pruneMseBuffer()) return;
+        }
+        if (this.pruneMseBuffer()) return;
+        this.pumpMseAppendQueue(sessionId);
+    }
+
+    isMseSourceTimeBuffered(sourceTime) {
+        if (!this.mseActive || !this.matchVideo?.buffered) return false;
+        const target = Number(sourceTime);
+        if (!Number.isFinite(target)) return false;
+        const ranges = this.matchVideo.buffered;
+        for (let idx = 0; idx < ranges.length; idx += 1) {
+            if (target >= ranges.start(idx) - 0.05 && target < ranges.end(idx) - 0.1) return true;
+        }
+        return false;
+    }
+
+    resolveMsePendingSeek() {
+        if (!this.msePendingSeek) return;
+        const { target, autoplay } = this.msePendingSeek;
+        if (!this.isMseSourceTimeBuffered(target)) return;
+        try {
+            this.matchVideo.currentTime = target;
+        } catch (_) {
+            return;
+        }
+        this.msePendingSeek = null;
+        this.previewLoadInProgress = false;
+        this.lastViewerTime = target;
+        this.updateViewerTimeline(target);
+        this.hidePreviewLoading();
+        this.updateViewerControls();
+        this.ensureMsePlaybackRange(target);
+        if (autoplay) this.startViewerPlayback();
+    }
+
+    seekMseViewerToSourceTime(sourceTime, autoplay = true) {
+        const target = this.clampViewerSourceTime(sourceTime);
+        this.ensureMsePlaybackRange(target);
+        if (this.isMseSourceTimeBuffered(target)) {
+            this.msePendingSeek = null;
+            this.matchVideo.currentTime = target;
+            this.lastViewerTime = target;
+            this.updateViewerTimeline(target);
+            this.hidePreviewLoading();
+            if (autoplay) this.startViewerPlayback();
+            return;
+        }
+        this.previewLoadInProgress = true;
+        this.msePendingSeek = { target, autoplay };
+        this.lastViewerTime = target;
+        this.updateViewerTimeline(target);
+        if (autoplay && !this.matchVideo.paused) this.matchVideo.pause();
+        this.showPreviewLoading();
+    }
+
+    pruneMseBuffer() {
+        if (!this.mseActive || !this.mseSourceBuffer || !this.matchVideo?.buffered) return false;
+        if (this.mseSourceBuffer.updating) {
+            this.msePrunePending = true;
+            return false;
+        }
+        const keepBehindSeconds = 16;
+        const current = Number(this.matchVideo.currentTime) || 0;
+        const removeEnd = current - keepBehindSeconds;
+        if (removeEnd <= this.previewWindowDuration) return false;
+        try {
+            this.mseSourceBuffer.remove(0, removeEnd);
+            for (const [key, windowInfo] of Array.from(this.readyPreviewWindows.entries())) {
+                if (windowInfo.start + windowInfo.duration < removeEnd - 0.5) {
+                    this.readyPreviewWindows.delete(key);
+                    this.mseAppendedWindowKeys.delete(key);
+                }
+            }
+            this.renderViewerBufferedRanges();
+            return true;
+        } catch (_) {
+            return false;
+        }
     }
 
     setPreviewVideoSource(video, previewUrl, start, duration) {
@@ -665,17 +1102,36 @@ class RallyClipApp {
         video.dataset.windowDuration = String(duration);
     }
 
-    preloadNearestReadyWindow() {
-        if (!this.matchVideoBuffer || !this.viewingItemId) return;
-        const next = Array.from(this.readyPreviewWindows.values())
-            .filter((windowInfo) => windowInfo.previewUrl && windowInfo.start > this.currentPreviewWindowStart + 0.001)
-            .sort((a, b) => a.start - b.start)[0];
-        if (!next) return;
-        this.setPreviewVideoSource(this.matchVideoBuffer, next.previewUrl, next.start, next.duration);
+    videoWindowStart(video = this.matchVideo) {
+        const value = Number(video?.dataset.windowStart);
+        return Number.isFinite(value) ? value : this.currentPreviewWindowStart;
     }
 
-    activatePreviewWindow(itemId, requestId, payload, targetSourceTime, autoplay) {
-        if (this.viewingItemId !== itemId || requestId !== this.previewRequestSeq) return;
+    videoWindowDuration(video = this.matchVideo) {
+        const value = Number(video?.dataset.windowDuration);
+        return Number.isFinite(value) && value > 0 ? value : this.currentPreviewWindowDuration;
+    }
+
+    videoWindowEnd(video = this.matchVideo) {
+        return this.videoWindowStart(video) + this.videoWindowDuration(video);
+    }
+
+    preloadNearestReadyWindow() {
+        if (!this.matchVideoBuffer || !this.viewingItemId) return;
+        if (this.pendingOutgoingVideo === this.matchVideoBuffer) return;
+        const starts = this.getSchedulerPrefetchStarts(this.lastViewerTime ?? this.getViewerSourceTime());
+        const nextStart = starts.find((start) => start > this.videoWindowStart(this.matchVideo) + 0.001);
+        if (!Number.isFinite(nextStart)) return;
+        const requestWindow = this.previewWindowRequestForSourceTime(nextStart);
+        const next = this.getReadyPreviewWindow(nextStart, requestWindow.end);
+        if (next?.previewUrl) this.setPreviewVideoSource(this.matchVideoBuffer, next.previewUrl, next.start, next.duration);
+    }
+
+    activatePreviewWindow(itemId, requestId, payload, targetSourceTime, autoplay, options = {}) {
+        if (this.viewingItemId !== itemId) return;
+        if (!options.allowCurrent && requestId !== this.previewRequestSeq) return;
+        const transition = this.pendingPreviewTransition;
+        if (!transition || transition.id !== requestId) return;
         const previewUrl = payload.preview_url || payload.previewUrl;
         if (!previewUrl) return;
         const windowStart = Number(payload.start) || 0;
@@ -690,46 +1146,86 @@ class RallyClipApp {
         this.setPreviewVideoSource(targetVideo, previewUrl, windowStart, windowDuration);
 
         const finishActivation = () => {
-            if (this.viewingItemId !== itemId || requestId !== this.previewRequestSeq) return;
+            if (this.viewingItemId !== itemId) return;
+            if (!options.allowCurrent && requestId !== this.previewRequestSeq) return;
+            if (!this.pendingPreviewTransition || this.pendingPreviewTransition.id !== requestId) return;
             this.currentPreviewWindowStart = windowStart;
             this.currentPreviewWindowDuration = windowDuration;
             const offset = Math.max(0, Math.min(targetSourceTime - windowStart, targetVideo.duration || windowDuration));
             targetVideo.currentTime = offset;
-            if (targetVideo !== this.matchVideo) {
-                const previousVideo = this.matchVideo;
-                previousVideo.pause();
-                previousVideo.classList.remove("is-active");
-                targetVideo.classList.add("is-active");
-                targetVideo.tabIndex = 0;
-                previousVideo.tabIndex = -1;
+            const switchingVideos = targetVideo !== this.matchVideo;
+            const previousVideo = switchingVideos ? this.matchVideo : null;
+            if (switchingVideos) {
+                previousVideo.classList.add("is-outgoing");
+                this.pendingOutgoingVideo = previousVideo;
                 this.matchVideo = targetVideo;
                 this.matchVideoBuffer = previousVideo;
-                this.clearVideoElement(previousVideo);
             }
             this.hidePreviewLoading();
             this.lastViewerTime = windowStart + offset;
             this.updateViewerTimeline(this.lastViewerTime);
             this.updateViewerControls();
-            this.prefetchPointAwareWindows(this.lastViewerTime);
+            this.prefetchForPlaybackSchedule(this.lastViewerTime);
             this.preloadNearestReadyWindow();
             this.previewLoadInProgress = false;
+            this.previewTransitionInProgress = false;
+            this.pendingPreviewTransition = null;
             if (autoplay) this.startViewerPlayback();
+            if (switchingVideos && previousVideo) this.showActivePreviewVideo(targetVideo, previousVideo);
         };
 
         if (targetVideo.readyState >= 2) finishActivation();
         else targetVideo.addEventListener("canplay", finishActivation, { once: true });
     }
 
-    loadPreviewWindowAt(sourceTime, autoplay = true) {
+    showActivePreviewVideo(targetVideo, previousVideo) {
+        targetVideo.tabIndex = 0;
+        previousVideo.tabIndex = -1;
+        const reveal = () => {
+            if (this.matchVideo !== targetVideo) return;
+            targetVideo.classList.add("is-active");
+            previousVideo.classList.remove("is-active");
+            window.setTimeout(() => this.finishOutgoingPreviewVideo(previousVideo), 80);
+        };
+        if (!targetVideo.paused && targetVideo.readyState >= 3) {
+            requestAnimationFrame(reveal);
+            return;
+        }
+        targetVideo.addEventListener("playing", reveal, { once: true });
+        targetVideo.addEventListener("timeupdate", reveal, { once: true });
+        window.setTimeout(reveal, targetVideo.readyState >= 3 ? 140 : 240);
+    }
+
+    finishOutgoingPreviewVideo(video = this.pendingOutgoingVideo) {
+        if (!video || video === this.matchVideo) return;
+        video.classList.remove("is-active", "is-outgoing");
+        this.clearVideoElement(video);
+        if (this.pendingOutgoingVideo === video) this.pendingOutgoingVideo = null;
+        this.preloadNearestReadyWindow();
+    }
+
+    loadPreviewWindowAt(sourceTime, autoplay = true, options = {}) {
         if (!this.viewingItemId) return;
         const itemId = this.viewingItemId;
         const requestId = ++this.previewRequestSeq;
-        const targetSourceTime = Math.max(0, Number(sourceTime) || 0);
+        const targetSourceTime = this.clampViewerSourceTime(sourceTime);
+        if (!options.preserveSegment) this.setPlaybackSegmentForSourceTime(targetSourceTime);
+        const requestWindow = this.previewWindowRequestForSourceTime(targetSourceTime);
         this.clearPreviewPoll();
         this.previewLoadInProgress = true;
+        this.previewTransitionInProgress = true;
+        this.pendingPreviewTransition = {
+            id: requestId,
+            itemId,
+            targetSourceTime,
+            targetWindowStart: requestWindow.start,
+            targetWindowEnd: requestWindow.end,
+            autoplay: Boolean(autoplay),
+            preserveSegment: Boolean(options.preserveSegment),
+        };
         if (this.viewerHasVideo()) this.hidePreviewLoading();
         else this.showPreviewLoading();
-        const readyWindow = this.getReadyPreviewWindow(targetSourceTime);
+        const readyWindow = this.getReadyPreviewWindow(targetSourceTime, requestWindow.end);
         if (readyWindow?.previewUrl) {
             this.activatePreviewWindow(itemId, requestId, {
                 start: readyWindow.start,
@@ -741,16 +1237,25 @@ class RallyClipApp {
         const poll = async () => {
             if (this.viewingItemId !== itemId || requestId !== this.previewRequestSeq) return;
             try {
-                const resp = await fetch(this.buildPreviewWindowUrl(itemId, targetSourceTime, this.previewWindowDuration, true));
+                const resp = await fetch(this.buildPreviewWindowUrl(itemId, requestWindow.start, requestWindow.duration, true));
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 const payload = await resp.json();
                 if (this.viewingItemId !== itemId || requestId !== this.previewRequestSeq) return;
                 if (typeof payload.source_duration === "number" && payload.source_duration > 0) {
                     this.sourceDuration = payload.source_duration;
-                    this.configureViewerTimeline(this.sourceDuration);
+                    this.configureViewerTimeline(this.sourceDuration, this.lastViewerTime ?? targetSourceTime);
                 }
                 if (payload.ready && payload.preview_url) {
                     this.activatePreviewWindow(itemId, requestId, payload, targetSourceTime, autoplay);
+                    return;
+                }
+                if (payload.status === "error") {
+                    const message = payload.error || "Could not prepare this video preview.";
+                    this.previewLoadInProgress = false;
+                    this.previewTransitionInProgress = false;
+                    this.pendingPreviewTransition = null;
+                    this.showPreviewError(message);
+                    this.showToast(message, "error");
                     return;
                 }
                 this.previewPollTimeout = setTimeout(poll, 750);
@@ -768,19 +1273,108 @@ class RallyClipApp {
         return Math.max(0, Math.floor((Number(sourceTime) || 0) / chunk) * chunk);
     }
 
-    previewChunkKeyForStart(start) {
-        return `${this.viewingItemId}:${Number(start).toFixed(1)}:${this.previewWindowDuration.toFixed(1)}`;
+    pointIndexAtSourceTime(sourceTime) {
+        const t = Number(sourceTime) || 0;
+        return this.pointIntervals.findIndex((seg) => t >= seg.start && t < seg.end);
+    }
+
+    nextPointIndexAfterSourceTime(sourceTime) {
+        const t = Number(sourceTime) || 0;
+        return this.pointIntervals.findIndex((seg) => t < seg.start);
+    }
+
+    playbackSegmentForSourceTime(sourceTime) {
+        const target = this.clampViewerSourceTime(sourceTime);
+        const sourceEnd = this.sourceDuration > 0 ? this.sourceDuration : Number.POSITIVE_INFINITY;
+        if (!this.pointIntervals.length) {
+            return {
+                kind: "continuous",
+                start: target,
+                end: sourceEnd,
+                pointIndex: null,
+                nextPointIndex: null,
+            };
+        }
+
+        const activePointIndex = this.pointIndexAtSourceTime(target);
+        if (activePointIndex >= 0) {
+            const point = this.pointIntervals[activePointIndex];
+            const nextPointIndex = activePointIndex + 1 < this.pointIntervals.length ? activePointIndex + 1 : null;
+            return {
+                kind: "point",
+                start: target,
+                end: point.end,
+                pointIndex: activePointIndex,
+                nextPointIndex,
+            };
+        }
+
+        const nextPointIndex = this.nextPointIndexAfterSourceTime(target);
+        if (nextPointIndex >= 0) {
+            const point = this.pointIntervals[nextPointIndex];
+            const followingPointIndex = nextPointIndex + 1 < this.pointIntervals.length ? nextPointIndex + 1 : null;
+            return {
+                kind: "gap",
+                start: target,
+                end: point.end,
+                pointIndex: nextPointIndex,
+                nextPointIndex: followingPointIndex,
+            };
+        }
+
+        return {
+            kind: "tail",
+            start: target,
+            end: sourceEnd,
+            pointIndex: null,
+            nextPointIndex: null,
+        };
+    }
+
+    setPlaybackSegmentForSourceTime(sourceTime) {
+        this.activePlaybackSegment = this.playbackSegmentForSourceTime(sourceTime);
+        return this.activePlaybackSegment;
+    }
+
+    setManualPlaybackSegmentForSourceTime(sourceTime) {
+        const target = this.clampViewerSourceTime(sourceTime);
+        this.activePlaybackSegment = {
+            kind: "manual",
+            start: target,
+            end: this.sourceDuration > 0 ? this.sourceDuration : Number.POSITIVE_INFINITY,
+            pointIndex: null,
+            nextPointIndex: null,
+        };
+        return this.activePlaybackSegment;
+    }
+
+    previewWindowRequestForSourceTime(sourceTime) {
+        const chunk = Math.max(1, Number(this.previewWindowDuration) || 8);
+        const target = Math.max(0, Number(sourceTime) || 0);
+        const start = this.canonicalPreviewChunkStart(target);
+        const duration = chunk;
+        const cappedDuration = this.sourceDuration > 0 ? Math.min(duration, Math.max(0.1, this.sourceDuration - start)) : duration;
+        return {
+            start: Number(start.toFixed(3)),
+            duration: Number(cappedDuration.toFixed(3)),
+            end: Number((start + cappedDuration).toFixed(3)),
+        };
+    }
+
+    previewWindowKeyForStart(start, duration = this.previewWindowDuration) {
+        return `${this.viewingItemId}:${Number(start).toFixed(1)}:${Number(duration).toFixed(1)}`;
     }
 
     previewChunkKey(sourceTime) {
-        return this.previewChunkKeyForStart(this.canonicalPreviewChunkStart(sourceTime));
+        const requestWindow = this.previewWindowRequestForSourceTime(sourceTime);
+        return this.previewWindowKeyForStart(requestWindow.start, requestWindow.duration);
     }
 
     markPreviewWindowReady(start, duration = this.previewWindowDuration, previewUrl = null) {
         if (!this.viewingItemId) return;
         const canonicalStart = this.canonicalPreviewChunkStart(start);
         const safeDuration = Math.max(0.1, Number(duration) || this.previewWindowDuration);
-        const key = this.previewChunkKeyForStart(canonicalStart);
+        const key = this.previewWindowKeyForStart(canonicalStart, safeDuration);
         this.readyPreviewWindows.set(key, { start: canonicalStart, duration: safeDuration, previewUrl });
         this.prefetchedWindowKeys.add(key);
         if (this.prefetchWindowTimers.has(key)) {
@@ -788,12 +1382,20 @@ class RallyClipApp {
             this.prefetchWindowTimers.delete(key);
         }
         this.renderViewerBufferedRanges();
-        this.preloadNearestReadyWindow();
+        if (!this.mseActive) this.preloadNearestReadyWindow();
     }
 
-    getReadyPreviewWindow(sourceTime) {
-        const start = this.canonicalPreviewChunkStart(sourceTime);
-        return this.readyPreviewWindows.get(this.previewChunkKeyForStart(start)) || null;
+    getReadyPreviewWindow(sourceTime, requiredEnd = null) {
+        const target = Math.max(0, Number(sourceTime) || 0);
+        const minEnd = Number(requiredEnd);
+        return Array.from(this.readyPreviewWindows.values())
+            .filter((windowInfo) => {
+                if (!windowInfo.previewUrl) return false;
+                const end = windowInfo.start + windowInfo.duration;
+                if (target < windowInfo.start - 0.001 || target >= end - 0.05) return false;
+                return !Number.isFinite(minEnd) || end >= minEnd - 0.05;
+            })
+            .sort((a, b) => b.start - a.start || b.duration - a.duration)[0] || null;
     }
 
     renderViewerBufferedRanges() {
@@ -802,18 +1404,25 @@ class RallyClipApp {
         const duration = Math.max(0, Number(this.sourceDuration) || 0);
         if (duration <= 0) return;
 
+        const mergedRanges = [];
         Array.from(this.readyPreviewWindows.values())
             .sort((a, b) => a.start - b.start)
             .forEach((windowInfo) => {
                 const start = Math.max(0, Math.min(duration, windowInfo.start));
                 const end = Math.max(start, Math.min(duration, windowInfo.start + windowInfo.duration));
                 if (end <= start) return;
-                const segment = document.createElement("span");
-                segment.className = "viewer-buffer-segment";
-                segment.style.left = `${(start / duration) * 100}%`;
-                segment.style.width = `${((end - start) / duration) * 100}%`;
-                this.viewerBufferTrack.appendChild(segment);
+                const last = mergedRanges[mergedRanges.length - 1];
+                if (last && start <= last.end + 0.05) last.end = Math.max(last.end, end);
+                else mergedRanges.push({ start, end });
             });
+
+        mergedRanges.forEach(({ start, end }) => {
+            const segment = document.createElement("span");
+            segment.className = "viewer-buffer-segment";
+            segment.style.left = `${(start / duration) * 100}%`;
+            segment.style.width = `${((end - start) / duration) * 100}%`;
+            this.viewerBufferTrack.appendChild(segment);
+        });
     }
 
     previewChunkStartsForRange(start, end) {
@@ -831,66 +1440,50 @@ class RallyClipApp {
     }
 
     findPlaybackTargetPointIndex(sourceTime) {
-        if (!this.pointIntervals.length) return -1;
-        const t = Number(sourceTime) || 0;
-        const active = this.pointIntervals.findIndex((seg) => t >= seg.start && t < seg.end);
-        if (active >= 0) return active;
-        return this.pointIntervals.findIndex((seg) => t < seg.end);
+        const segment = this.playbackSegmentForSourceTime(sourceTime);
+        return Number.isInteger(segment.pointIndex) ? segment.pointIndex : -1;
     }
 
-    getPointAwarePrefetchStarts(sourceTime) {
+    getSchedulerPrefetchStarts(sourceTime) {
         const limit = Math.max(0, Number(this.previewLookaheadChunks) || 0);
         if (!limit) return [];
 
-        const currentStart = this.canonicalPreviewChunkStart(sourceTime);
         const chunk = Math.max(1, Number(this.previewWindowDuration) || 8);
         const selected = [];
-        const seen = new Set([this.previewChunkKey(currentStart)]);
+        const seen = new Set();
 
-        const addChunk = (start) => {
+        const addStart = (start) => {
             const canonicalStart = this.canonicalPreviewChunkStart(start);
-            if (canonicalStart < currentStart - 0.001) return true;
             if (this.sourceDuration > 0 && canonicalStart >= this.sourceDuration - 0.1) return true;
-            const key = this.previewChunkKey(canonicalStart);
+            const requestWindow = this.previewWindowRequestForSourceTime(canonicalStart);
+            const key = this.previewWindowKeyForStart(requestWindow.start, requestWindow.duration);
             if (seen.has(key)) return true;
             seen.add(key);
             selected.push(canonicalStart);
             return selected.length < limit;
         };
 
-        const addRange = (start, end) => {
-            const candidates = this.previewChunkStartsForRange(start, end)
-                .filter((candidate) => candidate >= currentStart + chunk - 0.001);
-            for (const candidate of candidates) {
-                if (!addChunk(candidate)) return false;
+        const segment = this.activePlaybackSegment || this.playbackSegmentForSourceTime(sourceTime);
+        const segmentEnd = Number(segment?.end);
+        if (Number.isFinite(segmentEnd)) {
+            const rangeEnd = Math.max(Number(sourceTime) || 0, segmentEnd);
+            for (const start of this.previewChunkStartsForRange(sourceTime, rangeEnd)) {
+                if (!addStart(start)) break;
             }
-            return true;
-        };
-
-        const addBufferedPoint = (seg) => {
-            const bufferedStart = Math.max(0, seg.start - this.pointBufferSeconds);
-            const bufferedEnd = seg.end + this.pointBufferSeconds;
-            const candidates = this.previewChunkStartsForRange(bufferedStart, bufferedEnd)
-                .filter((start) => start >= currentStart - 0.001 && !seen.has(this.previewChunkKey(start)));
-            for (const start of candidates) {
-                if (!addChunk(start)) return false;
-            }
-            return true;
-        };
-
-        const pointIdx = this.findPlaybackTargetPointIndex(sourceTime);
-        if (pointIdx >= 0) {
-            const target = this.pointIntervals[pointIdx];
-            addRange(sourceTime, target.end + this.pointBufferSeconds);
-            const next = this.pointIntervals[pointIdx + 1];
-            if (next && selected.length < limit) addBufferedPoint(next);
+            const nextPoint = Number.isInteger(segment.nextPointIndex) ? this.pointIntervals[segment.nextPointIndex] : null;
+            if (nextPoint && selected.length < limit) addStart(nextPoint.start);
         } else {
-            for (let start = currentStart + chunk; selected.length < limit; start += chunk) {
-                if (!addChunk(start)) break;
+            const currentStart = this.canonicalPreviewChunkStart(sourceTime);
+            for (let start = currentStart; selected.length < limit; start += chunk) {
+                if (!addStart(start)) break;
             }
         }
 
         return selected;
+    }
+
+    getPointAwarePrefetchStarts(sourceTime) {
+        return this.getSchedulerPrefetchStarts(sourceTime);
     }
 
     trimPrefetchedWindowKeys(sourceTime) {
@@ -903,37 +1496,42 @@ class RallyClipApp {
     }
 
     prefetchPointAwareWindows(sourceTime) {
+        this.prefetchForPlaybackSchedule(sourceTime);
+    }
+
+    prefetchForPlaybackSchedule(sourceTime) {
         if (!this.viewingItemId) return;
         this.trimPrefetchedWindowKeys(sourceTime);
-        this.getPointAwarePrefetchStarts(sourceTime).forEach((start) => this.prefetchPreviewWindow(start));
+        this.getSchedulerPrefetchStarts(sourceTime).forEach((start) => this.prefetchPreviewWindow(start));
     }
 
     prefetchPreviewWindow(sourceTime) {
         if (!this.viewingItemId || !Number.isFinite(sourceTime)) return;
         if (this.sourceDuration > 0 && sourceTime >= this.sourceDuration - 0.1) return;
-        const start = this.canonicalPreviewChunkStart(sourceTime);
-        const key = this.previewChunkKey(start);
-        if (this.readyPreviewWindows.has(key) || this.prefetchWindowTimers.has(key)) return;
+        const requestWindow = this.previewWindowRequestForSourceTime(sourceTime);
+        const key = this.previewWindowKeyForStart(requestWindow.start, requestWindow.duration);
+        if (this.getReadyPreviewWindow(sourceTime, requestWindow.end) || this.prefetchWindowTimers.has(key)) return;
         if (this.prefetchedWindowKeys.has(key)) return;
         this.prefetchedWindowKeys.add(key);
-        this.pollPrefetchPreviewWindow(start);
+        this.pollPrefetchPreviewWindow(requestWindow.start, requestWindow.duration);
     }
 
-    async pollPrefetchPreviewWindow(start, delayMs = 0) {
+    async pollPrefetchPreviewWindow(start, duration = this.previewWindowDuration, delayMs = 0) {
         if (!this.viewingItemId) return;
         const canonicalStart = this.canonicalPreviewChunkStart(start);
-        const key = this.previewChunkKeyForStart(canonicalStart);
+        const safeDuration = Math.max(0.1, Number(duration) || this.previewWindowDuration);
+        const key = this.previewWindowKeyForStart(canonicalStart, safeDuration);
         if (this.readyPreviewWindows.has(key)) return;
         if (delayMs > 0) {
             const timer = setTimeout(() => {
                 this.prefetchWindowTimers.delete(key);
-                this.pollPrefetchPreviewWindow(canonicalStart);
+                this.pollPrefetchPreviewWindow(canonicalStart, safeDuration);
             }, delayMs);
             this.prefetchWindowTimers.set(key, timer);
             return;
         }
         try {
-            const resp = await fetch(this.buildPreviewWindowUrl(this.viewingItemId, canonicalStart, this.previewWindowDuration, true));
+            const resp = await fetch(this.buildPreviewWindowUrl(this.viewingItemId, canonicalStart, safeDuration, true));
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const payload = await resp.json();
             if (!this.viewingItemId) return;
@@ -941,9 +1539,13 @@ class RallyClipApp {
                 this.markPreviewWindowReady(Number(payload.start) || canonicalStart, Number(payload.duration) || this.previewWindowDuration, payload.preview_url);
                 return;
             }
-            this.pollPrefetchPreviewWindow(canonicalStart, 900);
+            if (payload.status === "error") {
+                this.prefetchedWindowKeys.delete(key);
+                return;
+            }
+            this.pollPrefetchPreviewWindow(canonicalStart, safeDuration, 900);
         } catch (_) {
-            this.pollPrefetchPreviewWindow(canonicalStart, 1500);
+            this.pollPrefetchPreviewWindow(canonicalStart, safeDuration, 1500);
         }
     }
 
@@ -975,21 +1577,119 @@ class RallyClipApp {
         const hasVideo = this.viewerHasVideo();
         const isPaused = !hasVideo || this.matchVideo.paused;
         const disabled = !hasVideo;
-        [this.viewerBackBtn, this.viewerPlayPauseBtn, this.viewerForwardBtn].forEach((btn) => {
+        [this.viewerBackBtn, this.viewerPlayPauseBtn, this.viewerForwardBtn, this.viewerFullscreenBtn].forEach((btn) => {
             if (btn) btn.disabled = disabled;
         });
         if (this.viewerPlayPauseBtn) {
-            this.viewerPlayPauseBtn.textContent = isPaused ? "Play" : "Pause";
+            this.viewerPlayPauseBtn.textContent = isPaused ? "▶" : "❚❚";
             this.viewerPlayPauseBtn.setAttribute("aria-label", isPaused ? "Play video" : "Pause video");
         }
+        this.updateViewerFullscreenState();
     }
 
     toggleViewerPlayback(event) {
         if (event && typeof event.preventDefault === "function") event.preventDefault();
         if (!this.matchVideo.src) return;
         this.showViewerControls();
+        if (this.mseActive && this.msePendingSeek) {
+            this.msePendingSeek.autoplay = true;
+            this.ensureMsePlaybackRange(this.msePendingSeek.target);
+            return;
+        }
         if (this.matchVideo.paused) this.startViewerPlayback();
         else this.matchVideo.pause();
+    }
+
+    handleViewerSurfaceClick(event) {
+        if (!this.isViewerActive() || !this.viewerHasVideo()) return;
+        if (event.target.closest(".viewer-timeline, button, input, select, textarea, a")) return;
+        this.toggleViewerPlayback(event);
+    }
+
+    viewerFullscreenElement() {
+        return (
+            document.fullscreenElement ||
+            document.webkitFullscreenElement ||
+            document.mozFullScreenElement ||
+            document.msFullscreenElement ||
+            null
+        );
+    }
+
+    viewerIsFullscreen() {
+        return this.viewerFullscreenElement() === this.viewerVideoWrap || this.viewerFullscreenFallback;
+    }
+
+    updateViewerFullscreenState() {
+        if (!this.viewerFullscreenBtn || !this.viewerVideoWrap) return;
+        const isFullscreen = this.viewerIsFullscreen();
+        this.viewerVideoWrap.classList.toggle("is-fullscreen", isFullscreen);
+        this.viewerFullscreenBtn.textContent = isFullscreen ? "×" : "⛶";
+        this.viewerFullscreenBtn.setAttribute("aria-label", isFullscreen ? "Exit fullscreen" : "Enter fullscreen");
+    }
+
+    async toggleViewerFullscreen(event = null) {
+        if (event && typeof event.preventDefault === "function") event.preventDefault();
+        if (event && typeof event.stopPropagation === "function") event.stopPropagation();
+        if (!this.viewerVideoWrap || this.viewerFullscreenBtn.disabled) return;
+        this.showViewerControls();
+        try {
+            const fullscreenElement = this.viewerFullscreenElement();
+            if (fullscreenElement || this.viewerFullscreenFallback) {
+                this.viewerFullscreenFallback = false;
+                if (document.exitFullscreen && fullscreenElement) await document.exitFullscreen();
+                else if (document.webkitExitFullscreen && fullscreenElement) document.webkitExitFullscreen();
+                else if (document.webkitCancelFullScreen && fullscreenElement) document.webkitCancelFullScreen();
+                else if (document.mozCancelFullScreen && fullscreenElement) document.mozCancelFullScreen();
+                else if (document.msExitFullscreen && fullscreenElement) document.msExitFullscreen();
+            } else {
+                await this.requestViewerFullscreen();
+            }
+        } catch (err) {
+            console.warn("Could not toggle fullscreen", err);
+            this.viewerFullscreenFallback = !this.viewerFullscreenFallback;
+        }
+        this.updateViewerFullscreenState();
+    }
+
+    async requestViewerFullscreen() {
+        const target = this.viewerVideoWrap;
+        const video = this.matchVideo;
+        try {
+            if (target.requestFullscreen) {
+                await target.requestFullscreen();
+                this.viewerFullscreenFallback = false;
+                return;
+            }
+            if (target.webkitRequestFullscreen) {
+                target.webkitRequestFullscreen();
+                this.viewerFullscreenFallback = false;
+                return;
+            }
+            if (target.webkitRequestFullScreen) {
+                target.webkitRequestFullScreen();
+                this.viewerFullscreenFallback = false;
+                return;
+            }
+            if (target.mozRequestFullScreen) {
+                target.mozRequestFullScreen();
+                this.viewerFullscreenFallback = false;
+                return;
+            }
+            if (target.msRequestFullscreen) {
+                target.msRequestFullscreen();
+                this.viewerFullscreenFallback = false;
+                return;
+            }
+            if (video?.webkitEnterFullscreen) {
+                video.webkitEnterFullscreen();
+                this.viewerFullscreenFallback = false;
+                return;
+            }
+        } catch (err) {
+            console.warn("Native fullscreen request failed; using in-page fullscreen", err);
+        }
+        this.viewerFullscreenFallback = true;
     }
 
     skipViewerBy(deltaSeconds) {
@@ -997,7 +1697,9 @@ class RallyClipApp {
         this.showViewerControls();
         const wasPlaying = !this.matchVideo.paused;
         const current = this.getViewerSourceTime();
-        this.seekViewerToSourceTime(this.clampViewerSourceTime(current + deltaSeconds), wasPlaying);
+        const target = this.clampViewerSourceTime(current + deltaSeconds);
+        this.setManualPlaybackSegmentForSourceTime(target);
+        this.seekViewerToSourceTime(target, wasPlaying, { preserveSegment: true });
     }
 
     seekViewerFromTimelinePointer(event) {
@@ -1024,6 +1726,47 @@ class RallyClipApp {
             event.preventDefault();
             this.showViewerControls();
             this.skipViewerBy(this.viewerSkipSeconds);
+        } else if (event.key === " " || event.code === "Space" || event.key === "Spacebar") {
+            event.preventDefault();
+            if (typeof event.stopPropagation === "function") event.stopPropagation();
+            this.toggleViewerPlayback(event);
+        } else if (event.key && event.key.toLowerCase() === "f") {
+            event.preventDefault();
+            if (typeof event.stopPropagation === "function") event.stopPropagation();
+            this.toggleViewerFullscreen(event);
+        } else if (event.key === "Escape" && this.viewerFullscreenFallback) {
+            event.preventDefault();
+            this.viewerFullscreenFallback = false;
+            this.updateViewerFullscreenState();
+        }
+    }
+
+    normalizePointIntervals(segments = []) {
+        return (segments || [])
+            .map((seg) => ({ start: Number(seg.start), end: Number(seg.end) }))
+            .filter((seg) => Number.isFinite(seg.start) && Number.isFinite(seg.end) && seg.end > seg.start)
+            .sort((a, b) => a.start - b.start || a.end - b.end);
+    }
+
+    async loadPlaybackManifest(itemId) {
+        try {
+            const resp = await fetch(`/api/library/${itemId}/playback`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const payload = await resp.json();
+            if (this.viewingItemId !== itemId) return;
+            if (Number(payload.chunk_duration_s) > 0) {
+                this.previewWindowDuration = Number(payload.chunk_duration_s);
+            }
+            if (Number(payload.source_duration_s) > 0) {
+                this.sourceDuration = Number(payload.source_duration_s);
+            }
+            this.pointIntervals = this.normalizePointIntervals(payload.point_intervals || payload.segments);
+            this.lastViewerTime = null;
+            this.configureViewerTimeline(this.sourceDuration);
+            this.renderViewerPointRanges();
+        } catch (err) {
+            console.error(err);
+            await this.loadPointIntervals(itemId);
         }
     }
 
@@ -1033,26 +1776,44 @@ class RallyClipApp {
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const payload = await resp.json();
             if (this.viewingItemId !== itemId) return;
-            this.pointIntervals = (payload.segments || [])
-                .map((seg) => ({ start: Number(seg.start), end: Number(seg.end) }))
-                .filter((seg) => Number.isFinite(seg.start) && Number.isFinite(seg.end) && seg.end > seg.start)
-                .sort((a, b) => a.start - b.start || a.end - b.end);
+            this.pointIntervals = this.normalizePointIntervals(payload.segments);
             this.lastViewerTime = null;
+            this.renderViewerPointRanges();
         } catch (err) {
             console.error(err);
             this.pointIntervals = [];
+            this.renderViewerPointRanges();
             this.showToast("Could not load point times.", "error");
         }
     }
 
-    configureViewerTimeline(duration) {
+    configureViewerTimeline(duration, sourceTime = null) {
         const safeDuration = Math.max(0, Number(duration) || 0);
         this.viewerTimeline.hidden = safeDuration <= 0;
         this.viewerSeek.min = "0";
         this.viewerSeek.max = safeDuration > 0 ? String(safeDuration) : "0";
         this.viewerSeek.step = "0.1";
         this.viewerDuration.textContent = this.formatClock(safeDuration);
-        this.updateViewerTimeline(0);
+        const current = Number.isFinite(sourceTime) ? sourceTime : Number(this.viewerSeek.value) || 0;
+        this.updateViewerTimeline(current);
+        this.renderViewerPointRanges();
+    }
+
+    renderViewerPointRanges() {
+        if (!this.viewerPointTrack) return;
+        this.viewerPointTrack.innerHTML = "";
+        const duration = Math.max(0, Number(this.sourceDuration) || 0);
+        if (duration <= 0) return;
+        this.pointIntervals.forEach((seg) => {
+            const start = Math.max(0, Math.min(duration, seg.start));
+            const end = Math.max(start, Math.min(duration, seg.end));
+            if (end <= start) return;
+            const marker = document.createElement("span");
+            marker.className = "viewer-point-segment";
+            marker.style.left = `${(start / duration) * 100}%`;
+            marker.style.width = `${Math.max(0.12, ((end - start) / duration) * 100)}%`;
+            this.viewerPointTrack.appendChild(marker);
+        });
     }
 
     formatClock(seconds) {
@@ -1067,30 +1828,76 @@ class RallyClipApp {
     updateViewerTimeline(sourceTime) {
         const safeTime = Math.max(0, Number(sourceTime) || 0);
         this.viewerCurrentTime.textContent = this.formatClock(safeTime);
+        const max = Number(this.viewerSeek.max) || 0;
+        const progress = max > 0 ? Math.max(0, Math.min(100, (safeTime / max) * 100)) : 0;
+        this.viewerSeek.style.setProperty("--viewer-progress", `${progress}%`);
         if (!this.viewerSeekDragging) {
-            this.viewerSeek.value = String(Math.min(safeTime, Number(this.viewerSeek.max) || safeTime));
+            this.viewerSeek.value = String(Math.min(safeTime, max || safeTime));
         }
     }
 
     getViewerSourceTime() {
-        return this.currentPreviewWindowStart + (Number(this.matchVideo.currentTime) || 0);
+        if (this.mseActive) {
+            const videoTime = Number(this.matchVideo?.currentTime);
+            if (Number.isFinite(videoTime) && (!this.msePendingSeek || this.isMseSourceTimeBuffered(videoTime))) return videoTime;
+            if (Number.isFinite(this.lastViewerTime)) return this.lastViewerTime;
+            return Number.isFinite(videoTime) ? videoTime : 0;
+        }
+        const videoTime = Number(this.matchVideo?.currentTime);
+        if (Number.isFinite(videoTime)) return this.videoWindowStart(this.matchVideo) + videoTime;
+        if (Number.isFinite(this.lastViewerTime)) return this.lastViewerTime;
+        return this.videoWindowStart(this.matchVideo);
     }
 
-    seekViewerToSourceTime(sourceTime, autoplay = true) {
-        const target = Math.max(0, Number(sourceTime) || 0);
-        const windowEnd = this.currentPreviewWindowStart + this.currentPreviewWindowDuration;
-        if (this.matchVideo.src && target >= this.currentPreviewWindowStart && target < windowEnd - 0.15) {
-            this.matchVideo.currentTime = Math.max(0, target - this.currentPreviewWindowStart);
+    seekViewerToSourceTime(sourceTime, autoplay = true, options = {}) {
+        const target = this.clampViewerSourceTime(sourceTime);
+        if (!options.preserveSegment) this.setPlaybackSegmentForSourceTime(target);
+        if (this.mseActive) {
+            this.seekMseViewerToSourceTime(target, autoplay);
+            return;
+        }
+        const windowStart = this.videoWindowStart(this.matchVideo);
+        const windowEnd = this.videoWindowEnd(this.matchVideo);
+        if (this.matchVideo.src && target >= windowStart && target < windowEnd - 0.15) {
+            this.matchVideo.currentTime = Math.max(0, target - windowStart);
             this.lastViewerTime = target;
             this.updateViewerTimeline(target);
+            this.prefetchForPlaybackSchedule(target);
             if (autoplay) this.startViewerPlayback();
             return;
         }
-        this.loadPreviewWindowAt(target, autoplay);
+        const requestWindow = this.previewWindowRequestForSourceTime(target);
+        const readyWindow = this.getReadyPreviewWindow(target, requestWindow.end);
+        if (readyWindow?.previewUrl) {
+            this.clearPreviewPoll();
+            const requestId = ++this.previewRequestSeq;
+            this.previewLoadInProgress = true;
+            this.previewTransitionInProgress = true;
+            this.pendingPreviewTransition = {
+                id: requestId,
+                itemId: this.viewingItemId,
+                targetSourceTime: target,
+                targetWindowStart: readyWindow.start,
+                targetWindowEnd: readyWindow.start + readyWindow.duration,
+                autoplay: Boolean(autoplay),
+                preserveSegment: Boolean(options.preserveSegment),
+            };
+            this.activatePreviewWindow(this.viewingItemId, requestId, {
+                start: readyWindow.start,
+                duration: readyWindow.duration,
+                preview_url: readyWindow.previewUrl,
+            }, target, autoplay, { allowCurrent: true });
+            return;
+        }
+        this.loadPreviewWindowAt(target, autoplay, { preserveSegment: true });
     }
 
     handleViewerVideoError() {
         if (!this.matchVideo.src || !this.matchVideo.error) return;
+        if (this.mseActive) {
+            this.fallbackFromMse(this.getViewerSourceTime(), !this.matchVideo.paused, this.matchVideo.error);
+            return;
+        }
         this.showToast("Could not play this video in the viewer.", "error");
     }
 
@@ -1098,55 +1905,100 @@ class RallyClipApp {
         if (!this.matchVideo.src) return;
         const t = this.getViewerSourceTime();
         this.updateViewerTimeline(t);
-        const remaining = this.currentPreviewWindowStart + this.currentPreviewWindowDuration - t;
-        if (remaining < 8) this.prefetchPointAwareWindows(t);
-        if (!this.pointIntervals.length || this.matchVideo.paused) return;
-        const previous = this.lastViewerTime;
+        if (this.mseActive) this.ensureMsePlaybackRange(t);
+        const remaining = this.videoWindowEnd(this.matchVideo) - t;
+        if (!this.mseActive && remaining < 8) this.prefetchForPlaybackSchedule(t);
+        if (this.matchVideo.paused) {
+            this.lastViewerTime = t;
+            return;
+        }
+        if (!this.activePlaybackSegment) this.setPlaybackSegmentForSourceTime(t);
         this.lastViewerTime = t;
-        if (this.viewerSeekInProgress || previous === null || t <= previous) return;
-
-        const idx = this.findCrossedPointIndex(previous, t);
-        if (idx < 0) return;
-
-        this.advanceAfterPointIndex(idx);
+        if (this.pendingPreviewTransition) return;
+        const segmentEnd = Number(this.activePlaybackSegment?.end);
+        if (Number.isFinite(segmentEnd) && t >= segmentEnd - 0.08) {
+            this.advanceAfterActivePlaybackSegment();
+            return;
+        }
+        if (!this.mseActive && !this.previewLoadInProgress && remaining <= 0.18 && remaining > -0.5) {
+            this.continueToNextPreviewWindow({ preserveSegment: true });
+        }
     }
 
     handleViewerWindowEnded() {
         if (!this.matchVideo.src || !this.viewingItemId) return;
-        if (this.previewLoadInProgress) return;
-        const sourceTime = this.currentPreviewWindowStart + this.currentPreviewWindowDuration;
+        if (this.mseActive) return;
+        const sourceTime = this.videoWindowEnd(this.matchVideo);
         this.updateViewerTimeline(sourceTime);
-        if (this.pointIntervals.length && this.lastViewerTime !== null) {
-            const idx = this.findCrossedPointIndex(this.lastViewerTime, sourceTime);
-            this.lastViewerTime = sourceTime;
-            if (idx >= 0) {
-                this.advanceAfterPointIndex(idx);
-                return;
-            }
-        }
-        if (this.sourceDuration > 0 && sourceTime >= this.sourceDuration - 0.25) return;
-        this.loadPreviewWindowAt(sourceTime, true);
-    }
-
-    findCrossedPointIndex(previous, current) {
-        return this.pointIntervals.findIndex((seg) => previous < seg.end && current >= seg.end);
-    }
-
-    advanceAfterPointIndex(idx) {
-        const next = this.pointIntervals[idx + 1];
-        if (!next) {
-            this.matchVideo.pause();
-            this.lastViewerTime = this.pointIntervals[idx].end;
-            this.updateViewerTimeline(this.lastViewerTime);
+        this.lastViewerTime = sourceTime;
+        if (this.pendingPreviewTransition || this.previewLoadInProgress) {
+            this.showPreviewLoading();
             return;
         }
-        this.prefetchPointAwareWindows(next.start);
-        this.seekViewerToSourceTime(next.start, true);
+        if (!this.activePlaybackSegment) this.setPlaybackSegmentForSourceTime(sourceTime);
+        const segmentEnd = Number(this.activePlaybackSegment?.end);
+        if (Number.isFinite(segmentEnd) && sourceTime >= segmentEnd - 0.08) {
+            this.advanceAfterActivePlaybackSegment();
+            return;
+        }
+        if (this.sourceDuration > 0 && sourceTime >= this.sourceDuration - 0.25) return;
+        this.continueToNextPreviewWindow({ preserveSegment: true });
+    }
+
+    advanceAfterActivePlaybackSegment() {
+        if (!this.activePlaybackSegment || this.previewLoadInProgress) return;
+        const nextPointIndex = this.activePlaybackSegment.nextPointIndex;
+        if (Number.isInteger(nextPointIndex) && this.pointIntervals[nextPointIndex]) {
+            this.seekViewerToSourceTime(this.pointIntervals[nextPointIndex].start, true);
+            return;
+        }
+        const stopTime = (
+            this.sourceDuration > 0 && this.activePlaybackSegment.end >= this.sourceDuration - 0.1
+        )
+            ? this.sourceDuration
+            : this.clampViewerSourceTime(this.activePlaybackSegment.end);
+        this.matchVideo.pause();
+        this.lastViewerTime = stopTime;
+        this.updateViewerTimeline(stopTime);
+        this.updateViewerControls();
+    }
+
+    continueToNextPreviewWindow(options = {}) {
+        if (!this.viewingItemId || this.pendingPreviewTransition) return;
+        const sourceTime = this.videoWindowEnd(this.matchVideo);
+        if (!this.activePlaybackSegment) this.setPlaybackSegmentForSourceTime(sourceTime);
+        const segmentEnd = Number(this.activePlaybackSegment?.end);
+        if (Number.isFinite(segmentEnd) && sourceTime >= segmentEnd - 0.08) {
+            this.advanceAfterActivePlaybackSegment();
+            return;
+        }
+        const requestWindow = this.previewWindowRequestForSourceTime(sourceTime);
+        const readyWindow = this.getReadyPreviewWindow(sourceTime, requestWindow.end);
+        if (readyWindow?.previewUrl) {
+            const requestId = ++this.previewRequestSeq;
+            this.previewLoadInProgress = true;
+            this.previewTransitionInProgress = true;
+            this.pendingPreviewTransition = {
+                id: requestId,
+                itemId: this.viewingItemId,
+                targetSourceTime: sourceTime,
+                targetWindowStart: readyWindow.start,
+                targetWindowEnd: readyWindow.start + readyWindow.duration,
+                autoplay: true,
+                preserveSegment: Boolean(options.preserveSegment),
+            };
+            this.activatePreviewWindow(this.viewingItemId, requestId, {
+                start: readyWindow.start,
+                duration: readyWindow.duration,
+                preview_url: readyWindow.previewUrl,
+            }, sourceTime, true, { allowCurrent: true });
+            return;
+        }
+        this.loadPreviewWindowAt(sourceTime, true, options);
     }
 
     findPointIndexAt(sourceTime) {
-        const t = Number(sourceTime) || 0;
-        return this.pointIntervals.findIndex((seg) => t >= seg.start && t < seg.end);
+        return this.pointIndexAtSourceTime(sourceTime);
     }
 
     prefetchUpcomingPointWindow(sourceTime) {

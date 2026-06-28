@@ -85,7 +85,9 @@ def main() -> int:
     try:
         from PySide6.QtCore import Qt, QUrl
         from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
-        from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QSplashScreen
+        from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QSplashScreen, QStackedWidget
+        from PySide6.QtWebChannel import QWebChannel
+        from PySide6.QtWebEngineCore import QWebEngineSettings
         from PySide6.QtWebEngineWidgets import QWebEngineView
     except ImportError as exc:
         print(
@@ -96,6 +98,7 @@ def main() -> int:
         return 1
 
     from gui.app import start_backend_thread
+    from gui.native_player import NativeViewerBridge, NativeViewerWidget
 
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName("RallyClip")
@@ -144,13 +147,15 @@ def main() -> int:
 
     window = QMainWindow()
     window.setWindowTitle("RallyClip")
-    if sys.platform == "darwin":
-        window.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
     if not app_icon.isNull():
         window.setWindowIcon(app_icon)
     window.resize(1280, 840)
 
     view = QWebEngineView()
+    try:
+        view.settings().setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
+    except Exception:
+        pass
 
     def _on_download_requested(download) -> None:
         # QWebEngineView silently drops downloads unless one is accepted here.
@@ -168,9 +173,49 @@ def main() -> int:
         download.setDownloadFileName(target_path.name)
         download.accept()
 
+    def _on_fullscreen_requested(request) -> None:
+        request.accept()
+        if request.toggleOn():
+            window.showFullScreen()
+        else:
+            window.showNormal()
+
+    stack = QStackedWidget()
+    native_viewer = NativeViewerWidget(port)
+
+    def _open_native_match(item_id: str) -> bool:
+        try:
+            native_viewer.open_match(item_id)
+            stack.setCurrentWidget(native_viewer)
+            return True
+        except Exception as exc:
+            print(f"Could not open native viewer: {exc}", file=sys.stderr)
+            return False
+
+    def _return_to_library() -> None:
+        native_viewer.stop()
+        window.showNormal()
+        stack.setCurrentWidget(view)
+
+    def _set_native_fullscreen(enabled: bool) -> None:
+        if enabled:
+            window.showFullScreen()
+        else:
+            window.showNormal()
+
+    channel = QWebChannel(view.page())
+    bridge = NativeViewerBridge(_open_native_match)
+    channel.registerObject("nativeViewer", bridge)
+    view.page().setWebChannel(channel)
+
+    native_viewer.backRequested.connect(_return_to_library)
+    native_viewer.fullscreenRequested.connect(_set_native_fullscreen)
     view.page().profile().downloadRequested.connect(_on_download_requested)
+    view.page().fullScreenRequested.connect(_on_fullscreen_requested)
     view.load(QUrl(f"http://127.0.0.1:{port}/"))
-    window.setCentralWidget(view)
+    stack.addWidget(view)
+    stack.addWidget(native_viewer)
+    window.setCentralWidget(stack)
     window.show()
     splash.finish(window)
 
