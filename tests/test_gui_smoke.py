@@ -162,6 +162,14 @@ def test_library_preview_streams_video_inline(tmp_path, monkeypatch):
     assert segments.status_code == 200
     assert segments.get_json()["segments"] == [{"start": 1.0, "end": 3.0}]
 
+    playback = client.get("/api/library/match-1/playback")
+    assert playback.status_code == 200
+    playback_payload = playback.get_json()
+    assert playback_payload["chunk_duration_s"] == gui_app.PREVIEW_WINDOW_DURATION_S
+    assert playback_payload["segments"] == [{"start": 1.0, "end": 3.0}]
+    assert playback_payload["point_intervals"] == [{"start": 1.0, "end": 3.0}]
+    assert playback_payload["point_duration_s"] == 2.0
+
 
 def test_library_preview_supports_range_requests(tmp_path, monkeypatch):
     from gui import app as gui_app
@@ -237,6 +245,10 @@ def test_library_preview_window_streams_video_inline(tmp_path, monkeypatch):
     (window_dir / "000000000000_008000.webm").write_bytes(b"fake window bytes")
     (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
     (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
+    now = time.time()
+    os.utime(item_dir / "source.mp4", (now - 10, now - 10))
+    os.utime(item_dir / "segments.csv", (now - 10, now - 10))
+    os.utime(window_dir / "000000000000_008000.webm", (now, now))
     monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
 
     client = gui_app.app.test_client()
@@ -245,6 +257,13 @@ def test_library_preview_window_streams_video_inline(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.mimetype == "video/webm"
     assert response.data == b"fake window bytes"
+
+    status = client.get("/api/library/match-1/preview/window/status?start=1.0&duration=5.0")
+    assert status.status_code == 200
+    payload = status.get_json()
+    assert payload["status"] == "ready"
+    assert payload["ready"] is True
+    assert payload["preview_url"] == "/api/library/match-1/preview/window?start=0.000&duration=8.000"
 
 
 def test_library_preview_window_returns_accepted_while_processing(tmp_path, monkeypatch):
@@ -270,7 +289,64 @@ def test_library_preview_window_returns_accepted_while_processing(tmp_path, monk
     assert payload["duration"] == 8.0
 
 
-def test_preview_window_values_use_canonical_non_overlapping_chunks(monkeypatch):
+def test_library_preview_window_status_returns_error_without_polling_forever(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    item_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"fake mp4 bytes")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
+    (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+
+    key = gui_app._preview_window_job_key("match-1", 0.0, 8.0)
+    monkeypatch.setitem(gui_app.preview_jobs, key, "error")
+    monkeypatch.setitem(gui_app.preview_job_errors, key, "Missing VP8 encoder")
+
+    client = gui_app.app.test_client()
+    response = client.get("/api/library/match-1/preview/window/status?start=1.0&duration=5.0")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["status"] == "error"
+    assert payload["ready"] is False
+    assert payload["preview_url"] is None
+    assert payload["error"] == "Missing VP8 encoder"
+
+
+def test_preview_window_ready_invalidates_when_source_or_csv_changes(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    window_dir = item_dir / "preview_windows"
+    window_dir.mkdir(parents=True)
+    source = item_dir / "source.mp4"
+    csv_path = item_dir / "segments.csv"
+    preview = window_dir / "000000000000_008000.webm"
+    source.write_bytes(b"source")
+    csv_path.write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
+    preview.write_bytes(b"preview")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+
+    now = time.time()
+    os.utime(source, (now - 30, now - 30))
+    os.utime(csv_path, (now - 30, now - 30))
+    os.utime(preview, (now - 10, now - 10))
+    assert gui_app._preview_window_ready("match-1", source, 0.0, 8.0)
+
+    os.utime(csv_path, (now, now))
+    assert not gui_app._preview_window_ready("match-1", source, 0.0, 8.0)
+
+    os.utime(preview, (now + 10, now + 10))
+    assert gui_app._preview_window_ready("match-1", source, 0.0, 8.0)
+
+    os.utime(source, (now + 20, now + 20))
+    assert not gui_app._preview_window_ready("match-1", source, 0.0, 8.0)
+
+
+def test_preview_window_values_use_aligned_playback_windows(monkeypatch):
     from gui import app as gui_app
 
     monkeypatch.setattr(gui_app, "_estimate_duration_seconds", lambda _path: 120.0)
@@ -278,10 +354,11 @@ def test_preview_window_values_use_canonical_non_overlapping_chunks(monkeypatch)
     assert gui_app._preview_window_values(Path("source.mp4"), 7.9, None) == (0.0, 8.0)
     assert gui_app._preview_window_values(Path("source.mp4"), 8.0, 5.0) == (8.0, 8.0)
     assert gui_app._preview_window_values(Path("source.mp4"), 10.0, None) == (8.0, 8.0)
+    assert gui_app._preview_window_values(Path("source.mp4"), 30.0, 15.0) == (24.0, 24.0)
     assert gui_app._preview_window_values(Path("source.mp4"), 119.9, None) == (112.0, 8.0)
 
 
-def test_preview_cache_prunes_to_one_active_match_and_ttl(tmp_path, monkeypatch):
+def test_preview_cache_prunes_stale_files_and_inactive_temps(tmp_path, monkeypatch):
     from gui import app as gui_app
 
     library = tmp_path / "library"
@@ -294,8 +371,9 @@ def test_preview_cache_prunes_to_one_active_match_and_ttl(tmp_path, monkeypatch)
     stale = active_windows / "000000000000_008000.webm"
     fresh = active_windows / "000000008000_008000.webm"
     inactive_chunk = inactive_windows / "000000000000_008000.webm"
+    inactive_tmp = inactive_windows / "000000008000_008000.tmp.webm"
     inactive_preview = inactive / "preview.webm"
-    for path in (stale, fresh, inactive_chunk, inactive_preview):
+    for path in (stale, fresh, inactive_chunk, inactive_tmp, inactive_preview):
         path.write_bytes(b"cache")
     old = time.time() - gui_app.PREVIEW_CACHE_TTL_SECONDS - 10
     stale.touch()
@@ -307,15 +385,45 @@ def test_preview_cache_prunes_to_one_active_match_and_ttl(tmp_path, monkeypatch)
     monkeypatch.setitem(gui_app.preview_jobs, "match-2:window:0:8000", "ready")
 
     os.utime(stale, (old, old))
-    os.utime(inactive_chunk, (old, old))
-    os.utime(inactive_preview, (old, old))
     gui_app._activate_preview_cache("match-1", force=True)
 
     assert not stale.exists()
     assert fresh.exists()
-    assert not inactive_windows.exists()
-    assert not inactive_preview.exists()
-    assert "match-2:window:0:8000" not in gui_app.preview_jobs
+    assert inactive_chunk.exists()
+    assert not inactive_tmp.exists()
+    assert inactive_preview.exists()
+
+
+def test_preview_cache_prunes_lru_to_active_and_global_caps(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    active_windows = library / "match-1" / "preview_windows"
+    inactive_windows = library / "match-2" / "preview_windows"
+    active_windows.mkdir(parents=True)
+    inactive_windows.mkdir(parents=True)
+    active_old = active_windows / "000000000000_008000.webm"
+    active_new = active_windows / "000000008000_008000.webm"
+    inactive_old = inactive_windows / "000000000000_008000.webm"
+    inactive_new = inactive_windows / "000000008000_008000.webm"
+    for path in (active_old, active_new, inactive_old, inactive_new):
+        path.write_bytes(b"1234567890")
+
+    now = time.time()
+    os.utime(active_old, (now - 40, now - 40))
+    os.utime(active_new, (now - 30, now - 30))
+    os.utime(inactive_old, (now - 20, now - 20))
+    os.utime(inactive_new, (now - 10, now - 10))
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    monkeypatch.setattr(gui_app, "PREVIEW_ACTIVE_CACHE_CAP_BYTES", 10)
+    monkeypatch.setattr(gui_app, "PREVIEW_GLOBAL_CACHE_CAP_BYTES", 20)
+
+    gui_app._prune_preview_cache("match-1", now=now)
+
+    assert not active_old.exists()
+    assert active_new.exists()
+    assert not inactive_old.exists()
+    assert inactive_new.exists()
 
 
 def test_web_preview_generation_latency_benchmark(tmp_path):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -228,6 +229,7 @@ jobs_lock = threading.Lock()
 jobs: Dict[str, JobDict] = {}
 preview_locks: Dict[str, threading.Lock] = {}
 preview_jobs: Dict[str, str] = {}
+preview_job_errors: Dict[str, str] = {}
 _MEMORY_PROCESS = None
 active_preview_item_id: Optional[str] = None
 last_preview_cache_prune = 0.0
@@ -237,7 +239,10 @@ PREVIEW_WINDOW_MAX_DURATION_S = 90.0
 PREVIEW_WINDOW_WIDTH = 640
 PREVIEW_WINDOW_FPS = 30
 PREVIEW_CACHE_TTL_SECONDS = 24 * 60 * 60
+PREVIEW_ACTIVE_CACHE_CAP_BYTES = 256 * 1024 * 1024
+PREVIEW_GLOBAL_CACHE_CAP_BYTES = 1024 * 1024 * 1024
 PREVIEW_TRANSCODE_CONCURRENCY = 2
+NATIVE_PLAYBACK_PROXY_FILENAME = "playback_proxy.mp4"
 preview_transcode_semaphore = threading.BoundedSemaphore(PREVIEW_TRANSCODE_CONCURRENCY)
 
 
@@ -613,14 +618,19 @@ def _preview_windows_dir(item_id: str) -> Path:
 
 
 def _preview_window_values(source_path: Path, start_s: float, duration_s: Optional[float] = None) -> tuple[float, float]:
-    del duration_s
     source_duration = _estimate_duration_seconds(source_path)
     chunk_s = PREVIEW_WINDOW_DURATION_S
     safe_start = max(0.0, start_s)
     if source_duration > 0:
         safe_start = min(safe_start, max(0.0, source_duration - 0.1))
     start = int(safe_start // chunk_s) * chunk_s
-    duration = chunk_s
+    requested_duration = chunk_s
+    requested_end = start + chunk_s
+    if duration_s is not None and duration_s > 0:
+        requested_duration = max(PREVIEW_WINDOW_MIN_DURATION_S, min(float(duration_s), PREVIEW_WINDOW_MAX_DURATION_S))
+        requested_end = safe_start + requested_duration
+    duration = max(chunk_s, math.ceil(max(0.1, requested_end - start) / chunk_s) * chunk_s)
+    duration = min(duration, PREVIEW_WINDOW_MAX_DURATION_S)
     if source_duration > 0:
         duration = min(duration, max(0.1, source_duration - start))
     return round(start, 3), round(duration, 3)
@@ -636,13 +646,25 @@ def _preview_window_job_key(item_id: str, start_s: float, duration_s: float) -> 
     return f"{item_id}:window:{int(round(start_s * 1000))}:{int(round(duration_s * 1000))}"
 
 
+def _preview_window_dependency_mtime(item_id: str, source_path: Path) -> float:
+    mtime = source_path.stat().st_mtime
+    csv_path = _resolve_library_file(item_id, "segments.csv")
+    if csv_path is not None:
+        mtime = max(mtime, csv_path.stat().st_mtime)
+    return mtime
+
+
 def _preview_window_ready(item_id: str, source_path: Path, start_s: float, duration_s: float) -> bool:
     preview_path = _preview_window_path(item_id, start_s, duration_s)
-    return preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime
+    return preview_path.exists() and preview_path.stat().st_mtime >= _preview_window_dependency_mtime(item_id, source_path)
 
 
 def _preview_window_state(item_id: str, source_path: Path, start_s: float, duration_s: float) -> str:
     if _preview_window_ready(item_id, source_path, start_s, duration_s):
+        key = _preview_window_job_key(item_id, start_s, duration_s)
+        with jobs_lock:
+            preview_jobs.pop(key, None)
+            preview_job_errors.pop(key, None)
         return "ready"
     key = _preview_window_job_key(item_id, start_s, duration_s)
     with jobs_lock:
@@ -659,6 +681,10 @@ def _clear_preview_job_state(item_id: str) -> None:
         for key in list(preview_jobs):
             if key == item_id or key.startswith(prefix):
                 preview_jobs.pop(key, None)
+                preview_job_errors.pop(key, None)
+        for key in list(preview_job_errors):
+            if key == item_id or key.startswith(prefix):
+                preview_job_errors.pop(key, None)
 
 
 def _is_preview_cache_active(item_id: str) -> bool:
@@ -667,14 +693,108 @@ def _is_preview_cache_active(item_id: str) -> bool:
     return active is None or active == item_id
 
 
-def _unlink_if_old(path: Path, cutoff: float) -> bool:
+def _is_preview_temp_file(path: Path) -> bool:
+    return path.name.endswith(".tmp") or path.name.endswith(".tmp.webm")
+
+
+def _is_preview_cache_file(path: Path) -> bool:
+    return path.is_file() and (
+        path.suffix in {".webm", ".tmp"} or _is_preview_temp_file(path)
+    )
+
+
+def _unlink_preview_cache_file(path: Path) -> bool:
     try:
-        if path.exists() and path.stat().st_mtime < cutoff:
+        if path.exists():
             path.unlink()
             return True
     except Exception:
         logging.debug("Could not prune preview cache file %s", path, exc_info=True)
     return False
+
+
+def _touch_preview_cache_file(path: Path) -> None:
+    try:
+        if path.exists():
+            os.utime(path, None)
+    except Exception:
+        logging.debug("Could not touch preview cache file %s", path, exc_info=True)
+
+
+def _unlink_if_old(path: Path, cutoff: float) -> bool:
+    try:
+        if path.exists() and path.stat().st_mtime < cutoff:
+            return _unlink_preview_cache_file(path)
+    except Exception:
+        logging.debug("Could not stat preview cache file %s", path, exc_info=True)
+    return False
+
+
+def _preview_cache_records(item_dirs: list[Path]) -> list[Dict[str, Any]]:
+    records: list[Dict[str, Any]] = []
+    for item_dir in item_dirs:
+        item_id = item_dir.name
+        candidates = [item_dir / "preview.webm"]
+        windows_dir = item_dir / "preview_windows"
+        if windows_dir.exists():
+            try:
+                candidates.extend(child for child in windows_dir.iterdir())
+            except Exception:
+                logging.debug("Could not scan preview windows %s", windows_dir, exc_info=True)
+        for path in candidates:
+            try:
+                if not _is_preview_cache_file(path):
+                    continue
+                stat = path.stat()
+            except Exception:
+                continue
+            records.append(
+                {
+                    "path": path,
+                    "item_id": item_id,
+                    "size": stat.st_size,
+                    "mtime": stat.st_mtime,
+                    "is_tmp": _is_preview_temp_file(path),
+                }
+            )
+    return records
+
+
+def _enforce_preview_cache_cap(
+    records: list[Dict[str, Any]],
+    cap_bytes: int,
+    removed_item_ids: set[str],
+    *,
+    protected_item_id: Optional[str] = None,
+) -> None:
+    cap = max(0, int(cap_bytes))
+    total = sum(int(record["size"]) for record in records if Path(record["path"]).exists())
+    ordered = sorted(records, key=lambda rec: (rec["mtime"], str(rec["path"])))
+    for allow_protected in (False, True):
+        for record in ordered:
+            if total <= cap:
+                return
+            if protected_item_id is not None and record["item_id"] == protected_item_id and not allow_protected:
+                continue
+            path = Path(record["path"])
+            if not path.exists():
+                continue
+            size = int(record["size"])
+            if _unlink_preview_cache_file(path):
+                total -= size
+                removed_item_ids.add(str(record["item_id"]))
+
+
+def _cleanup_empty_preview_dirs(item_dirs: list[Path]) -> None:
+    for item_dir in item_dirs:
+        windows_dir = item_dir / "preview_windows"
+        if not windows_dir.exists():
+            continue
+        try:
+            if not any(windows_dir.iterdir()):
+                windows_dir.rmdir()
+        except Exception:
+            logging.debug("Could not remove empty preview cache dir %s", windows_dir, exc_info=True)
 
 
 def _prune_preview_cache(active_item_id: Optional[str], *, now: Optional[float] = None) -> None:
@@ -687,33 +807,33 @@ def _prune_preview_cache(active_item_id: Optional[str], *, now: Optional[float] 
         logging.debug("Could not scan preview cache root %s", LIBRARY_DIR, exc_info=True)
         return
 
-    for item_dir in children:
-        item_id = item_dir.name
-        windows_dir = item_dir / "preview_windows"
-        full_preview = item_dir / "preview.webm"
-
-        if active_item_id is not None and item_id != active_item_id:
-            if windows_dir.exists():
-                shutil.rmtree(windows_dir, ignore_errors=True)
-            try:
-                full_preview.unlink(missing_ok=True)
-            except Exception:
-                logging.debug("Could not remove inactive preview cache %s", full_preview, exc_info=True)
-            _clear_preview_job_state(item_id)
+    removed_item_ids: set[str] = set()
+    for record in _preview_cache_records(children):
+        path = Path(record["path"])
+        item_id = str(record["item_id"])
+        if active_item_id is not None and item_id != active_item_id and record["is_tmp"]:
+            if _unlink_preview_cache_file(path):
+                removed_item_ids.add(item_id)
             continue
+        if _unlink_if_old(path, cutoff):
+            removed_item_ids.add(item_id)
 
-        removed_any = _unlink_if_old(full_preview, cutoff)
-        if windows_dir.exists():
-            try:
-                for cached in windows_dir.iterdir():
-                    if cached.is_file() and cached.suffix in {".webm", ".tmp"}:
-                        removed_any = _unlink_if_old(cached, cutoff) or removed_any
-                if not any(windows_dir.iterdir()):
-                    windows_dir.rmdir()
-            except Exception:
-                logging.debug("Could not prune active preview cache %s", windows_dir, exc_info=True)
-        if removed_any:
-            _clear_preview_job_state(item_id)
+    records = [record for record in _preview_cache_records(children) if Path(record["path"]).exists()]
+    if active_item_id is not None:
+        active_records = [record for record in records if record["item_id"] == active_item_id]
+        _enforce_preview_cache_cap(active_records, PREVIEW_ACTIVE_CACHE_CAP_BYTES, removed_item_ids)
+
+    records = [record for record in _preview_cache_records(children) if Path(record["path"]).exists()]
+    _enforce_preview_cache_cap(
+        records,
+        PREVIEW_GLOBAL_CACHE_CAP_BYTES,
+        removed_item_ids,
+        protected_item_id=active_item_id,
+    )
+    _cleanup_empty_preview_dirs(children)
+
+    for item_id in removed_item_ids:
+        _clear_preview_job_state(item_id)
 
 
 def _activate_preview_cache(item_id: str, *, force: bool = False) -> None:
@@ -731,11 +851,13 @@ def _activate_preview_cache(item_id: str, *, force: bool = False) -> None:
 
 def _ensure_preview_window(item_id: str, source_path: Path, start_s: float, duration_s: float) -> Path:
     preview_path = _preview_window_path(item_id, start_s, duration_s)
-    if preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime:
+    dependency_mtime = _preview_window_dependency_mtime(item_id, source_path)
+    if preview_path.exists() and preview_path.stat().st_mtime >= dependency_mtime:
         return preview_path
     lock = _preview_lock(_preview_window_job_key(item_id, start_s, duration_s))
     with lock:
-        if preview_path.exists() and preview_path.stat().st_mtime >= source_path.stat().st_mtime:
+        dependency_mtime = _preview_window_dependency_mtime(item_id, source_path)
+        if preview_path.exists() and preview_path.stat().st_mtime >= dependency_mtime:
             return preview_path
         with preview_transcode_semaphore:
             _write_web_preview(
@@ -754,6 +876,7 @@ def _prepare_preview_window_background(item_id: str, source_path: Path, start_s:
     key = _preview_window_job_key(item_id, start_s, duration_s)
     with jobs_lock:
         preview_jobs[key] = "processing"
+        preview_job_errors.pop(key, None)
     try:
         preview_path = _ensure_preview_window(item_id, source_path, start_s, duration_s)
         if not _is_preview_cache_active(item_id):
@@ -762,18 +885,21 @@ def _prepare_preview_window_background(item_id: str, source_path: Path, start_s:
             finally:
                 with jobs_lock:
                     preview_jobs.pop(key, None)
+                    preview_job_errors.pop(key, None)
             return
         with jobs_lock:
             preview_jobs[key] = "ready"
-    except Exception:
+            preview_job_errors.pop(key, None)
+    except Exception as exc:
         with jobs_lock:
             preview_jobs[key] = "error"
+            preview_job_errors[key] = f"Could not prepare preview window: {exc}"
         logging.warning("Could not prepare preview window for %s at %.3fs", item_id, start_s, exc_info=True)
 
 
 def _start_preview_window_background(item_id: str, source_path: Path, start_s: float, duration_s: float) -> str:
     state = _preview_window_state(item_id, source_path, start_s, duration_s)
-    if state in {"ready", "processing"}:
+    if state in {"ready", "processing", "error"}:
         return state
     threading.Thread(
         target=_prepare_preview_window_background,
@@ -791,6 +917,9 @@ def _web_preview_ready(item_id: str, source_path: Path) -> bool:
 
 def _web_preview_state(item_id: str, source_path: Path) -> str:
     if _web_preview_ready(item_id, source_path):
+        with jobs_lock:
+            preview_jobs.pop(item_id, None)
+            preview_job_errors.pop(item_id, None)
         return "ready"
     with jobs_lock:
         return preview_jobs.get(item_id, "missing")
@@ -799,6 +928,7 @@ def _web_preview_state(item_id: str, source_path: Path) -> str:
 def _prepare_web_preview_background(item_id: str, source_path: Path) -> None:
     with jobs_lock:
         preview_jobs[item_id] = "processing"
+        preview_job_errors.pop(item_id, None)
     try:
         preview_path = _ensure_web_preview(item_id, source_path)
         if not _is_preview_cache_active(item_id):
@@ -807,18 +937,21 @@ def _prepare_web_preview_background(item_id: str, source_path: Path) -> None:
             finally:
                 with jobs_lock:
                     preview_jobs.pop(item_id, None)
+                    preview_job_errors.pop(item_id, None)
             return
         with jobs_lock:
             preview_jobs[item_id] = "ready"
-    except Exception:
+            preview_job_errors.pop(item_id, None)
+    except Exception as exc:
         with jobs_lock:
             preview_jobs[item_id] = "error"
+            preview_job_errors[item_id] = f"Could not prepare preview: {exc}"
         logging.warning("Could not prepare web preview for %s", item_id, exc_info=True)
 
 
 def _start_web_preview_background(item_id: str, source_path: Path) -> str:
     state = _web_preview_state(item_id, source_path)
-    if state in {"ready", "processing"}:
+    if state in {"ready", "processing", "error"}:
         return state
     threading.Thread(
         target=_prepare_web_preview_background,
@@ -1519,6 +1652,151 @@ def _resolve_library_source(item_id: str) -> Optional[Path]:
     return None
 
 
+def _read_library_meta(item_dir: Path) -> Dict[str, Any]:
+    meta_path = item_dir / "meta.json"
+    if not meta_path.exists():
+        return {}
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        logging.warning("Could not read library metadata from %s", meta_path, exc_info=True)
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _sorted_point_intervals(csv_path: Optional[Path]) -> list[tuple[float, float]]:
+    if csv_path is None or not csv_path.exists():
+        return []
+    intervals = load_intervals(str(csv_path))
+    return sorted((float(start), float(end)) for start, end in intervals if end > start)
+
+
+def _native_playback_proxy_path(item_id: str) -> Path:
+    return _library_item_dir(item_id) / NATIVE_PLAYBACK_PROXY_FILENAME
+
+
+def _native_playback_proxy_ready(source_path: Path, proxy_path: Path) -> bool:
+    if not proxy_path.exists():
+        return False
+    try:
+        return proxy_path.stat().st_mtime >= source_path.stat().st_mtime
+    except OSError:
+        return False
+
+
+def _native_playback_proxy_state(source_path: Path, proxy_path: Path) -> Dict[str, Any]:
+    ready = _native_playback_proxy_ready(source_path, proxy_path)
+    return {
+        "ready": ready,
+        "state": "ready" if ready else "missing",
+        "path": str(proxy_path) if ready else None,
+    }
+
+
+def native_playback_descriptor(item_id: str) -> Dict[str, Any]:
+    """Return trusted desktop-only playback data for a saved match.
+
+    This helper is intentionally not exposed as an HTTP endpoint: the desktop
+    bridge can read local file paths, but browser JavaScript should not.
+    """
+    item_dir = _library_item_dir(item_id)
+    source_path = _resolve_library_source(item_id)
+    if source_path is None:
+        raise FileNotFoundError("Video not available")
+    csv_path = item_dir / "segments.csv"
+    meta = _read_library_meta(item_dir)
+    intervals = _sorted_point_intervals(csv_path if csv_path.exists() else None)
+    source_duration = _estimate_duration_seconds(source_path)
+    proxy_path = item_dir / NATIVE_PLAYBACK_PROXY_FILENAME
+    return {
+        "id": item_id,
+        "name": str(meta.get("name") or item_id),
+        "source_name": meta.get("source_name"),
+        "created": meta.get("created"),
+        "source_path": str(source_path),
+        "source_duration_s": round(source_duration, 3) if source_duration > 0 else None,
+        "point_intervals": [{"start": start, "end": end} for start, end in intervals],
+        "point_duration_s": round(sum(end - start for start, end in intervals), 3),
+        "has_csv": csv_path.exists(),
+        "has_export": (item_dir / "export.mp4").exists(),
+        "csv_url": f"/api/library/{item_id}/csv" if csv_path.exists() else None,
+        "export_url": f"/api/library/{item_id}/video",
+        "proxy": _native_playback_proxy_state(source_path, proxy_path),
+    }
+
+
+def _native_playback_proxy_command(source_path: Path, output_path: Path) -> list[str]:
+    ffmpeg = _ffmpeg_executable()
+    if ffmpeg is None:
+        raise RuntimeError(
+            "Native playback failed and ffmpeg is not available to prepare a playback proxy."
+        )
+    return [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(source_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
+        "-vf",
+        "scale='min(1280,iw)':-2:force_original_aspect_ratio=decrease,fps=30",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-g",
+        "30",
+        "-keyint_min",
+        "30",
+        "-sc_threshold",
+        "0",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "96k",
+        "-ac",
+        "2",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+
+
+def _write_native_playback_proxy(source_path: Path, proxy_path: Path) -> Path:
+    proxy_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = proxy_path.with_name(f"{proxy_path.stem}.tmp{proxy_path.suffix}")
+    tmp_path.unlink(missing_ok=True)
+    command = _native_playback_proxy_command(source_path, tmp_path)
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True)
+        tmp_path.replace(proxy_path)
+        return proxy_path
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        raise RuntimeError(f"Could not prepare playback proxy: {stderr or exc}") from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def ensure_native_playback_proxy(item_id: str) -> Dict[str, Any]:
+    source_path = _resolve_library_source(item_id)
+    if source_path is None:
+        raise FileNotFoundError("Video not available")
+    proxy_path = _native_playback_proxy_path(item_id)
+    if not _native_playback_proxy_ready(source_path, proxy_path):
+        _write_native_playback_proxy(source_path, proxy_path)
+    return _native_playback_proxy_state(source_path, proxy_path)
+
+
 @app.route("/api/library/<item_id>/thumbnail", methods=["GET"])
 def library_thumbnail(item_id: str):
     path = _resolve_library_file(item_id, "thumb.jpg")
@@ -1567,7 +1845,11 @@ def library_video_preview(item_id: str):
     _activate_preview_cache(item_id)
     if not _web_preview_ready(item_id, path):
         state = _start_web_preview_background(item_id, path)
-        return jsonify({"status": state}), 202
+        payload = {"status": state, "ready": state == "ready"}
+        if state == "error":
+            with jobs_lock:
+                payload["error"] = preview_job_errors.get(item_id, "Could not prepare preview.")
+        return jsonify(payload), 500 if state == "error" else 202
     try:
         preview_path = _web_preview_path(item_id)
     except ValueError as exc:
@@ -1575,6 +1857,7 @@ def library_video_preview(item_id: str):
     except Exception as exc:
         logging.exception("Could not prepare library preview %s", item_id)
         return jsonify({"error": f"Could not prepare preview: {exc}"}), 500
+    _touch_preview_cache_file(preview_path)
     return send_file(str(preview_path), mimetype="video/webm")
 
 
@@ -1591,8 +1874,13 @@ def library_video_preview_status(item_id: str):
         "ready": state == "ready",
         "preview_url": f"/api/library/{item_id}/preview" if state == "ready" else None,
     }
+    if state == "error":
+        with jobs_lock:
+            payload["error"] = preview_job_errors.get(item_id, "Could not prepare preview.")
     if preview_path.exists():
         payload["bytes"] = preview_path.stat().st_size
+        if state == "ready":
+            _touch_preview_cache_file(preview_path)
     return jsonify(payload), 200
 
 
@@ -1609,6 +1897,7 @@ def _preview_window_from_request(source_path: Path) -> tuple[float, float]:
 def _preview_window_payload(item_id: str, source_path: Path, start_s: float, duration_s: float, state: str) -> Dict[str, Any]:
     source_duration = _estimate_duration_seconds(source_path)
     preview_path = _preview_window_path(item_id, start_s, duration_s)
+    key = _preview_window_job_key(item_id, start_s, duration_s)
     payload: Dict[str, Any] = {
         "status": state,
         "ready": state == "ready",
@@ -1621,8 +1910,13 @@ def _preview_window_payload(item_id: str, source_path: Path, start_s: float, dur
             else None
         ),
     }
+    if state == "error":
+        with jobs_lock:
+            payload["error"] = preview_job_errors.get(key, "Could not prepare preview window.")
     if preview_path.exists():
         payload["bytes"] = preview_path.stat().st_size
+        if state == "ready":
+            _touch_preview_cache_file(preview_path)
     return payload
 
 
@@ -1650,14 +1944,40 @@ def library_video_preview_window(item_id: str):
         start_s, duration_s = _preview_window_from_request(path)
         if not _preview_window_ready(item_id, path, start_s, duration_s):
             state = _start_preview_window_background(item_id, path, start_s, duration_s)
-            return jsonify(_preview_window_payload(item_id, path, start_s, duration_s, state)), 202
+            status_code = 500 if state == "error" else 202
+            return jsonify(_preview_window_payload(item_id, path, start_s, duration_s, state)), status_code
         preview_path = _preview_window_path(item_id, start_s, duration_s)
+        _touch_preview_cache_file(preview_path)
         return send_file(str(preview_path), mimetype="video/webm")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
         logging.exception("Could not prepare preview window %s", item_id)
         return jsonify({"error": f"Could not prepare preview window: {exc}"}), 500
+
+
+@app.route("/api/library/<item_id>/playback", methods=["GET"])
+def library_playback(item_id: str):
+    source_path = _resolve_library_source(item_id)
+    csv_path = _resolve_library_file(item_id, "segments.csv")
+    if source_path is None:
+        return jsonify({"error": "Video not available"}), 404
+    if csv_path is None:
+        return jsonify({"error": "CSV not available"}), 404
+    try:
+        intervals = load_intervals(str(csv_path))
+        source_duration = _estimate_duration_seconds(source_path)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(
+        {
+            "source_duration_s": round(source_duration, 3) if source_duration > 0 else None,
+            "chunk_duration_s": PREVIEW_WINDOW_DURATION_S,
+            "segments": [{"start": start, "end": end} for start, end in intervals],
+            "point_intervals": [{"start": start, "end": end} for start, end in intervals],
+            "point_duration_s": round(sum(end - start for start, end in intervals), 3),
+        }
+    ), 200
 
 
 @app.route("/api/library/<item_id>/segments", methods=["GET"])
