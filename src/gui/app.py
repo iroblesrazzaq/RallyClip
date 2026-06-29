@@ -15,10 +15,18 @@ import uuid
 import webbrowser
 import csv
 from datetime import datetime, timedelta
+from importlib import metadata as importlib_metadata
 from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+try:
+    import tomllib
+except ImportError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
 
 try:
     from flask import Flask, jsonify, request, send_file
@@ -35,6 +43,10 @@ from runtime.paths import resolve_frontend_dir
 
 JobDict = Dict[str, Any]
 FIXED_YOLO_MODEL = "yolov8n-pose.pt"
+GITHUB_REPO = "iroblesrazzaq/RallyClip"
+GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
+GITHUB_LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+UPDATE_CHECK_CACHE_SECONDS = 6 * 60 * 60
 
 # Test seams and lazy runtime slots. These names intentionally exist at module
 # import time so tests can monkeypatch the pipeline without importing Torch,
@@ -52,6 +64,7 @@ run_windowed_inference_average_onnx_stream = None
 run_windowed_inference_average_torch_stream = None
 write_segments_csv = None
 apply_pose_device = None
+segment_video = None
 
 _ANALYSIS_RUNTIME = None
 _ANALYSIS_RUNTIME_LOCK = threading.Lock()
@@ -63,6 +76,8 @@ _RUNTIME_STATUS: Dict[str, Any] = {
     "loaded_at": None,
 }
 _RUNTIME_WARMUP_THREAD: Optional[threading.Thread] = None
+_UPDATE_STATUS_CACHE: Dict[str, Any] = {"checked_at": 0.0, "payload": None}
+_UPDATE_STATUS_LOCK = threading.Lock()
 
 
 STATIC_DIR = resolve_frontend_dir()
@@ -284,9 +299,13 @@ def _load_video_validation_runtime():
 
 
 def _load_segment_video():
-    from segmentation.segment import segment_video  # noqa: WPS433
+    global segment_video
+    if segment_video is not None:
+        return segment_video
+    from segmentation.segment import segment_video as loaded_segment_video  # noqa: WPS433
 
-    return segment_video
+    segment_video = loaded_segment_video
+    return loaded_segment_video
 
 
 def _load_device_runtime():
@@ -1842,6 +1861,108 @@ def _write_preferences(preferences: Dict[str, Any]) -> None:
     tmp_path.replace(PREFERENCES_PATH)
 
 
+def _read_pyproject_version() -> str:
+    for root in candidate_roots():
+        pyproject = Path(root) / "pyproject.toml"
+        if not pyproject.exists():
+            continue
+        try:
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            version = data.get("project", {}).get("version")
+        except Exception:
+            continue
+        if version:
+            return str(version)
+    return "0.1.0"
+
+
+def current_app_version() -> str:
+    try:
+        return importlib_metadata.version("rallyclip")
+    except importlib_metadata.PackageNotFoundError:
+        return _read_pyproject_version()
+
+
+def _version_parts(version: str) -> tuple[int, ...]:
+    normalized = str(version or "").strip().lower()
+    if normalized.startswith("v"):
+        normalized = normalized[1:]
+    parts = []
+    for piece in re.split(r"[.\-+_]", normalized):
+        if not piece:
+            continue
+        match = re.match(r"(\d+)", piece)
+        if match is None:
+            break
+        parts.append(int(match.group(1)))
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def is_newer_version(latest: str, current: str) -> bool:
+    return _version_parts(latest) > _version_parts(current)
+
+
+def _fetch_latest_release() -> Dict[str, Any]:
+    request_obj = Request(
+        GITHUB_LATEST_RELEASE_API,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"RallyClip/{current_app_version()}",
+        },
+    )
+    with urlopen(request_obj, timeout=3) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    tag = str(payload.get("tag_name") or "").strip()
+    return {
+        "latest_version": tag[1:] if tag.startswith("v") else tag,
+        "latest_tag": tag,
+        "release_url": payload.get("html_url") or GITHUB_RELEASES_URL,
+        "release_name": payload.get("name") or tag,
+    }
+
+
+def update_status_payload(*, force: bool = False) -> Dict[str, Any]:
+    now = time.time()
+    with _UPDATE_STATUS_LOCK:
+        cached = _UPDATE_STATUS_CACHE.get("payload")
+        checked_at = float(_UPDATE_STATUS_CACHE.get("checked_at") or 0.0)
+        if (
+            not force
+            and isinstance(cached, dict)
+            and now - checked_at < UPDATE_CHECK_CACHE_SECONDS
+        ):
+            return dict(cached)
+
+    current = current_app_version()
+    payload: Dict[str, Any] = {
+        "current_version": current,
+        "latest_version": None,
+        "latest_tag": None,
+        "update_available": False,
+        "release_url": GITHUB_RELEASES_URL,
+        "release_name": None,
+        "checked_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "error": None,
+    }
+    try:
+        latest = _fetch_latest_release()
+        payload.update(latest)
+        payload["update_available"] = bool(
+            payload.get("latest_version")
+            and is_newer_version(str(payload["latest_version"]), current)
+        )
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
+        payload["error"] = str(exc)
+        logging.info("Could not check for RallyClip updates: %s", exc)
+
+    with _UPDATE_STATUS_LOCK:
+        _UPDATE_STATUS_CACHE["checked_at"] = now
+        _UPDATE_STATUS_CACHE["payload"] = dict(payload)
+    return payload
+
+
 @app.route("/api/preferences/welcome", methods=["GET", "POST"])
 def welcome_preferences() -> tuple[Any, int]:
     preferences = _read_preferences()
@@ -1853,6 +1974,18 @@ def welcome_preferences() -> tuple[Any, int]:
             logging.warning("Could not write welcome preference", exc_info=True)
             return jsonify({"error": str(exc)}), 500
     return jsonify({"welcome_seen": bool(preferences.get("welcome_seen"))}), 200
+
+
+@app.route("/api/update/status", methods=["GET"])
+def update_status() -> tuple[Any, int]:
+    force = request.args.get("force", "").strip().lower() in {"1", "true", "yes"}
+    return jsonify(update_status_payload(force=force)), 200
+
+
+@app.route("/api/update/open", methods=["POST"])
+def open_update_page() -> tuple[Any, int]:
+    webbrowser.open(GITHUB_RELEASES_URL)
+    return jsonify({"opened": True, "release_url": GITHUB_RELEASES_URL}), 200
 
 
 @app.route("/api/config/defaults", methods=["GET"])
