@@ -13,9 +13,11 @@ import threading
 import time
 import uuid
 import webbrowser
+import csv
 from datetime import datetime, timedelta
 from fractions import Fraction
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 try:
@@ -27,36 +29,40 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
         "rallyclip gui requires Flask. Reinstall with `pip install .`."
     ) from exc
 
-import numpy as np
-import av
-
 from runtime.assets import candidate_roots, resolve_asset
-from extraction.pose_extractor import PoseExtractionCancelled, PoseExtractor
-from features.feature_engineer import FeatureEngineer
-from infer import (
-    extract_segments_from_binary,
-    gaussian_filter1d,
-    hysteresis_threshold,
-    load_scaler_asset,
-    load_model_from_checkpoint,
-    run_windowed_inference_average_onnx_stream,
-    run_windowed_inference_average_torch_stream,
-    write_segments_csv,
-)
-from preprocessing.data_preprocessor import DataPreprocessor
 from runtime.defaults import build_gui_defaults
-from runtime.device import (
-    apply_pose_device,
-    detect_available_devices,
-    prefer_cpu_over_mps_for_pose,
-    resolve_auto_device,
-)
 from runtime.paths import resolve_frontend_dir
-from runtime.video_validation import VideoValidationError, validate_video
-from segmentation.segment import load_intervals, segment_video
 
 JobDict = Dict[str, Any]
 FIXED_YOLO_MODEL = "yolov8n-pose.pt"
+
+# Test seams and lazy runtime slots. These names intentionally exist at module
+# import time so tests can monkeypatch the pipeline without importing Torch,
+# Ultralytics, PyAV, or Numpy during replay-only startup.
+PoseExtractionCancelled = None
+PoseExtractor = None
+FeatureEngineer = None
+DataPreprocessor = None
+extract_segments_from_binary = None
+gaussian_filter1d = None
+hysteresis_threshold = None
+load_scaler_asset = None
+load_model_from_checkpoint = None
+run_windowed_inference_average_onnx_stream = None
+run_windowed_inference_average_torch_stream = None
+write_segments_csv = None
+apply_pose_device = None
+
+_ANALYSIS_RUNTIME = None
+_ANALYSIS_RUNTIME_LOCK = threading.Lock()
+_RUNTIME_STATUS: Dict[str, Any] = {
+    "state": "cold",
+    "available_devices": ["cpu"],
+    "auto_device": "cpu",
+    "error": None,
+    "loaded_at": None,
+}
+_RUNTIME_WARMUP_THREAD: Optional[threading.Thread] = None
 
 
 STATIC_DIR = resolve_frontend_dir()
@@ -71,6 +77,8 @@ def _frozen_data_root() -> Optional[Path]:
 
 def _default_jobs_dir() -> Path:
     """Pick a jobs/output root inside the RallyClip install if possible; fallback to CWD."""
+    if os.environ.get("RALLYCLIP_JOBS_DIR"):
+        return Path(os.environ["RALLYCLIP_JOBS_DIR"]).expanduser().resolve()
     frozen_root = _frozen_data_root()
     if frozen_root is not None:
         return frozen_root / "jobs"
@@ -82,6 +90,8 @@ def _default_jobs_dir() -> Path:
 
 
 def _default_output_dir() -> Path:
+    if os.environ.get("RALLYCLIP_OUTPUT_DIR"):
+        return Path(os.environ["RALLYCLIP_OUTPUT_DIR"]).expanduser().resolve()
     frozen_root = _frozen_data_root()
     if frozen_root is not None:
         return frozen_root / "output_videos"
@@ -93,6 +103,8 @@ def _default_output_dir() -> Path:
 
 
 def _default_csv_dir() -> Path:
+    if os.environ.get("RALLYCLIP_CSV_DIR"):
+        return Path(os.environ["RALLYCLIP_CSV_DIR"]).expanduser().resolve()
     frozen_root = _frozen_data_root()
     if frozen_root is not None:
         return frozen_root / "output_csvs"
@@ -106,6 +118,8 @@ def _default_csv_dir() -> Path:
 def _default_library_dir() -> Path:
     """Persistent library of segmented matches (one folder per match). Survives
     restarts; the GUI's default view reads from here."""
+    if os.environ.get("RALLYCLIP_LIBRARY_DIR"):
+        return Path(os.environ["RALLYCLIP_LIBRARY_DIR"]).expanduser().resolve()
     frozen_root = _frozen_data_root()
     if frozen_root is not None:
         return frozen_root / "library"
@@ -251,6 +265,183 @@ class PipelineCancelled(Exception):
     """Raised when a job is cancelled mid-flight."""
 
 
+def _load_av():
+    import av  # noqa: WPS433 - heavy optional import, replay startup must avoid it
+
+    return av
+
+
+def _load_numpy():
+    import numpy as np  # noqa: WPS433 - heavy optional import, analysis-only
+
+    return np
+
+
+def _load_video_validation_runtime():
+    from runtime.video_validation import VideoValidationError, validate_video  # noqa: WPS433
+
+    return SimpleNamespace(VideoValidationError=VideoValidationError, validate_video=validate_video)
+
+
+def _load_segment_video():
+    from segmentation.segment import segment_video  # noqa: WPS433
+
+    return segment_video
+
+
+def _load_device_runtime():
+    from runtime.device import (  # noqa: WPS433
+        apply_pose_device as loaded_apply_pose_device,
+        detect_available_devices,
+        prefer_cpu_over_mps_for_pose,
+        resolve_auto_device,
+    )
+
+    return SimpleNamespace(
+        apply_pose_device=loaded_apply_pose_device,
+        detect_available_devices=detect_available_devices,
+        prefer_cpu_over_mps_for_pose=prefer_cpu_over_mps_for_pose,
+        resolve_auto_device=resolve_auto_device,
+    )
+
+
+def _analysis_global(name: str, loader):
+    value = globals().get(name)
+    if value is not None:
+        return value
+    value = loader()
+    globals()[name] = value
+    return value
+
+
+def _get_analysis_runtime() -> SimpleNamespace:
+    """Load the analysis stack on demand, never during replay-only startup."""
+    global _ANALYSIS_RUNTIME
+    with _ANALYSIS_RUNTIME_LOCK:
+        if _ANALYSIS_RUNTIME is not None:
+            return _ANALYSIS_RUNTIME
+        _set_runtime_status("warming", error=None)
+        try:
+            from extraction.pose_extractor import (  # noqa: WPS433
+                PoseExtractionCancelled as loaded_pose_cancelled,
+                PoseExtractor as loaded_pose_extractor,
+            )
+            from features.feature_engineer import FeatureEngineer as loaded_feature_engineer  # noqa: WPS433
+            from infer import (  # noqa: WPS433
+                extract_segments_from_binary as loaded_extract_segments_from_binary,
+                gaussian_filter1d as loaded_gaussian_filter1d,
+                hysteresis_threshold as loaded_hysteresis_threshold,
+                load_model_from_checkpoint as loaded_load_model_from_checkpoint,
+                load_scaler_asset as loaded_load_scaler_asset,
+                run_windowed_inference_average_onnx_stream as loaded_onnx_stream,
+                run_windowed_inference_average_torch_stream as loaded_torch_stream,
+                write_segments_csv as loaded_write_segments_csv,
+            )
+            from preprocessing.data_preprocessor import DataPreprocessor as loaded_data_preprocessor  # noqa: WPS433
+
+            device_runtime = _load_device_runtime()
+            runtime = SimpleNamespace(
+                np=_load_numpy(),
+                PoseExtractionCancelled=_analysis_global("PoseExtractionCancelled", lambda: loaded_pose_cancelled),
+                PoseExtractor=_analysis_global("PoseExtractor", lambda: loaded_pose_extractor),
+                FeatureEngineer=_analysis_global("FeatureEngineer", lambda: loaded_feature_engineer),
+                DataPreprocessor=_analysis_global("DataPreprocessor", lambda: loaded_data_preprocessor),
+                extract_segments_from_binary=_analysis_global(
+                    "extract_segments_from_binary",
+                    lambda: loaded_extract_segments_from_binary,
+                ),
+                gaussian_filter1d=_analysis_global("gaussian_filter1d", lambda: loaded_gaussian_filter1d),
+                hysteresis_threshold=_analysis_global("hysteresis_threshold", lambda: loaded_hysteresis_threshold),
+                load_scaler_asset=_analysis_global("load_scaler_asset", lambda: loaded_load_scaler_asset),
+                load_model_from_checkpoint=_analysis_global(
+                    "load_model_from_checkpoint",
+                    lambda: loaded_load_model_from_checkpoint,
+                ),
+                run_windowed_inference_average_onnx_stream=_analysis_global(
+                    "run_windowed_inference_average_onnx_stream",
+                    lambda: loaded_onnx_stream,
+                ),
+                run_windowed_inference_average_torch_stream=_analysis_global(
+                    "run_windowed_inference_average_torch_stream",
+                    lambda: loaded_torch_stream,
+                ),
+                write_segments_csv=_analysis_global("write_segments_csv", lambda: loaded_write_segments_csv),
+                apply_pose_device=_analysis_global("apply_pose_device", lambda: device_runtime.apply_pose_device),
+                device_runtime=device_runtime,
+            )
+            _ANALYSIS_RUNTIME = runtime
+            _refresh_runtime_devices(runtime)
+            return runtime
+        except Exception as exc:
+            _set_runtime_status("error", error=str(exc))
+            raise
+
+
+def _set_runtime_status(state: str, *, error: Optional[str] = None, **extra: Any) -> None:
+    _RUNTIME_STATUS.update({"state": state, "error": error, **extra})
+
+
+def _refresh_runtime_devices(runtime: Optional[SimpleNamespace] = None) -> None:
+    runtime = runtime or _get_analysis_runtime()
+    devices = runtime.device_runtime.detect_available_devices()
+    auto_device = runtime.device_runtime.prefer_cpu_over_mps_for_pose(
+        runtime.device_runtime.resolve_auto_device(),
+        _resolve_yolo_weights(DEFAULT_CONFIG),
+        warn=False,
+    )
+    _set_runtime_status(
+        "ready",
+        error=None,
+        available_devices=devices,
+        auto_device=auto_device,
+        loaded_at=time.time(),
+    )
+
+
+def _runtime_warmup_target() -> None:
+    try:
+        result = subprocess.run(
+            _analysis_warmup_command(),
+            cwd=str(Path(__file__).resolve().parents[2]),
+            env=_analysis_worker_env(),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        status = None
+        for line in result.stdout.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") == "runtime_status":
+                status = event.get("status")
+        if result.returncode == 0 and isinstance(status, dict):
+            _RUNTIME_STATUS.update(status)
+        else:
+            error = result.stderr.strip() or f"Analysis warmup exited with status {result.returncode}."
+            _set_runtime_status("error", error=error)
+    except Exception as exc:
+        _set_runtime_status("error", error=str(exc))
+        logging.warning("Could not warm analysis runtime", exc_info=True)
+
+
+def _start_runtime_warmup() -> None:
+    global _RUNTIME_WARMUP_THREAD
+    if _RUNTIME_STATUS.get("state") == "ready":
+        return
+    if _RUNTIME_WARMUP_THREAD is not None and _RUNTIME_WARMUP_THREAD.is_alive():
+        return
+    _set_runtime_status("warming", error=None)
+    _RUNTIME_WARMUP_THREAD = threading.Thread(
+        target=_runtime_warmup_target,
+        name="rallyclip-analysis-warmup",
+        daemon=True,
+    )
+    _RUNTIME_WARMUP_THREAD.start()
+
+
 def _ensure_job_dir(job_id: str) -> Path:
     job_dir = (JOBS_DIR / job_id).resolve()
     jobs_root = JOBS_DIR.resolve()
@@ -278,6 +469,7 @@ def _write_thumbnail(video_path: Path, thumb_path: Path, max_width: int = 480) -
     imported lazily (it's already loaded by court detection during a job)."""
     try:
         import cv2  # lazy: avoids the libGL import at GUI startup
+        av = _load_av()
 
         with av.open(str(video_path)) as container:
             stream = container.streams.video[0]
@@ -474,6 +666,7 @@ def _write_web_preview(
     ):
         return
 
+    av = _load_av()
     preview_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = preview_path.with_suffix(".tmp.webm")
     if tmp_path.exists():
@@ -1006,7 +1199,7 @@ def _persist_library_item(
     item_dir.mkdir(parents=True, exist_ok=True)
     try:
         csv_out = item_dir / "segments.csv"
-        write_segments_csv(segments, str(csv_out), fps=fps, overwrite=True)
+        _get_analysis_runtime().write_segments_csv(segments, str(csv_out), fps=fps, overwrite=True)
         source_out = item_dir / "source.mp4"
         shutil.copy2(upload_path, source_out)
         _set_step(job, "output", "in_progress", 70)
@@ -1060,6 +1253,7 @@ def _new_job_state(job_id: str, cfg: Dict[str, Any]) -> JobDict:
             "job_dir": str(JOBS_DIR / job_id),
         },
         "thread": None,
+        "process": None,
     }
 
 
@@ -1072,6 +1266,113 @@ def _check_cancel(job: JobDict) -> None:
     if job.get("cancelled"):
         job["status"] = "cancelled"
         raise PipelineCancelled("Job cancelled")
+
+
+def _job_json_copy(job: JobDict) -> JobDict:
+    payload = {key: value for key, value in job.items() if key not in {"thread", "process"}}
+    return json.loads(json.dumps(payload, default=str))
+
+
+def _analysis_worker_env() -> Dict[str, str]:
+    env = dict(os.environ)
+    src_root = Path(__file__).resolve().parents[1]
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = str(src_root) if not existing_pythonpath else f"{src_root}{os.pathsep}{existing_pythonpath}"
+    env["RALLYCLIP_JOBS_DIR"] = str(JOBS_DIR)
+    env["RALLYCLIP_OUTPUT_DIR"] = str(DEFAULT_OUTPUT_DIR)
+    env["RALLYCLIP_CSV_DIR"] = str(DEFAULT_CSV_DIR)
+    env["RALLYCLIP_LIBRARY_DIR"] = str(LIBRARY_DIR)
+    env.setdefault("MPLCONFIGDIR", "/private/tmp/rallyclip-matplotlib")
+    return env
+
+
+def _analysis_worker_command(job_path: Path) -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--analysis-worker", str(job_path)]
+    return [sys.executable, "-m", "gui.analysis_worker", str(job_path)]
+
+
+def _analysis_warmup_command() -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--analysis-worker", "--warmup"]
+    return [sys.executable, "-m", "gui.analysis_worker", "--warmup"]
+
+
+def _merge_worker_job(job_id: str, worker_job: Dict[str, Any]) -> None:
+    with jobs_lock:
+        current = jobs.get(job_id)
+        if current is None:
+            return
+        thread = current.get("thread")
+        process = current.get("process")
+        current.clear()
+        current.update(worker_job)
+        current["thread"] = thread
+        current["process"] = process
+
+
+def _run_pipeline_in_worker_process(job_id: str) -> None:
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if job is None:
+            return
+        job_payload = _job_json_copy(job)
+
+    job_dir = Path(job_payload["paths"]["job_dir"])
+    job_dir.mkdir(parents=True, exist_ok=True)
+    job_path = job_dir / "analysis_job.json"
+    stderr_path = job_dir / "analysis_worker.stderr.log"
+    job_path.write_text(json.dumps(job_payload), encoding="utf-8")
+
+    process: Optional[subprocess.Popen[str]] = None
+    with stderr_path.open("w", encoding="utf-8") as stderr_fh:
+        try:
+            process = subprocess.Popen(
+                _analysis_worker_command(job_path),
+                cwd=str(Path(__file__).resolve().parents[2]),
+                env=_analysis_worker_env(),
+                stdout=subprocess.PIPE,
+                stderr=stderr_fh,
+                text=True,
+                bufsize=1,
+            )
+            with jobs_lock:
+                if job_id in jobs:
+                    jobs[job_id]["process"] = process
+            assert process.stdout is not None
+            for raw_line in process.stdout:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    logging.warning("Ignoring non-JSON analysis worker output: %s", line[:200])
+                    continue
+                worker_job = event.get("job")
+                if isinstance(worker_job, dict):
+                    _merge_worker_job(job_id, worker_job)
+            return_code = process.wait()
+            with jobs_lock:
+                current = jobs.get(job_id)
+                if current is not None:
+                    current["process"] = process
+                    if return_code != 0 and current.get("status") == "in_progress":
+                        current["status"] = "failed"
+                        current["error"] = f"Analysis worker exited with status {return_code}."
+        except Exception as exc:
+            logging.exception("Analysis worker failed for %s", job_id)
+            with jobs_lock:
+                current = jobs.get(job_id)
+                if current is not None and current.get("status") != "cancelled":
+                    current["status"] = "failed"
+                    current["error"] = str(exc)
+        finally:
+            if process is not None:
+                with jobs_lock:
+                    current = jobs.get(job_id)
+                    if current is not None:
+                        current["process"] = process
 
 
 def _pick_port(preferred: Optional[list[int]] = None) -> int:
@@ -1161,6 +1462,7 @@ def _resolve_model_paths(cfg: Dict[str, Any]) -> tuple[Path, Path]:
 
 def _estimate_duration_seconds(video_path: Path) -> float:
     try:
+        av = _load_av()
         with av.open(str(video_path)) as container:
             if not container.streams.video:
                 return 0.0
@@ -1221,7 +1523,10 @@ def _run_pipeline(job_id: str) -> None:
         return
 
     cfg = job["config"]
+    pose_cancelled_type = None
     try:
+        runtime = _get_analysis_runtime()
+        pose_cancelled_type = runtime.PoseExtractionCancelled
         upload_path = Path(job["paths"]["upload"])
         job_dir = Path(job["paths"]["job_dir"])
         job_dir.mkdir(parents=True, exist_ok=True)
@@ -1242,11 +1547,11 @@ def _run_pipeline(job_id: str) -> None:
 
         yolo_weights = _resolve_yolo_weights(cfg)
         if cfg.get("yolo_device"):
-            pose_device = apply_pose_device(
+            pose_device = runtime.apply_pose_device(
                 str(cfg["yolo_device"]), model_path=yolo_weights, set_env=False
             )
         else:
-            pose_device = apply_pose_device(None, model_path=yolo_weights, set_env=False)
+            pose_device = runtime.apply_pose_device(None, model_path=yolo_weights, set_env=False)
 
         model_path, scaler_path = _resolve_model_paths(cfg)
         models_dir = None
@@ -1266,7 +1571,7 @@ def _run_pipeline(job_id: str) -> None:
                 f"Unsupported feature_set '{cfg.get('feature_set')}'. Only 'v1' is implemented."
             )
 
-        pre = DataPreprocessor(
+        pre = runtime.DataPreprocessor(
             screen_width=int(cfg["screen_width"]),
             screen_height=int(cfg["screen_height"]),
             save_court_masks=False,
@@ -1284,7 +1589,7 @@ def _run_pipeline(job_id: str) -> None:
         _log_memory("after_court_mask", job_id=job_id, elapsed_s=time.perf_counter() - pipeline_start)
 
         _check_cancel(job)
-        extractor = PoseExtractor(
+        extractor = runtime.PoseExtractor(
             model_dir=models_dir,
             model_path=yolo_weights,
             imgsz=int(cfg["imgsz"]),
@@ -1294,7 +1599,7 @@ def _run_pipeline(job_id: str) -> None:
         def pose_progress(frac: float, meta: Optional[Dict[str, Any]] = None) -> None:
             nonlocal last_memory_log
             if job.get("cancelled"):
-                raise PoseExtractionCancelled("Job cancelled during pose extraction")
+                raise runtime.PoseExtractionCancelled("Job cancelled during pose extraction")
             _set_step(job, "pose", "in_progress", int(3 + max(0.0, min(1.0, frac)) * 96))
             if meta:
                 frames_seen = meta.get("frames_seen", meta.get("frames_done", 0))
@@ -1338,7 +1643,7 @@ def _run_pipeline(job_id: str) -> None:
             progress_callback=pose_progress,
         )
         preprocessed_stream = pre.iter_preprocess_frames(pose_stream, court_mask, src_width, src_height)
-        fe = FeatureEngineer(
+        fe = runtime.FeatureEngineer(
             screen_width=int(cfg["screen_width"]),
             screen_height=int(cfg["screen_height"]),
             target_fps=float(cfg["fps"]),
@@ -1349,7 +1654,7 @@ def _run_pipeline(job_id: str) -> None:
         _set_step(job, "preprocess", "in_progress", 1)
         _set_step(job, "feature", "in_progress", 1)
         _set_step(job, "inference", "in_progress", 5)
-        scaler = load_scaler_asset(str(scaler_path))
+        scaler = runtime.load_scaler_asset(str(scaler_path))
         _log_memory("before_streaming_inference", job_id=job_id, elapsed_s=time.perf_counter() - pipeline_start)
         estimated_feature_rows = max(0, int(round(duration_seconds * float(cfg["fps"]))) - 1)
         estimated_windows = _estimate_stream_window_count(
@@ -1374,13 +1679,13 @@ def _run_pipeline(job_id: str) -> None:
                     _set_step(job, "feature", "in_progress", stage_progress)
                     if estimated_windows is None:
                         _set_step(job, "inference", "in_progress", int(5 + frac * 80))
-                row = np.asarray(feature_vector, dtype=np.float32).reshape(1, -1)
-                yield scaler.transform(row)[0].astype(np.float32)
+                row = runtime.np.asarray(feature_vector, dtype=runtime.np.float32).reshape(1, -1)
+                yield scaler.transform(row)[0].astype(runtime.np.float32)
 
         def infer_progress(frac: float) -> None:
             _set_step(job, "inference", "in_progress", int(5 + max(0.0, min(1.0, frac)) * 90))
         if model_path.suffix.lower() == ".onnx":
-            avg_probs = run_windowed_inference_average_onnx_stream(
+            avg_probs = runtime.run_windowed_inference_average_onnx_stream(
                 str(model_path),
                 scaled_feature_rows(),
                 sequence_length=int(cfg["seq_len"]),
@@ -1389,8 +1694,8 @@ def _run_pipeline(job_id: str) -> None:
                 total_windows=estimated_windows,
             )
         else:
-            model, device = load_model_from_checkpoint(str(model_path), return_logits=False)
-            avg_probs = run_windowed_inference_average_torch_stream(
+            model, device = runtime.load_model_from_checkpoint(str(model_path), return_logits=False)
+            avg_probs = runtime.run_windowed_inference_average_torch_stream(
                 model,
                 device,
                 scaled_feature_rows(),
@@ -1403,15 +1708,15 @@ def _run_pipeline(job_id: str) -> None:
         _set_step(job, "preprocess", "completed", 100)
         _set_step(job, "feature", "completed", 100)
         _log_memory("after_streaming_inference", job_id=job_id, elapsed_s=time.perf_counter() - pipeline_start)
-        smoothed_probs = gaussian_filter1d(avg_probs.astype(np.float32), sigma=float(cfg["sigma"]))
+        smoothed_probs = runtime.gaussian_filter1d(avg_probs.astype(runtime.np.float32), sigma=float(cfg["sigma"]))
         min_duration_frames = int(round(max(0.0, float(cfg["min_dur_sec"])) * float(cfg["fps"])))
-        binary_pred = hysteresis_threshold(
+        binary_pred = runtime.hysteresis_threshold(
             smoothed_probs,
             low=float(cfg["low"]),
             high=float(cfg["high"]),
             min_duration=min_duration_frames,
         )
-        segments = extract_segments_from_binary(binary_pred)
+        segments = runtime.extract_segments_from_binary(binary_pred)
         _set_step(job, "inference", "completed", 100)
 
         _check_cancel(job)
@@ -1464,20 +1769,6 @@ def _run_pipeline(job_id: str) -> None:
                     continue
             if job_dir.exists() and not outputs_in_job_dir:
                 shutil.rmtree(job_dir, ignore_errors=True)
-    except PoseExtractionCancelled:
-        _log_memory("job_cancelled", job_id=job_id)
-        job["status"] = "cancelled"
-        job["error"] = None
-        job["eta_seconds"] = 0.0
-        if not _keep_jobs():
-            try:
-                Path(job["paths"].get("upload", "")).unlink(missing_ok=True)
-            except Exception:
-                pass
-            try:
-                shutil.rmtree(job.get("paths", {}).get("job_dir", ""), ignore_errors=True)
-            except Exception:
-                pass
     except PipelineCancelled:
         _log_memory("job_cancelled", job_id=job_id)
         job["status"] = "cancelled"
@@ -1493,6 +1784,21 @@ def _run_pipeline(job_id: str) -> None:
             except Exception:
                 pass
     except Exception as exc:  # pragma: no cover - runtime safety
+        if pose_cancelled_type is not None and isinstance(exc, pose_cancelled_type):
+            _log_memory("job_cancelled", job_id=job_id)
+            job["status"] = "cancelled"
+            job["error"] = None
+            job["eta_seconds"] = 0.0
+            if not _keep_jobs():
+                try:
+                    Path(job["paths"].get("upload", "")).unlink(missing_ok=True)
+                except Exception:
+                    pass
+                try:
+                    shutil.rmtree(job.get("paths", {}).get("job_dir", ""), ignore_errors=True)
+                except Exception:
+                    pass
+            return
         _log_memory("job_failed", job_id=job_id, error=type(exc).__name__)
         if job.get("status") != "cancelled":
             job["status"] = "failed"
@@ -1556,21 +1862,27 @@ def config_defaults() -> tuple[Any, int]:
     # and absolute server paths don't belong in the browser payload.
     for key in ("model_path", "artifact_dir", "scaler_path", "yolo_weights"):
         defaults.pop(key, None)
-    available = detect_available_devices()
-    # Report the device the pipeline will actually use on "Auto" (auto-MPS is
-    # downgraded to CPU for pose models).
-    auto_device = prefer_cpu_over_mps_for_pose(
-        resolve_auto_device(), _resolve_yolo_weights(DEFAULT_CONFIG), warn=False
-    )
     return jsonify(
         {
             "defaults": defaults,
             "yolo_model": FIXED_YOLO_MODEL,
             "warnings": ADVANCED_WARNINGS,
-            "available_devices": available,
-            "auto_device": auto_device,
+            "available_devices": _RUNTIME_STATUS.get("available_devices", ["cpu"]),
+            "auto_device": _RUNTIME_STATUS.get("auto_device", "cpu"),
+            "runtime_state": _RUNTIME_STATUS.get("state", "cold"),
         }
     ), 200
+
+
+@app.route("/api/runtime/status", methods=["GET"])
+def runtime_status() -> tuple[Any, int]:
+    return jsonify(dict(_RUNTIME_STATUS)), 200
+
+
+@app.route("/api/runtime/warmup", methods=["POST"])
+def runtime_warmup() -> tuple[Any, int]:
+    _start_runtime_warmup()
+    return jsonify(dict(_RUNTIME_STATUS)), 202
 
 
 @app.route("/api/upload-and-start", methods=["POST"])
@@ -1604,15 +1916,16 @@ def upload_and_start():
 
     # Preflight before spawning the worker so bad input is rejected immediately,
     # not surfaced as a "failed" job minutes later.
+    validation = _load_video_validation_runtime()
     try:
-        validate_video(upload_path, seq_len=int(cfg["seq_len"]), fps=float(cfg["fps"]))
-    except VideoValidationError as exc:
+        validation.validate_video(upload_path, seq_len=int(cfg["seq_len"]), fps=float(cfg["fps"]))
+    except validation.VideoValidationError as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
         return jsonify({"error": str(exc)}), 400
 
     state = _new_job_state(job_id, cfg)
     state["paths"]["upload"] = str(upload_path)
-    worker = threading.Thread(target=_run_pipeline, args=(job_id,), daemon=True)
+    worker = threading.Thread(target=_run_pipeline_in_worker_process, args=(job_id,), daemon=True)
     state["thread"] = worker
     with jobs_lock:
         jobs[job_id] = state
@@ -1649,6 +1962,12 @@ def cancel_job(job_id: str):
     if job["status"] == "in_progress":
         job["cancelled"] = True
         job["status"] = "cancelled"
+        process = job.get("process")
+        if process is not None and getattr(process, "poll", lambda: None)() is None:
+            try:
+                process.terminate()
+            except Exception:
+                logging.debug("Could not terminate analysis worker for %s", job_id, exc_info=True)
     return jsonify({"status": job["status"]}), 200
 
 
@@ -1699,8 +2018,20 @@ def _read_library_meta(item_dir: Path) -> Dict[str, Any]:
 def _sorted_point_intervals(csv_path: Optional[Path]) -> list[tuple[float, float]]:
     if csv_path is None or not csv_path.exists():
         return []
-    intervals = load_intervals(str(csv_path))
-    return sorted((float(start), float(end)) for start, end in intervals if end > start)
+    intervals: list[tuple[float, float]] = []
+    with csv_path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        if reader.fieldnames:
+            reader.fieldnames = [field.strip().lower() for field in reader.fieldnames]
+        for row in reader:
+            try:
+                start = float(row.get("start_time", ""))
+                end = float(row.get("end_time", ""))
+            except (TypeError, ValueError):
+                continue
+            if end > start:
+                intervals.append((start, end))
+    return sorted(intervals)
 
 
 def _native_playback_proxy_path(item_id: str) -> Path:
@@ -1738,7 +2069,12 @@ def native_playback_descriptor(item_id: str) -> Dict[str, Any]:
     csv_path = item_dir / "segments.csv"
     meta = _read_library_meta(item_dir)
     intervals = _sorted_point_intervals(csv_path if csv_path.exists() else None)
-    source_duration = _estimate_duration_seconds(source_path)
+    try:
+        source_duration = float(meta.get("duration_s") or 0.0)
+    except (TypeError, ValueError):
+        source_duration = 0.0
+    if source_duration <= 0:
+        source_duration = _estimate_duration_seconds(source_path)
     proxy_path = item_dir / NATIVE_PLAYBACK_PROXY_FILENAME
     return {
         "id": item_id,
@@ -1857,10 +2193,10 @@ def library_video(item_id: str):
             export_mtime = export_path.stat().st_mtime
             needs_export = source_path.stat().st_mtime > export_mtime or csv_path.stat().st_mtime > export_mtime
         if needs_export:
-            intervals = load_intervals(str(csv_path))
+            intervals = _sorted_point_intervals(csv_path)
             if not intervals:
                 return jsonify({"error": "No point intervals available"}), 404
-            segment_video(str(source_path), intervals, str(export_path))
+            _load_segment_video()(str(source_path), intervals, str(export_path))
         return send_file(str(export_path), as_attachment=True, download_name=f"{item_id}_segmented.mp4")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -1997,8 +2333,14 @@ def library_playback(item_id: str):
     if csv_path is None:
         return jsonify({"error": "CSV not available"}), 404
     try:
-        intervals = load_intervals(str(csv_path))
-        source_duration = _estimate_duration_seconds(source_path)
+        intervals = _sorted_point_intervals(csv_path)
+        meta = _read_library_meta(_library_item_dir(item_id))
+        try:
+            source_duration = float(meta.get("duration_s") or 0.0)
+        except (TypeError, ValueError):
+            source_duration = 0.0
+        if source_duration <= 0:
+            source_duration = _estimate_duration_seconds(source_path)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(
@@ -2018,7 +2360,7 @@ def library_segments(item_id: str):
     if path is None:
         return jsonify({"error": "CSV not available"}), 404
     try:
-        intervals = load_intervals(str(path))
+        intervals = _sorted_point_intervals(path)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(

@@ -29,6 +29,8 @@ class RallyClipApp {
         this.warnings = {};
         this.availableDevices = [];
         this.autoDevice = "cpu";
+        this.runtimeState = "cold";
+        this.runtimeWarmupPoll = null;
         this.weights = null;
         this.etaSeconds = null;
         this.libraryId = null;
@@ -527,6 +529,7 @@ class RallyClipApp {
     showUpload() {
         this.removeFile();
         this.showView("upload");
+        this.warmAnalysisRuntime();
     }
 
     // ----- Library --------------------------------------------------------- //
@@ -2066,6 +2069,7 @@ class RallyClipApp {
             this.warnings = payload.warnings || {};
             this.availableDevices = payload.available_devices || ["cpu"];
             this.autoDevice = payload.auto_device || "cpu";
+            this.runtimeState = payload.runtime_state || "cold";
             this.applyDefaults();
         } catch (err) {
             console.error(err);
@@ -2117,12 +2121,55 @@ class RallyClipApp {
     }
 
     updateDeviceNote() {
+        if (this.runtimeState === "warming") {
+            this.deviceNote.textContent = "Preparing analysis runtime...";
+            return;
+        }
+        if (this.runtimeState === "error") {
+            this.deviceNote.textContent = "Could not prepare analysis runtime; processing may fail.";
+            return;
+        }
         const selected = this.yoloDevice.value;
         if (!selected) {
             this.deviceNote.textContent = `Auto picks ${this.autoDevice.toUpperCase()} on this machine (CUDA > MPS > CPU).`;
             return;
         }
         this.deviceNote.textContent = `Using ${selected.toUpperCase()} for pose extraction.`;
+    }
+
+    async warmAnalysisRuntime() {
+        if (this.runtimeState === "ready" || this.runtimeState === "warming") return;
+        this.runtimeState = "warming";
+        this.updateDeviceNote();
+        try {
+            await fetch("/api/runtime/warmup", { method: "POST" });
+            this.pollAnalysisRuntime();
+        } catch (err) {
+            console.error(err);
+            this.runtimeState = "error";
+            this.updateDeviceNote();
+        }
+    }
+
+    async pollAnalysisRuntime() {
+        if (this.runtimeWarmupPoll) clearTimeout(this.runtimeWarmupPoll);
+        try {
+            const resp = await fetch("/api/runtime/status");
+            if (!resp.ok) throw new Error("Failed to load runtime status");
+            const payload = await resp.json();
+            this.runtimeState = payload.state || "cold";
+            this.availableDevices = payload.available_devices || this.availableDevices || ["cpu"];
+            this.autoDevice = payload.auto_device || this.autoDevice || "cpu";
+            this.populateDeviceSelect();
+            this.updateDeviceNote();
+            if (this.runtimeState === "warming" || this.runtimeState === "cold") {
+                this.runtimeWarmupPoll = setTimeout(() => this.pollAnalysisRuntime(), 750);
+            }
+        } catch (err) {
+            console.error(err);
+            this.runtimeState = "error";
+            this.updateDeviceNote();
+        }
     }
 
     processFile(file) {

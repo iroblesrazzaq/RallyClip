@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import logging
+import os
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+try:  # pragma: no cover - availability depends on packaged runtime
+    import psutil
+except ImportError:  # pragma: no cover
+    psutil = None
 
 
 @dataclass(frozen=True)
@@ -115,6 +124,66 @@ class NativePlaybackScheduler:
         if self.active_segment is None:
             return False
         return int(round(float(position_ms))) >= max(0, self.active_segment.end_ms - tolerance_ms)
+
+
+def native_watchdog_reload_reason(
+    *,
+    playing: bool,
+    position_ms: int,
+    last_position_ms: int,
+    seconds_since_frame: float,
+    rss_mb: Optional[float],
+    last_rss_mb: Optional[float],
+) -> Optional[str]:
+    if not playing:
+        return None
+    position_advanced = position_ms > last_position_ms + 250
+    if position_advanced and seconds_since_frame > 5.0:
+        return "video frames stopped while playback position advanced"
+    if (
+        rss_mb is not None
+        and last_rss_mb is not None
+        and rss_mb > 700.0
+        and rss_mb > last_rss_mb + 10.0
+    ):
+        return f"memory rose to {rss_mb:.1f} MB"
+    return None
+
+
+def native_initial_media_for_descriptor(descriptor: dict[str, Any]) -> tuple[str, str]:
+    proxy = descriptor.get("proxy") or {}
+    proxy_path = proxy.get("path")
+    if proxy.get("ready") and proxy_path:
+        return "proxy", str(proxy_path)
+    return "source", str(descriptor["source_path"])
+
+
+def native_overlay_should_show(*, window_active: bool) -> bool:
+    return bool(window_active)
+
+
+def _native_playback_logger() -> logging.Logger:
+    logger = logging.getLogger("rallyclip.native_playback")
+    if getattr(logger, "_rallyclip_file_configured", False):
+        return logger
+    logger.setLevel(logging.INFO)
+    try:
+        log_dir = Path.home() / "RallyClip" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            log_dir / "native_playback.log",
+            maxBytes=2_000_000,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        logger.addHandler(handler)
+        setattr(logger, "_rallyclip_file_configured", True)
+        logger.info("event=native_playback_log_ready path=%s", log_dir / "native_playback.log")
+    except Exception:
+        logger.debug("Could not configure native playback file logging.", exc_info=True)
+        setattr(logger, "_rallyclip_file_configured", True)
+    return logger
 
 
 try:
@@ -337,11 +406,19 @@ if QT_AVAILABLE:
             self._pending_autoplay = True
             self._last_autoplay_requested = True
             self._media_kind = "source"
+            self._active_media_path: Optional[str] = None
             self._proxy_thread: Optional[QThread] = None
             self._proxy_worker: Optional[ProxyWorker] = None
             self._fullscreen = False
             self._media_ready = False
             self._pending_ready_attempts = 0
+            self._last_overlay_show_monotonic = 0.0
+            self._watchdog_reload_count = 0
+            self._last_watchdog_position_ms = 0
+            self._last_watchdog_rss_mb: Optional[float] = None
+            self._last_frame_monotonic = time.monotonic()
+            self._last_position_change_monotonic = time.monotonic()
+            self._memory_process = psutil.Process(os.getpid()) if psutil is not None else None
             self.video_shell: Optional[QWidget] = None
             self.video_overlay: Optional[QWidget] = None
             self.control_tray: Optional[QFrame] = None
@@ -358,6 +435,9 @@ if QT_AVAILABLE:
             self._cursor_poll_timer.setInterval(120)
             self._cursor_poll_timer.timeout.connect(self._poll_cursor_for_overlay)
             self._last_cursor_pos = QPointF(-1, -1)
+            self._watchdog_timer = QTimer(self)
+            self._watchdog_timer.setInterval(2000)
+            self._watchdog_timer.timeout.connect(self._playback_watchdog_tick)
 
             self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             self.setMouseTracking(True)
@@ -371,6 +451,7 @@ if QT_AVAILABLE:
             self.video_widget.setMouseTracking(True)
             self.video_widget.installEventFilter(self)
             self.player.setVideoOutput(self.video_widget)
+            self.video_widget.videoSink().videoFrameChanged.connect(self._video_frame_changed)
 
             self.back_button = QPushButton("Back")
             self.play_button = MediaControlButton("play")
@@ -496,11 +577,10 @@ if QT_AVAILABLE:
             control_row.addWidget(self.fullscreen_button)
             controls.addLayout(control_row)
 
-            overlay_flags = (
-                Qt.WindowType.Tool
-                | Qt.WindowType.FramelessWindowHint
-                | Qt.WindowType.WindowStaysOnTopHint
-            )
+            overlay_flags = Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint
+            no_focus_flag = getattr(Qt.WindowType, "WindowDoesNotAcceptFocus", None)
+            if no_focus_flag is not None:
+                overlay_flags |= no_focus_flag
             self.control_tray = QFrame(None, overlay_flags)
             self.control_tray.setObjectName("controlTray")
             self.control_tray.setStyleSheet(
@@ -544,6 +624,7 @@ if QT_AVAILABLE:
             )
             self.control_tray.setLayout(controls)
             self.control_tray.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            self.control_tray.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
             self.control_tray.setMouseTracking(True)
             self.control_tray.installEventFilter(self)
             self.control_tray.hide()
@@ -578,6 +659,7 @@ if QT_AVAILABLE:
                 """
             )
             self.title_overlay.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+            self.title_overlay.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
             self.title_overlay.setMouseTracking(True)
             self.title_overlay.installEventFilter(self)
             title_overlay_layout = QHBoxLayout(self.title_overlay)
@@ -669,7 +751,18 @@ if QT_AVAILABLE:
             animation.setEndValue(target)
             animation.start()
 
+        def _window_allows_overlay_activity(self) -> bool:
+            window = self.window()
+            return native_overlay_should_show(window_active=bool(window and window.isActiveWindow()))
+
         def _show_overlays(self) -> None:
+            if not self._window_allows_overlay_activity():
+                return
+            now = time.monotonic()
+            if self._overlay_visible and now - self._last_overlay_show_monotonic < 0.35:
+                self._overlay_hide_timer.start(3000)
+                return
+            self._last_overlay_show_monotonic = now
             self._overlay_visible = True
             if self.control_tray is not None:
                 self.control_tray.show()
@@ -690,6 +783,9 @@ if QT_AVAILABLE:
             return QRectF(top_left.x(), top_left.y(), video_rect.width(), video_rect.height())
 
         def _poll_cursor_for_overlay(self) -> None:
+            if not self._window_allows_overlay_activity():
+                self._last_cursor_pos = QPointF(-1, -1)
+                return
             video_rect = self._global_video_rect()
             if video_rect is None:
                 return
@@ -758,15 +854,20 @@ if QT_AVAILABLE:
             self.slider.setRange(0, max(0, self.scheduler.duration_ms))
             self.slider.set_points(self.scheduler.points, self.scheduler.duration_ms)
             self.duration_label.setText(self._format_ms(self.scheduler.duration_ms))
-            self._media_kind = "source"
-            self._load_media(str(self.descriptor["source_path"]), self.scheduler.default_start_ms(), True)
+            self._media_kind, initial_media_path = native_initial_media_for_descriptor(self.descriptor)
+            self._watchdog_reload_count = 0
+            default_start = self.scheduler.default_start_ms()
+            self._load_media(initial_media_path, default_start, True)
             self.setFocus(Qt.FocusReason.OtherFocusReason)
 
         def stop(self) -> None:
             self.player.stop()
+            self.player.setSource(QUrl())
             self._pending_seek_ms = None
             self._seeking = False
+            self._active_media_path = None
             self._cursor_poll_timer.stop()
+            self._watchdog_timer.stop()
 
         def _load_media(self, path: str, seek_ms: int, autoplay: bool) -> None:
             self._media_ready = False
@@ -775,7 +876,22 @@ if QT_AVAILABLE:
             self._pending_autoplay = autoplay
             self._last_autoplay_requested = autoplay
             self._set_status("Loading video...")
+            self._last_frame_monotonic = time.monotonic()
+            self._last_position_change_monotonic = time.monotonic()
+            self._last_watchdog_position_ms = self.scheduler.clamp_ms(seek_ms)
+            self._last_watchdog_rss_mb = self._current_rss_mb()
+            self._active_media_path = path
+            _native_playback_logger().info(
+                "event=native_playback_load item_id=%s media=%s path=%s seek_ms=%s autoplay=%s rss_mb=%s",
+                self.item_id,
+                self._media_kind,
+                path,
+                self._pending_seek_ms,
+                autoplay,
+                self._last_watchdog_rss_mb,
+            )
             self.player.setSource(QUrl.fromLocalFile(path))
+            self._watchdog_timer.start()
             QTimer.singleShot(80, self._apply_pending_seek_when_ready)
 
         def seek_to_ms(self, value_ms: int, autoplay: bool) -> None:
@@ -897,6 +1013,8 @@ if QT_AVAILABLE:
                 self.current_label.setText(self._format_ms(value))
 
         def _position_changed(self, position_ms: int) -> None:
+            if abs(position_ms - self._last_watchdog_position_ms) >= 250:
+                self._last_position_change_monotonic = time.monotonic()
             if not self._seeking:
                 self.slider.setValue(position_ms)
                 self.current_label.setText(self._format_ms(position_ms))
@@ -977,6 +1095,80 @@ if QT_AVAILABLE:
                 return
             self._load_media(str(proxy_path), seek_ms, autoplay)
 
+        def _reload_active_media_playback(self, reason: str) -> None:
+            if self._watchdog_reload_count >= 1:
+                self._watchdog_timer.stop()
+                self.player.pause()
+                self._set_status(f"Playback stalled: {reason}. Reopen this match to retry.")
+                return
+            media_path = self._active_media_path
+            if not media_path:
+                self._set_status(f"Playback stalled before video was ready: {reason}.")
+                return
+            self._watchdog_reload_count += 1
+            position_ms = self.scheduler.clamp_ms(self.player.position() or self.scheduler.default_start_ms())
+            autoplay = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+            _native_playback_logger().warning(
+                "event=native_playback_reload reason=%s item_id=%s position_ms=%s rss_mb=%s",
+                reason,
+                self.item_id,
+                position_ms,
+                self._current_rss_mb(),
+            )
+            self.player.stop()
+            self.player.setSource(QUrl())
+            self._load_media(media_path, position_ms, autoplay)
+
+        def _current_rss_mb(self) -> Optional[float]:
+            if self._memory_process is None:
+                return None
+            try:
+                return float(self._memory_process.memory_info().rss) / 1e6
+            except Exception:
+                return None
+
+        def _video_frame_changed(self, frame) -> None:
+            del frame
+            self._last_frame_monotonic = time.monotonic()
+
+        def _playback_watchdog_tick(self) -> None:
+            now = time.monotonic()
+            position_ms = int(self.player.position())
+            rss_mb = self._current_rss_mb()
+            status = self.player.mediaStatus()
+            state = self.player.playbackState()
+            _native_playback_logger().info(
+                "event=native_playback_watchdog item_id=%s media=%s status=%s state=%s position_ms=%s "
+                "buffer=%.3f rss_mb=%s seconds_since_frame=%.3f",
+                self.item_id,
+                self._media_kind,
+                getattr(status, "name", str(status)),
+                getattr(state, "name", str(state)),
+                position_ms,
+                float(self.player.bufferProgress()),
+                f"{rss_mb:.1f}" if rss_mb is not None else "unknown",
+                now - self._last_frame_monotonic,
+            )
+            if state != QMediaPlayer.PlaybackState.PlayingState:
+                self._last_watchdog_position_ms = position_ms
+                self._last_watchdog_rss_mb = rss_mb
+                return
+
+            reason = native_watchdog_reload_reason(
+                playing=True,
+                position_ms=position_ms,
+                last_position_ms=self._last_watchdog_position_ms,
+                seconds_since_frame=now - self._last_frame_monotonic,
+                rss_mb=rss_mb,
+                last_rss_mb=self._last_watchdog_rss_mb,
+            )
+            if reason:
+                self._reload_active_media_playback(reason)
+                return
+
+            self._last_watchdog_position_ms = position_ms
+            self._last_watchdog_rss_mb = rss_mb
+
         def _back(self) -> None:
             self._fullscreen = False
             if self.control_tray is not None:
@@ -996,7 +1188,7 @@ if QT_AVAILABLE:
                 QEvent.Type.MouseMove,
                 QEvent.Type.Enter,
                 QEvent.Type.HoverMove,
-            }:
+            } and self._window_allows_overlay_activity():
                 self._show_overlays()
             video_targets = tuple(
                 widget

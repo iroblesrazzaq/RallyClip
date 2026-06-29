@@ -8,7 +8,12 @@ from pathlib import Path
 
 import pytest
 
-from gui.native_player import NativePlaybackScheduler
+from gui.native_player import (
+    NativePlaybackScheduler,
+    native_initial_media_for_descriptor,
+    native_overlay_should_show,
+    native_watchdog_reload_reason,
+)
 
 
 POINTS = [
@@ -209,6 +214,58 @@ def test_native_proxy_generation_runs_command_and_replaces_output(monkeypatch, t
     assert proxy.read_bytes() == b"proxy"
     assert calls
     assert calls[0][-1].endswith(".tmp.mp4")
+
+
+def test_native_initial_media_prefers_ready_proxy():
+    descriptor = {
+        "source_path": "/tmp/source.mp4",
+        "proxy": {"ready": True, "path": "/tmp/playback_proxy.mp4"},
+    }
+
+    assert native_initial_media_for_descriptor(descriptor) == ("proxy", "/tmp/playback_proxy.mp4")
+
+
+def test_native_initial_media_uses_source_when_proxy_missing():
+    descriptor = {
+        "source_path": "/tmp/source.mp4",
+        "proxy": {"ready": False, "path": None},
+    }
+
+    assert native_initial_media_for_descriptor(descriptor) == ("source", "/tmp/source.mp4")
+
+
+def test_native_overlay_does_not_show_when_window_inactive():
+    assert native_overlay_should_show(window_active=True) is True
+    assert native_overlay_should_show(window_active=False) is False
+
+
+def test_native_watchdog_detects_frame_stall_and_memory_growth():
+    assert native_watchdog_reload_reason(
+        playing=True,
+        position_ms=8_000,
+        last_position_ms=7_000,
+        seconds_since_frame=5.5,
+        rss_mb=450.0,
+        last_rss_mb=440.0,
+    ) == "video frames stopped while playback position advanced"
+
+    assert native_watchdog_reload_reason(
+        playing=True,
+        position_ms=8_000,
+        last_position_ms=8_000,
+        seconds_since_frame=0.2,
+        rss_mb=725.0,
+        last_rss_mb=710.0,
+    ) == "memory rose to 725.0 MB"
+
+    assert native_watchdog_reload_reason(
+        playing=False,
+        position_ms=8_000,
+        last_position_ms=7_000,
+        seconds_since_frame=10.0,
+        rss_mb=800.0,
+        last_rss_mb=780.0,
+    ) is None
 
 
 def test_native_viewer_bridge_exposes_open_match(monkeypatch):
