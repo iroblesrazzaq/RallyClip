@@ -12,6 +12,7 @@ from gui.native_player import (
     NativePlaybackScheduler,
     native_initial_media_for_descriptor,
     native_overlay_should_show,
+    native_should_start_proxy_fallback,
     native_should_swap_to_ready_proxy,
     native_watchdog_reload_reason,
 )
@@ -251,6 +252,41 @@ def test_native_ready_proxy_does_not_interrupt_active_source_playback():
             proxy_path="/tmp/playback_proxy.mp4",
         )
         is True
+    )
+
+
+def test_native_proxy_fallback_only_starts_before_source_playback():
+    assert (
+        native_should_start_proxy_fallback(
+            playing=False,
+            seen_video_frame=False,
+            position_ms=0,
+        )
+        is True
+    )
+    assert (
+        native_should_start_proxy_fallback(
+            playing=True,
+            seen_video_frame=False,
+            position_ms=0,
+        )
+        is False
+    )
+    assert (
+        native_should_start_proxy_fallback(
+            playing=False,
+            seen_video_frame=True,
+            position_ms=0,
+        )
+        is False
+    )
+    assert (
+        native_should_start_proxy_fallback(
+            playing=False,
+            seen_video_frame=False,
+            position_ms=1200,
+        )
+        is False
     )
 
 

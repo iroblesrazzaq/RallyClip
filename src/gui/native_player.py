@@ -175,6 +175,17 @@ def native_should_swap_to_ready_proxy(
     return True
 
 
+def native_should_start_proxy_fallback(
+    *,
+    playing: bool,
+    seen_video_frame: bool,
+    position_ms: int,
+) -> bool:
+    if playing or seen_video_frame:
+        return False
+    return position_ms <= 0
+
+
 def _native_playback_logger() -> logging.Logger:
     logger = logging.getLogger("rallyclip.native_playback")
     if getattr(logger, "_rallyclip_file_configured", False):
@@ -431,6 +442,7 @@ if QT_AVAILABLE:
             self._last_watchdog_rss_mb: Optional[float] = None
             self._last_frame_monotonic = time.monotonic()
             self._last_position_change_monotonic = time.monotonic()
+            self._seen_video_frame = False
             self._memory_process = psutil.Process(os.getpid()) if psutil is not None else None
             self.video_shell: Optional[QWidget] = None
             self.video_overlay: Optional[QWidget] = None
@@ -891,6 +903,7 @@ if QT_AVAILABLE:
             self._set_status("Loading video...")
             self._last_frame_monotonic = time.monotonic()
             self._last_position_change_monotonic = time.monotonic()
+            self._seen_video_frame = False
             self._last_watchdog_position_ms = self.scheduler.clamp_ms(seek_ms)
             self._last_watchdog_rss_mb = self._current_rss_mb()
             self._active_media_path = path
@@ -1072,6 +1085,23 @@ if QT_AVAILABLE:
             if error == QMediaPlayer.Error.NoError:
                 return
             if self._media_kind == "source":
+                playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+                position_ms = int(self.player.position() or 0)
+                if not native_should_start_proxy_fallback(
+                    playing=playing,
+                    seen_video_frame=self._seen_video_frame,
+                    position_ms=position_ms,
+                ):
+                    _native_playback_logger().info(
+                        "event=native_source_error_no_proxy item_id=%s position_ms=%s playing=%s "
+                        "seen_video_frame=%s error=%s",
+                        self.item_id,
+                        position_ms,
+                        playing,
+                        self._seen_video_frame,
+                        error_string or error,
+                    )
+                    return
                 self._start_proxy_fallback(error_string or "Source playback failed.")
                 return
             self._set_status(error_string or "Could not play this video.")
@@ -1080,7 +1110,8 @@ if QT_AVAILABLE:
             if not self.item_id:
                 self._set_status(reason)
                 return
-            self._media_kind = "proxy"
+            if self._proxy_thread is not None:
+                return
             seek_ms = self.player.position() or self.scheduler.default_start_ms()
             autoplay = self._last_autoplay_requested or self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
             self._set_status("Preparing compatible playback proxy...")
@@ -1122,6 +1153,7 @@ if QT_AVAILABLE:
                 self._set_status("")
                 return
             current_seek_ms = self.scheduler.clamp_ms(self.player.position() or seek_ms)
+            self._media_kind = "proxy"
             self._load_media(str(proxy_path), current_seek_ms, autoplay)
 
         def _reload_active_media_playback(self, reason: str) -> None:
@@ -1158,6 +1190,7 @@ if QT_AVAILABLE:
 
         def _video_frame_changed(self, frame) -> None:
             del frame
+            self._seen_video_frame = True
             self._last_frame_monotonic = time.monotonic()
 
         def _playback_watchdog_tick(self) -> None:
