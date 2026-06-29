@@ -20,6 +20,8 @@ Included in the first Mac release:
   preferred when present, plus proxy fallback on media error.
 - Native playback watchdog logging for RSS, frame heartbeat, media status, buffer status,
   and one guarded reload attempt on stall or rising memory.
+- Level 1 update flow: app can check the latest GitHub Release and open the GitHub
+  Releases page for manual download/install when an update is available.
 
 Not included in the first Mac release:
 
@@ -74,6 +76,11 @@ Not included in the first Mac release:
    - staple the notarization ticket;
    - package as a signed DMG or zip;
    - install and launch on a second Mac.
+9. Level 1 update check:
+   - embed current app version in the packaged app;
+   - check the latest GitHub Release tag;
+   - show an update-available action when the release tag is newer;
+   - open the GitHub Releases page in the browser for manual download/install.
 
 ## Post-release product/architecture work
 
@@ -101,6 +108,10 @@ Not included in the first Mac release:
   - publish GitHub Release assets.
 - Add fresh-machine release tests for app launch, first-run preference persistence,
   replay, New Match, export, and CLI mode.
+- Later update improvements:
+  - assisted DMG download from inside the app;
+  - checksum verification;
+  - automatic update installation via Sparkle or a dedicated signed updater helper.
 - Decide proxy policy after more data:
   - keep current lazy/preferred proxy behavior if stable;
   - optionally generate proxy after processing completes when the machine is idle;
