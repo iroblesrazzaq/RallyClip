@@ -162,6 +162,19 @@ def native_overlay_should_show(*, window_active: bool) -> bool:
     return bool(window_active)
 
 
+def native_should_swap_to_ready_proxy(
+    *,
+    playing: bool,
+    active_media_path: Optional[str],
+    proxy_path: str,
+) -> bool:
+    if not proxy_path:
+        return False
+    if playing and active_media_path and str(active_media_path) != str(proxy_path):
+        return False
+    return True
+
+
 def _native_playback_logger() -> logging.Logger:
     logger = logging.getLogger("rallyclip.native_playback")
     if getattr(logger, "_rallyclip_file_configured", False):
@@ -1093,7 +1106,23 @@ if QT_AVAILABLE:
             if not proxy_path:
                 self._set_status("Could not prepare playback proxy.")
                 return
-            self._load_media(str(proxy_path), seek_ms, autoplay)
+            playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+            if not native_should_swap_to_ready_proxy(
+                playing=playing,
+                active_media_path=self._active_media_path,
+                proxy_path=str(proxy_path),
+            ):
+                _native_playback_logger().info(
+                    "event=native_proxy_ready_no_swap item_id=%s active_path=%s proxy_path=%s position_ms=%s",
+                    self.item_id,
+                    self._active_media_path,
+                    proxy_path,
+                    self.player.position(),
+                )
+                self._set_status("")
+                return
+            current_seek_ms = self.scheduler.clamp_ms(self.player.position() or seek_ms)
+            self._load_media(str(proxy_path), current_seek_ms, autoplay)
 
         def _reload_active_media_playback(self, reason: str) -> None:
             if self._watchdog_reload_count >= 1:

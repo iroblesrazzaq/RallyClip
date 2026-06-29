@@ -12,6 +12,7 @@ from gui.native_player import (
     NativePlaybackScheduler,
     native_initial_media_for_descriptor,
     native_overlay_should_show,
+    native_should_swap_to_ready_proxy,
     native_watchdog_reload_reason,
 )
 
@@ -232,6 +233,25 @@ def test_native_initial_media_uses_source_when_proxy_missing():
     }
 
     assert native_initial_media_for_descriptor(descriptor) == ("source", "/tmp/source.mp4")
+
+
+def test_native_ready_proxy_does_not_interrupt_active_source_playback():
+    assert (
+        native_should_swap_to_ready_proxy(
+            playing=True,
+            active_media_path="/tmp/source.mp4",
+            proxy_path="/tmp/playback_proxy.mp4",
+        )
+        is False
+    )
+    assert (
+        native_should_swap_to_ready_proxy(
+            playing=False,
+            active_media_path="/tmp/source.mp4",
+            proxy_path="/tmp/playback_proxy.mp4",
+        )
+        is True
+    )
 
 
 def test_native_overlay_does_not_show_when_window_inactive():
