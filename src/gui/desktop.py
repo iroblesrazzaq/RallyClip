@@ -62,7 +62,7 @@ def _wait_for_backend(port: int, timeout_sec: float = 30.0, pump=None) -> bool:
         if pump is not None:
             pump()
         try:
-            # Short timeout so the splash-screen event pump isn't starved.
+            # Short timeout so the Qt event pump isn't starved.
             with urllib.request.urlopen(url, timeout=0.3) as resp:
                 if resp.status == 200:
                     return True
@@ -72,10 +72,14 @@ def _wait_for_backend(port: int, timeout_sec: float = 30.0, pump=None) -> bool:
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--analysis-worker":
+        from gui.analysis_worker import main as analysis_worker_main
+
+        return analysis_worker_main(sys.argv[2:])
+
     if len(sys.argv) > 1 and sys.argv[1] == "--cli":
         # Lazy import is deliberate: cli.main pulls torch/ultralytics, and
-        # importing it at module top would delay GUI startup before the
-        # splash screen can appear.
+        # importing it at module top would delay GUI startup.
         from cli.main import main as cli_main
 
         sys.argv = [sys.argv[0], *sys.argv[2:]]
@@ -84,8 +88,8 @@ def main() -> int:
     _fix_frozen_webengine_paths()
     try:
         from PySide6.QtCore import Qt, QUrl
-        from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
-        from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QSplashScreen, QStackedWidget
+        from PySide6.QtGui import QIcon
+        from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QStackedWidget
         from PySide6.QtWebChannel import QWebChannel
         from PySide6.QtWebEngineCore import QWebEngineSettings
         from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -109,39 +113,8 @@ def main() -> int:
     if not app_icon.isNull():
         qt_app.setWindowIcon(app_icon)
 
-    splash_pix = QPixmap(480, 220)
-    splash_pix.fill(QColor("#f5f0e8"))
-    painter = QPainter(splash_pix)
-    logo_path = _resource_path("docs", "rallyclip_logo_cropped.png")
-    logo = QPixmap(str(logo_path)) if logo_path else QPixmap()
-    if not logo.isNull():
-        scaled_logo = logo.scaled(
-            340,
-            150,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        target = scaled_logo.rect()
-        target.moveCenter(splash_pix.rect().center())
-        target.moveTop(30)
-        painter.drawPixmap(target, scaled_logo)
-        text_top = 178
-    else:
-        text_top = 90
-    painter.setPen(QColor("#1a2744"))
-    font = QFont()
-    font.setPointSize(14)
-    painter.setFont(font)
-    painter.drawText(0, text_top, splash_pix.width(), 32, Qt.AlignmentFlag.AlignCenter, "Starting RallyClip…")
-    painter.end()
-
-    splash = QSplashScreen(splash_pix)
-    splash.show()
-    qt_app.processEvents()
-
     port, _thread = start_backend_thread()
     if not _wait_for_backend(port, pump=qt_app.processEvents):
-        splash.close()
         print("RallyClip backend failed to start.", file=sys.stderr)
         return 1
 
@@ -217,7 +190,6 @@ def main() -> int:
     stack.addWidget(native_viewer)
     window.setCentralWidget(stack)
     window.show()
-    splash.finish(window)
 
     return qt_app.exec()
 
