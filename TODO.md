@@ -88,6 +88,11 @@ Not included in the first Mac release:
   - replay/library runtime;
   - analysis runtime;
   - training/evaluation runtime.
+- Audit video/vision runtime dependencies and choose one FFmpeg owner. The current
+  packaged app can include FFmpeg-family dylibs from both PyAV (`av`) and OpenCV
+  (`cv2`), which produces duplicate Objective-C class warnings in the frozen analysis
+  worker. Decide whether runtime video IO should standardize on PyAV, OpenCV, or a
+  direct ffmpeg subprocess wrapper, then remove or isolate the redundant bundled copy.
 - Add release CI/CD:
   - run tests;
   - build the macOS app on GitHub Actions;
