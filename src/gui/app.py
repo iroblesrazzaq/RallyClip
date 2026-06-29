@@ -141,6 +141,7 @@ JOBS_DIR = _default_jobs_dir()
 DEFAULT_OUTPUT_DIR = _default_output_dir()
 DEFAULT_CSV_DIR = _default_csv_dir()
 LIBRARY_DIR = _default_library_dir()
+PREFERENCES_PATH = (_frozen_data_root() or LIBRARY_DIR.parent) / "preferences.json"
 
 def _load_default_config() -> Dict[str, Any]:
     try:
@@ -1515,6 +1516,37 @@ def index():
 @app.route("/api/health", methods=["GET"])
 def health() -> tuple[Any, int]:
     return jsonify({"status": "ok"}), 200
+
+
+def _read_preferences() -> Dict[str, Any]:
+    if not PREFERENCES_PATH.exists():
+        return {}
+    try:
+        data = json.loads(PREFERENCES_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        logging.warning("Could not read preferences from %s", PREFERENCES_PATH, exc_info=True)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_preferences(preferences: Dict[str, Any]) -> None:
+    PREFERENCES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = PREFERENCES_PATH.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(preferences, indent=2), encoding="utf-8")
+    tmp_path.replace(PREFERENCES_PATH)
+
+
+@app.route("/api/preferences/welcome", methods=["GET", "POST"])
+def welcome_preferences() -> tuple[Any, int]:
+    preferences = _read_preferences()
+    if request.method == "POST":
+        preferences["welcome_seen"] = True
+        try:
+            _write_preferences(preferences)
+        except Exception as exc:
+            logging.warning("Could not write welcome preference", exc_info=True)
+            return jsonify({"error": str(exc)}), 500
+    return jsonify({"welcome_seen": bool(preferences.get("welcome_seen"))}), 200
 
 
 @app.route("/api/config/defaults", methods=["GET"])

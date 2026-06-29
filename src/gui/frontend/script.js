@@ -91,7 +91,7 @@ class RallyClipApp {
         this.loadDefaults();
         this.restoreJobIfAny().then((restored) => {
             if (restored) return;
-            this.showWelcome();
+            this.showInitialView();
         });
     }
 
@@ -285,7 +285,7 @@ class RallyClipApp {
         }
     }
 
-    hasSeenWelcome() {
+    hasSeenWelcomeLocal() {
         try {
             return localStorage.getItem(WELCOME_SEEN_KEY) === "1";
         } catch (_) {
@@ -293,9 +293,36 @@ class RallyClipApp {
         }
     }
 
-    markWelcomeSeen() {
+    async hasSeenWelcome() {
+        try {
+            const resp = await fetch("/api/preferences/welcome");
+            if (resp.ok) {
+                const payload = await resp.json();
+                if (payload.welcome_seen) {
+                    this.markWelcomeSeenLocal();
+                    return true;
+                }
+                return this.hasSeenWelcomeLocal();
+            }
+        } catch (_) {}
+        return this.hasSeenWelcomeLocal();
+    }
+
+    async showInitialView() {
+        if (await this.hasSeenWelcome()) this.showLibrary();
+        else this.showWelcome();
+    }
+
+    markWelcomeSeenLocal() {
         try {
             localStorage.setItem(WELCOME_SEEN_KEY, "1");
+        } catch (_) {}
+    }
+
+    markWelcomeSeen() {
+        this.markWelcomeSeenLocal();
+        try {
+            fetch("/api/preferences/welcome", { method: "POST" }).catch(() => {});
         } catch (_) {}
     }
 
