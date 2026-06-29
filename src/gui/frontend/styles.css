@@ -241,12 +241,33 @@ select {
     overflow-wrap: anywhere;
 }
 
-.library-head #newMatchBtn {
+.library-head-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+}
+
+.library-head #newMatchBtn,
+.library-head .update-btn {
     align-self: center;
     min-height: 2.2rem;
     padding: 0 1rem;
     font-size: 0.95rem;
     line-height: 1;
+}
+
+.library-head .update-btn {
+    border-color: var(--success);
+    color: var(--success);
+    background: transparent;
+}
+
+.library-head .update-btn:hover,
+.library-head .update-btn:focus-visible {
+    border-color: var(--success);
+    background: color-mix(in srgb, var(--success) 10%, transparent);
 }
 
 .library-grid {

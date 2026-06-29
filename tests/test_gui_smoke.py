@@ -56,6 +56,77 @@ def test_gui_health_and_defaults(tmp_path, monkeypatch):
     assert "csv_output_dir" not in payload["defaults"]
 
 
+def test_update_version_comparison():
+    from gui import app as gui_app
+
+    assert gui_app.is_newer_version("v0.1.1", "0.1.0") is True
+    assert gui_app.is_newer_version("0.2.0", "0.10.0") is False
+    assert gui_app.is_newer_version("v1.0", "1.0.0") is False
+
+
+def test_update_status_endpoint_reports_available(monkeypatch):
+    from gui import app as gui_app
+
+    monkeypatch.setattr(gui_app, "current_app_version", lambda: "0.1.0")
+    monkeypatch.setattr(
+        gui_app,
+        "_fetch_latest_release",
+        lambda: {
+            "latest_version": "0.1.1",
+            "latest_tag": "v0.1.1",
+            "release_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.1.1",
+            "release_name": "v0.1.1",
+        },
+    )
+    gui_app._UPDATE_STATUS_CACHE.update({"checked_at": 0.0, "payload": None})
+
+    client = gui_app.app.test_client()
+    response = client.get("/api/update/status?force=1")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["current_version"] == "0.1.0"
+    assert payload["latest_version"] == "0.1.1"
+    assert payload["update_available"] is True
+    assert payload["error"] is None
+
+
+def test_update_status_endpoint_tolerates_fetch_errors(monkeypatch):
+    from gui import app as gui_app
+
+    monkeypatch.setattr(gui_app, "current_app_version", lambda: "0.1.0")
+
+    def fail_fetch():
+        raise OSError("offline")
+
+    monkeypatch.setattr(gui_app, "_fetch_latest_release", fail_fetch)
+    gui_app._UPDATE_STATUS_CACHE.update({"checked_at": 0.0, "payload": None})
+
+    client = gui_app.app.test_client()
+    response = client.get("/api/update/status?force=1")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["current_version"] == "0.1.0"
+    assert payload["latest_version"] is None
+    assert payload["update_available"] is False
+    assert "offline" in payload["error"]
+
+
+def test_update_open_endpoint_opens_releases_page(monkeypatch):
+    from gui import app as gui_app
+
+    opened = []
+    monkeypatch.setattr(gui_app.webbrowser, "open", lambda url: opened.append(url))
+
+    client = gui_app.app.test_client()
+    response = client.post("/api/update/open")
+
+    assert response.status_code == 200
+    assert response.get_json()["opened"] is True
+    assert opened == [gui_app.GITHUB_RELEASES_URL]
+
+
 def test_gui_index_served(tmp_path, monkeypatch):
     repo_root = Path(__file__).resolve().parents[1]
     monkeypatch.chdir(repo_root)

@@ -21,8 +21,9 @@ Included in the first Mac release:
   was identified as the likely cause of the freeze.
 - Native playback watchdog logging for RSS, frame heartbeat, media status, buffer status,
   and one guarded reload attempt on stall or rising memory.
-- Level 1 update flow: app can check the latest GitHub Release and open the GitHub
-  Releases page for manual download/install when an update is available.
+- Level 1 update flow: `/api/update/status` checks the latest GitHub Release, the
+  library UI shows an update action only when a newer tag exists, and
+  `/api/update/open` opens the GitHub Releases page for manual download/install.
 
 Not included in the first Mac release:
 

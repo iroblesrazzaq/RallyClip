@@ -77,6 +77,7 @@ class RallyClipApp {
         this.msePrunePending = false;
         this.nativeViewer = null;
         this.nativeBridgeReady = false;
+        this.updateStatus = null;
         this.steps = ["pose", "preprocess", "feature", "inference", "output"];
         this.stepLabels = {
             pose: "Extracting pose",
@@ -91,6 +92,7 @@ class RallyClipApp {
         this.bindSystemTheme();
         this.initNativeViewerBridge();
         this.loadDefaults();
+        this.checkForUpdates();
         this.restoreJobIfAny().then((restored) => {
             if (restored) return;
             this.showInitialView();
@@ -107,6 +109,7 @@ class RallyClipApp {
         this.libraryGrid = document.getElementById("libraryGrid");
         this.libraryEmpty = document.getElementById("libraryEmpty");
         this.newMatchBtn = document.getElementById("newMatchBtn");
+        this.updateBtn = document.getElementById("updateBtn");
 
         this.viewerView = document.getElementById("viewerView");
         this.backFromViewer = document.getElementById("backFromViewer");
@@ -178,6 +181,7 @@ class RallyClipApp {
     bindEvents() {
         this.welcomeStartBtn.addEventListener("click", () => this.dismissWelcome());
         this.newMatchBtn.addEventListener("click", () => this.showUpload());
+        this.updateBtn.addEventListener("click", () => this.openUpdatePage());
         this.backToLibrary.addEventListener("click", () => this.showLibrary());
         this.backFromViewer.addEventListener("click", () => this.showLibrary());
         this.viewerExportBtn.addEventListener("click", () => {
@@ -313,6 +317,41 @@ class RallyClipApp {
     async showInitialView() {
         if (await this.hasSeenWelcome()) this.showLibrary();
         else this.showWelcome();
+    }
+
+    async checkForUpdates() {
+        try {
+            const resp = await fetch("/api/update/status");
+            if (!resp.ok) return;
+            const payload = await resp.json();
+            this.updateStatus = payload;
+            this.renderUpdateStatus(payload);
+        } catch (err) {
+            console.debug("Could not check for updates", err);
+        }
+    }
+
+    renderUpdateStatus(payload) {
+        if (!this.updateBtn) return;
+        const available = Boolean(payload && payload.update_available);
+        this.updateBtn.hidden = !available;
+        if (!available) return;
+        const latest = payload.latest_tag || payload.latest_version || "latest";
+        this.updateBtn.textContent = `Update ${latest}`;
+        this.updateBtn.title = `RallyClip ${latest} is available`;
+        if (payload.release_url) this.updateBtn.dataset.releaseUrl = payload.release_url;
+    }
+
+    async openUpdatePage() {
+        const fallbackUrl = this.updateBtn?.dataset.releaseUrl || this.updateStatus?.release_url;
+        try {
+            const resp = await fetch("/api/update/open", { method: "POST" });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            return;
+        } catch (err) {
+            console.debug("Backend update opener failed", err);
+        }
+        if (fallbackUrl) window.open(fallbackUrl, "_blank", "noopener");
     }
 
     markWelcomeSeenLocal() {

@@ -146,6 +146,40 @@ def test_ui_welcome_dismisses_to_library(page: Page, ui_backend: BackendClient):
     expect(page.locator("#newMatchBtn")).to_be_visible()
 
 
+def test_ui_shows_update_action_when_release_is_newer(page: Page, ui_backend: BackendClient):
+    """Update check stays out of the way unless the backend reports a newer release."""
+    opened = {"called": False}
+
+    def fulfill_status(route):
+        route.fulfill(
+            json={
+                "current_version": "0.1.0",
+                "latest_version": "0.1.1",
+                "latest_tag": "v0.1.1",
+                "update_available": True,
+                "release_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.1.1",
+                "release_name": "v0.1.1",
+                "error": None,
+            }
+        )
+
+    def fulfill_open(route):
+        opened["called"] = True
+        route.fulfill(json={"opened": True, "release_url": "https://github.com/iroblesrazzaq/RallyClip/releases"})
+
+    page.route("**/api/update/status", fulfill_status)
+    page.route("**/api/update/open", fulfill_open)
+
+    _open_to_library(page, ui_backend.base_url)
+    expect(page.locator("#updateBtn")).to_be_visible()
+    expect(page.locator("#updateBtn")).to_have_text("Update v0.1.1")
+
+    with page.expect_response(lambda response: "/api/update/open" in response.url) as response_info:
+        page.locator("#updateBtn").click()
+    assert response_info.value.ok
+    assert opened["called"] is True
+
+
 def test_ui_library_renders_and_deletes_item(page: Page, ui_backend: BackendClient):
     """A saved match renders as a card with actions; delete removes it."""
     item_id = _fabricate_ui_item()
