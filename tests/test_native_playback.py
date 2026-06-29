@@ -218,13 +218,13 @@ def test_native_proxy_generation_runs_command_and_replaces_output(monkeypatch, t
     assert calls[0][-1].endswith(".tmp.mp4")
 
 
-def test_native_initial_media_prefers_ready_proxy():
+def test_native_initial_media_ignores_ready_proxy():
     descriptor = {
         "source_path": "/tmp/source.mp4",
         "proxy": {"ready": True, "path": "/tmp/playback_proxy.mp4"},
     }
 
-    assert native_initial_media_for_descriptor(descriptor) == ("proxy", "/tmp/playback_proxy.mp4")
+    assert native_initial_media_for_descriptor(descriptor) == ("source", "/tmp/source.mp4")
 
 
 def test_native_initial_media_uses_source_when_proxy_missing():
@@ -236,7 +236,7 @@ def test_native_initial_media_uses_source_when_proxy_missing():
     assert native_initial_media_for_descriptor(descriptor) == ("source", "/tmp/source.mp4")
 
 
-def test_native_ready_proxy_does_not_interrupt_active_source_playback():
+def test_native_ready_proxy_never_interrupts_playback():
     assert (
         native_should_swap_to_ready_proxy(
             playing=True,
@@ -251,18 +251,18 @@ def test_native_ready_proxy_does_not_interrupt_active_source_playback():
             active_media_path="/tmp/source.mp4",
             proxy_path="/tmp/playback_proxy.mp4",
         )
-        is True
+        is False
     )
 
 
-def test_native_proxy_fallback_only_starts_before_source_playback():
+def test_native_proxy_fallback_never_starts_automatically():
     assert (
         native_should_start_proxy_fallback(
             playing=False,
             seen_video_frame=False,
             position_ms=0,
         )
-        is True
+        is False
     )
     assert (
         native_should_start_proxy_fallback(

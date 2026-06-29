@@ -16,8 +16,9 @@ Included in the first Mac release:
 - New Match warms the analysis runtime only when the user enters the upload flow.
 - Analysis runs in a child worker process so inference memory can exit after completion,
   cancellation, or failure.
-- Current playback strategy is native source playback with ready `playback_proxy.mp4`
-  preferred when present, plus proxy fallback on media error.
+- Current playback strategy is native source playback only. Automatic proxy playback was
+  disabled after source-only replay completed successfully and proxy generation/switching
+  was identified as the likely cause of the freeze.
 - Native playback watchdog logging for RSS, frame heartbeat, media status, buffer status,
   and one guarded reload attempt on stall or rising memory.
 - Level 1 update flow: app can check the latest GitHub Release and open the GitHub
@@ -68,7 +69,7 @@ Not included in the first Mac release:
    - confirm frontend assets are bundled;
    - confirm model artifacts are bundled or resolved from the app data root;
    - confirm QtWebEngine and QtMultimedia resources are bundled;
-   - confirm ffmpeg/proxy-generation behavior is clear if ffmpeg is absent.
+   - confirm no automatic proxy generation runs during replay.
 8. Apple release packaging:
    - sign app with Developer ID Application certificate;
    - enable hardened runtime with required entitlements;
@@ -112,20 +113,19 @@ Not included in the first Mac release:
   - assisted DMG download from inside the app;
   - checksum verification;
   - automatic update installation via Sparkle or a dedicated signed updater helper.
-- Decide proxy policy after more data:
-  - keep current lazy/preferred proxy behavior if stable;
-  - optionally generate proxy after processing completes when the machine is idle;
-  - avoid blocking first replay on full-video transcoding.
+- Decide whether to keep a manual compatibility proxy tool. Automatic proxy generation and
+  hot-swapping are disabled for v1 because source playback is stable and the proxy path was
+  the likely source of the playback freeze.
 - Add durable playback diagnostics UI or exportable log bundle for user support.
 - Confirm storage model and cleanup policy for copied source videos, CSV files, proxies,
   exports, logs, and preferences.
 
 ## Backlog
 
-- Diagnose native Mac playback memory/stall issue. Forced first-open HLS generation
-  was reverted because it blocked playback behind a long, hot full-video transcode.
-  The native viewer now opens source video immediately again, keeps proxy fallback on
-  media error, and logs watchdog memory/frame-heartbeat data for the next repro.
+- Native Mac source playback validation: a full saved-match replay completed successfully
+  after deleting `playback_proxy.mp4` and disabling automatic proxy fallback. Watchdog logs
+  stayed on `media=source`; RSS fluctuated but remained bounded, generally around
+  130-190 MB with no runaway growth. Keep proxy generation out of automatic playback for v1.
 - Add W&B integration behind `wandb.enabled` (run metadata, metrics, artifacts).
 - Add integration tests for the full pipeline on synthetic HDF5 inputs.
 - Add CLI smoke tests for `train.py` and `visualize.py`.

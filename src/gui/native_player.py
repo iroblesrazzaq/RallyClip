@@ -151,10 +151,6 @@ def native_watchdog_reload_reason(
 
 
 def native_initial_media_for_descriptor(descriptor: dict[str, Any]) -> tuple[str, str]:
-    proxy = descriptor.get("proxy") or {}
-    proxy_path = proxy.get("path")
-    if proxy.get("ready") and proxy_path:
-        return "proxy", str(proxy_path)
     return "source", str(descriptor["source_path"])
 
 
@@ -168,11 +164,7 @@ def native_should_swap_to_ready_proxy(
     active_media_path: Optional[str],
     proxy_path: str,
 ) -> bool:
-    if not proxy_path:
-        return False
-    if playing and active_media_path and str(active_media_path) != str(proxy_path):
-        return False
-    return True
+    return False
 
 
 def native_should_start_proxy_fallback(
@@ -181,9 +173,7 @@ def native_should_start_proxy_fallback(
     seen_video_frame: bool,
     position_ms: int,
 ) -> bool:
-    if playing or seen_video_frame:
-        return False
-    return position_ms <= 0
+    return False
 
 
 def _native_playback_logger() -> logging.Logger:
@@ -1085,24 +1075,15 @@ if QT_AVAILABLE:
             if error == QMediaPlayer.Error.NoError:
                 return
             if self._media_kind == "source":
-                playing = self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
-                position_ms = int(self.player.position() or 0)
-                if not native_should_start_proxy_fallback(
-                    playing=playing,
-                    seen_video_frame=self._seen_video_frame,
-                    position_ms=position_ms,
-                ):
-                    _native_playback_logger().info(
-                        "event=native_source_error_no_proxy item_id=%s position_ms=%s playing=%s "
-                        "seen_video_frame=%s error=%s",
-                        self.item_id,
-                        position_ms,
-                        playing,
-                        self._seen_video_frame,
-                        error_string or error,
-                    )
-                    return
-                self._start_proxy_fallback(error_string or "Source playback failed.")
+                _native_playback_logger().info(
+                    "event=native_source_error_no_proxy item_id=%s position_ms=%s playing=%s "
+                    "seen_video_frame=%s error=%s",
+                    self.item_id,
+                    int(self.player.position() or 0),
+                    self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState,
+                    self._seen_video_frame,
+                    error_string or error,
+                )
                 return
             self._set_status(error_string or "Could not play this video.")
 
