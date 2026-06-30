@@ -54,3 +54,18 @@ GitHub state: `feat/first-release` and tag `v0.1.0` are pushed. A CLI GitHub Rel
 Branch cleanup: `origin/perf/streaming-pipeline` is stale and can be deleted because it is an ancestor of `feat/first-release` and has `0` unique commits relative to the release branch.
 
 Next highest-priority harness feature remains `runtime-video-validation`.
+
+## Session 5 - 2026-06-30
+
+Release blocker found after downloading/installing the DMG: the packaged app opened to a blank gray Qt window even though the backend was listening and serving `/`, `script.js`, and `styles.css`. Diagnostic launch with `QTWEBENGINE_REMOTE_DEBUGGING=9222` showed `V8 process OOM (Failed to reserve virtual memory for CodeRange)`. Root cause: QtWebEngine/Chromium V8 under hardened runtime needs JIT/executable-memory entitlements on the main executable and `QtWebEngineProcess.app`; Apple notarization accepted the old DMG but did not catch this runtime failure.
+
+Fix staged in `RallyClip-perf`: added `packaging/macos/RallyClip.entitlements`, updated `RallyClip.spec` to use it, and added `scripts/release/sign_macos_app.sh` to explicitly sign both `Contents/MacOS/RallyClip` and the QtWebEngine helper with the entitlements before signing the app bundle. Evidence: the entitlement-signed `dist/RallyClip.app` launched and rendered the UI; the V8 OOM log disappeared; `codesign --verify --deep --strict` passed; both main executable and helper printed `com.apple.security.cs.allow-jit` and `com.apple.security.cs.allow-unsigned-executable-memory`.
+
+New fixed local DMG was created but is not notarized yet:
+
+- `/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/RallyClip-perf/dist/RallyClip-0.1.0-macOS-arm64-fixed.dmg`
+- SHA256: `80d72a829a2a9b3008106743eb4179c4dc80b015256e519ad7c24663f5780ec7`
+- Mounted app verifies locally and has the required entitlements.
+- `spctl` reports `rejected source=Unnotarized Developer ID`, which is expected until this new DMG is submitted to Apple, accepted, and stapled.
+
+Important correction: do not publish the previous notarized DMG. Build/sign/notarize from the entitlement-fixed app.
