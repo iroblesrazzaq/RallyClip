@@ -1,24 +1,115 @@
 # Session Handoff
 
-## Current state
+## Current State
 
-Harness environment loads through `init.sh`. Video UX for the Mac app has been reworked on `perf/streaming-pipeline` to use the native PySide6 QtMultimedia viewer rather than the browser chunk player.
+`feat/first-release` is the unified release branch for the first macOS product release. The branch and tag `v0.1.0` have been pushed to `origin`.
 
-## Changes this session
+The v0.1.0 macOS DMG is built, Developer ID signed, hardened-runtime signed, Apple-notarized, stapled, and Gatekeeper-accepted from the mounted DMG.
 
-Native player work is functioning decently for release use: source-time playback, point skipping, gap bridge behavior, fullscreen, hover controls, keyboard shortcuts, CSV/export actions, and point-aware timeline overlay are in place. Saved-match card polish was also adjusted so titles are lighter and timestamps omit seconds.
+Release artifact:
 
-## Still broken or unknown
+```text
+/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/RallyClip-perf/dist/RallyClip-0.1.0-macOS-arm64.dmg
+```
 
-Formal release-harness features are still not started. Browser chunk playback remains a fallback/dev path and is not the production Mac playback authority.
+SHA256:
 
-## Next best action
+```text
+a89dfdadee10d304e34f313cae540923639a16e39abf783634a6f9a76199ad96
+```
 
-Pick feature with priority 1 from `feature_list.json`: `runtime-video-validation`.
+Compatibility: Apple Silicon only. The app is `Mach-O thin (arm64)`, so Intel Macs are not supported by this build.
 
-## Commands
+## What Shipped
 
-- Install: `: # local checkout uses the existing .venv-train environment`
-- Start: `.venv-train/bin/rallyclip gui`
-- Native playback tests: `python3 -m pytest -q tests/test_native_playback.py tests/test_desktop_dispatch.py`
-- Evidence: feature-specific; define before marking a feature `passing`
+- Packaged PySide6 desktop app with embedded local Flask backend.
+- Saved-match library and replay-first startup path.
+- Native QtMultimedia replay viewer for packaged Mac playback.
+- Browser/WebM replay remains a dev fallback only.
+- Source-time replay timeline with point skipping, manual gap playback, hover controls, fullscreen, keyboard shortcuts, CSV/export actions, and point markers.
+- First-run welcome persistence via backend preferences.
+- Manual update check: latest GitHub Release check plus a button that opens GitHub Releases when a newer release exists.
+- Replay/library startup avoids importing Torch, Ultralytics, PyAV, and Numpy.
+- New Match warms analysis only from the upload flow.
+- Analysis runs in a child worker process so inference memory exits after completion/cancel/error.
+- Production Mac replay uses native source playback. Automatic proxy generation/playback and HLS playback are not part of v0.1.0.
+
+## Release Evidence
+
+- Source branch pushed: `feat/first-release`.
+- Release tag pushed: `v0.1.0`.
+- Current release commit/tag: `8848492 add manual update check`.
+- Developer ID app signature verified with hardened runtime:
+  - `Authority=Developer ID Application: Ismael Robles-Razzaq (L9W8X6N9B9)`
+  - `TeamIdentifier=L9W8X6N9B9`
+  - `flags=0x10000(runtime)`
+- Notary submission accepted:
+  - `RallyClip-0.1.0-macOS-arm64-resubmit.dmg`
+  - submission id `0fb928dc-2ce5-4dcf-b6c7-d385dbad3691`
+- Stapler output passed: `The staple and validate action worked!`
+- `xcrun stapler validate` passed.
+- Mounted-DMG Gatekeeper assessment passed:
+  - `/Volumes/RallyClip 0.1.0/RallyClip.app: accepted`
+  - `source=Notarized Developer ID`
+- User manually verified DMG install/open flow worked.
+- User manually verified source-only playback completed successfully after proxy removal/disable.
+- User manually verified app launch, welcome behavior, inference, and replay were acceptable for first release.
+
+## GitHub Release State
+
+The CLI upload attempt created a draft GitHub Release but did not upload the DMG asset before interruption. If continuing release publication, use the GitHub website:
+
+1. Delete the weird `untagged-...` draft if it is awkward, or edit it to target tag `v0.1.0`.
+2. Upload `dist/RallyClip-0.1.0-macOS-arm64.dmg`.
+3. Publish as a normal release, not a pre-release.
+4. Release title: `RallyClip v0.1.0`.
+5. Clearly state Apple Silicon only.
+
+Do not upload a zip expecting GitHub to convert it. GitHub Releases hosts exactly the uploaded file. For macOS distribution, upload the notarized DMG.
+
+## Release Notes Summary
+
+Use the release notes already drafted in chat:
+
+- First macOS release of RallyClip.
+- Compatibility: macOS on Apple Silicon only, M1 or newer.
+- Install: download DMG, open DMG, drag `RallyClip.app` to Applications.
+- Included: native macOS app, saved-match library, New Match flow, native replay viewer, point-skipping playback, CSV/export, manual update check.
+- Known limitations: large bundle, Apple Silicon only, manual updates, Torch/Ultralytics still bundled in isolated analysis worker.
+- Deferred: YOLO ONNX runtime replacement, bundle slimming, universal/Intel build, CI/CD release pipeline, auto-update installer, CLI/app/API runtime restructuring, iOS.
+- Include SHA256 above.
+
+## Branch Cleanup
+
+Remote branch `origin/perf/streaming-pipeline` is stale and safe to delete. It has no commits not already contained in `feat/first-release`.
+
+Evidence:
+
+```text
+git rev-list --left-right --count feat/first-release...origin/perf/streaming-pipeline
+24 0
+```
+
+Delete when ready:
+
+```bash
+git push origin --delete perf/streaming-pipeline
+```
+
+## Still Broken Or Deferred
+
+- `runtime-video-validation` remains the highest-priority unfinished harness feature.
+- First release still bundles a large Python/ML dependency stack.
+- PyInstaller likely over-collects packages and duplicates some package/native-library content.
+- Ultralytics/PyTorch replacement with sibling YOLO ONNX runner is deferred.
+- Shared runtime/API restructuring is deferred.
+- GitHub Actions signing/notarization/release automation is deferred.
+- Universal/Intel macOS build is deferred.
+- Manual update check is v1; automatic update install is deferred.
+
+## Next Best Actions
+
+1. Finish/publish the GitHub Release asset from the website.
+2. Optionally delete stale `origin/perf/streaming-pipeline`.
+3. Start `runtime-video-validation`: reject missing, unreadable, or unsupported videos before expensive pose extraction in CLI and GUI.
+4. After v0.1.0 is public, plan v0.2 around ONNX runtime replacement and bundle slimming.
