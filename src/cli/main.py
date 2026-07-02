@@ -27,7 +27,7 @@ from preprocessing.data_preprocessor import DataPreprocessor
 from runtime.video_validation import VideoValidationError, validate_video
 from segmentation.segment import segment_video
 from rallyclip_core.contracts import RunRequest, RuntimeDeps, UnsupportedPipelineError
-from rallyclip_engine import run_analysis
+from rallyclip_api import RallyClipServices
 
 try:  # Python 3.11+ ships tomllib; fall back to tomli otherwise.
     import tomllib
@@ -317,7 +317,7 @@ def run_pipeline(cfg: RunConfig) -> int:
         apply_pose_device=None,
     )
     try:
-        run_analysis(request, deps=deps)
+        RallyClipServices().run_analysis(request, deps=deps)
     except UnsupportedPipelineError as exc:
         raise SystemExit(str(exc)) from exc
 

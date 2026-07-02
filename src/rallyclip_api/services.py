@@ -14,9 +14,9 @@ class RallyClipServices:
     runtime/engine code moves underneath this stable application boundary.
     """
 
-    defaults_provider: Callable[[], Dict[str, Any]]
-    runtime_status_provider: Callable[[], Dict[str, Any]]
-    runtime_warmup: Callable[[], None]
+    defaults_provider: Optional[Callable[[], Dict[str, Any]]] = None
+    runtime_status_provider: Optional[Callable[[], Dict[str, Any]]] = None
+    runtime_warmup: Optional[Callable[[], None]] = None
     start_job_handler: Optional[Callable[..., Any]] = None
     job_status_provider: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None
     cancel_job_handler: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None
@@ -24,14 +24,21 @@ class RallyClipServices:
     playback_manifest_provider: Optional[Callable[[str], Dict[str, Any]]] = None
     export_handler: Optional[Callable[[str], Any]] = None
     saved_match_store: Optional[SavedMatchStore] = None
+    analysis_runner: Optional[Callable[..., Any]] = None
 
     def get_defaults(self) -> Dict[str, Any]:
+        if self.defaults_provider is None:
+            raise NotImplementedError("get_defaults is not wired")
         return self.defaults_provider()
 
     def get_runtime_status(self) -> Dict[str, Any]:
+        if self.runtime_status_provider is None:
+            raise NotImplementedError("get_runtime_status is not wired")
         return self.runtime_status_provider()
 
     def warmup_runtime(self) -> Dict[str, Any]:
+        if self.runtime_warmup is None:
+            raise NotImplementedError("warmup_runtime is not wired")
         self.runtime_warmup()
         return self.get_runtime_status()
 
@@ -68,4 +75,20 @@ class RallyClipServices:
         if self.export_handler is None:
             raise NotImplementedError("export_match is not wired")
         return self.export_handler(item_id)
+
+    def run_analysis(self, request, *, deps=None, progress_callback=None, cancel_check=None):
+        """Run an analysis pipeline for a RunRequest and return the RunResult.
+
+        The engine is imported lazily so this facade stays import-light for
+        replay/library startup paths.
+        """
+        runner = self.analysis_runner
+        if runner is None:
+            from rallyclip_engine import run_analysis as runner  # noqa: WPS433
+        return runner(
+            request,
+            deps=deps,
+            progress_callback=progress_callback,
+            cancel_check=cancel_check,
+        )
 
