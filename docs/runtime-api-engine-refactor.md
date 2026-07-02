@@ -2,7 +2,7 @@
 
 **Branch:** `refactor/runtime-api-engine`  
 **Base:** `feat/first-release` at `80ba932`  
-**Status:** In progress, uncommitted checkpoint  
+**Status:** In progress, checkpoint committed at `5d266c2`  
 **Last updated:** 2026-07-01
 
 This branch starts the post-v0.1 runtime split. The shipped macOS release remains
@@ -253,31 +253,27 @@ newer than the source/CSV, matching product cache behavior.
 
 ## Current Git State
 
-The branch currently has uncommitted changes.
+The refactor checkpoint is committed as `5d266c2` on `refactor/runtime-api-engine`
+(one commit ahead of `feat/first-release` at `80ba932`).
 
-Modified tracked files:
+## CLI Output Parity (2026-07-01)
 
-- `src/cli/main.py`
-- `src/gui/app.py`
-- `src/gui/native_player.py`
-- `src/runtime/assets.py`
-- `src/runtime/defaults.py`
-- `tests/test_gui_e2e.py`
+Direct CLI parity was verified against the shipped baseline. The same 68s test
+video (`rallyclip-prod/testing_vids/Set_1_Play_Uncut_Derek_vs._Alex_short_segmented.mp4`)
+was analyzed twice on CPU with identical flags (`--write-csv --segment-video
+--yolo-device cpu`): once from a clean worktree at `80ba932`
+(`feat/first-release` baseline) and once from this branch at `5d266c2`.
 
-New files:
+Results:
 
-- `ENVIRONMENT.md`
-- `docs/runtime-api-engine-refactor.md`
-- `src/rallyclip_api/`
-- `src/rallyclip_core/`
-- `src/rallyclip_engine/`
-- `tests/test_runtime_api_engine.py`
+- `parity_segments.csv` identical (3 intervals: 5.800–43.400, 46.000–56.400,
+  60.000–65.000)
+- `parity_segmented.mp4` byte-for-byte identical (same SHA-1, 13.5 MB, 53.0s)
+- Output file naming and locations unchanged
 
 ## What Is Still Not Done
 
 - `main` has not been rebased onto this branch.
-- CLI has smoke/parity coverage, but full CLI parity should be checked before
-  replacing `main`.
 - Saved-match storage and file resolution still mostly live in `gui.app`.
 - Flask still owns much of the job lifecycle glue.
 - CLI calls the shared engine directly; it is not yet a thin client of the
@@ -291,9 +287,9 @@ New files:
 
 ## Recommended Next Steps
 
-1. Commit the current refactor checkpoint.
-2. Run a direct CLI command against a tiny/synthetic video or known fixture and
-   verify CSV/video output paths still match pre-refactor behavior.
+1. ~~Commit the current refactor checkpoint.~~ Done: `5d266c2`.
+2. ~~Run a direct CLI parity check against a known fixture.~~ Done: exact
+   CSV and byte-identical video parity (see above).
 3. Move saved-match/library file resolution from `gui.app` into
    `rallyclip_api`/`rallyclip_core`.
 4. Wire job start/status/cancel/export through `RallyClipServices`.
