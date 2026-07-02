@@ -1428,6 +1428,10 @@ def _api_services():
         defaults_provider=lambda: {**DEFAULT_CONFIG},
         runtime_status_provider=lambda: dict(_RUNTIME_STATUS),
         runtime_warmup=_start_runtime_warmup,
+        start_job_handler=_start_analysis_job,
+        job_status_provider=_job_status_payload,
+        cancel_job_handler=_cancel_analysis_job,
+        export_handler=_export_library_video,
         playback_manifest_provider=_library_playback_manifest_payload,
         saved_match_store=_library_store(),
     )
@@ -1927,6 +1931,68 @@ def runtime_warmup() -> tuple[Any, int]:
     return jsonify(_api_services().warmup_runtime()), 202
 
 
+def _start_analysis_job(upload_path: Path, cfg: Dict[str, Any]) -> str:
+    """Validate the uploaded video and spawn the analysis worker.
+
+    Raises ValueError (with a user-facing message) when validation fails; the
+    job directory containing upload_path is removed on failure.
+    """
+    job_id = upload_path.parent.name
+    # Preflight before spawning the worker so bad input is rejected immediately,
+    # not surfaced as a "failed" job minutes later.
+    validation = _load_video_validation_runtime()
+    try:
+        validation.validate_video(upload_path, seq_len=int(cfg["seq_len"]), fps=float(cfg["fps"]))
+    except validation.VideoValidationError as exc:
+        shutil.rmtree(upload_path.parent, ignore_errors=True)
+        raise ValueError(str(exc)) from exc
+
+    state = _new_job_state(job_id, cfg)
+    state["paths"]["upload"] = str(upload_path)
+    worker = threading.Thread(target=_run_pipeline_in_worker_process, args=(job_id,), daemon=True)
+    state["thread"] = worker
+    with jobs_lock:
+        jobs[job_id] = state
+    worker.start()
+    return job_id
+
+
+def _job_status_payload(job_id: str) -> Optional[Dict[str, Any]]:
+    """Client-facing job progress payload, or None for an unknown job."""
+    with jobs_lock:
+        job = jobs.get(job_id)
+    if job is None:
+        return None
+    return {
+        "status": job["status"],
+        "steps": job["steps"],
+        "error": job.get("error"),
+        "weights": job.get("weights"),
+        "eta_seconds": job.get("eta_seconds"),
+        "pose_eta_seconds": job.get("pose_eta_seconds"),
+        "pose_throughput_fps": job.get("pose_throughput_fps"),
+        "library_id": job.get("library_id"),
+    }
+
+
+def _cancel_analysis_job(job_id: str) -> Optional[Dict[str, Any]]:
+    """Cancel a running job, or None for an unknown job. Idempotent."""
+    with jobs_lock:
+        job = jobs.get(job_id)
+    if job is None:
+        return None
+    if job["status"] == "in_progress":
+        job["cancelled"] = True
+        job["status"] = "cancelled"
+        process = job.get("process")
+        if process is not None and getattr(process, "poll", lambda: None)() is None:
+            try:
+                process.terminate()
+            except Exception:
+                logging.debug("Could not terminate analysis worker for %s", job_id, exc_info=True)
+    return {"status": job["status"]}
+
+
 @app.route("/api/upload-and-start", methods=["POST"])
 def upload_and_start():
     if "video" not in request.files:
@@ -1956,61 +2022,27 @@ def upload_and_start():
     upload_path = job_dir / filename
     file.save(str(upload_path))
 
-    # Preflight before spawning the worker so bad input is rejected immediately,
-    # not surfaced as a "failed" job minutes later.
-    validation = _load_video_validation_runtime()
     try:
-        validation.validate_video(upload_path, seq_len=int(cfg["seq_len"]), fps=float(cfg["fps"]))
-    except validation.VideoValidationError as exc:
-        shutil.rmtree(job_dir, ignore_errors=True)
+        _api_services().start_job(upload_path, cfg)
+    except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-
-    state = _new_job_state(job_id, cfg)
-    state["paths"]["upload"] = str(upload_path)
-    worker = threading.Thread(target=_run_pipeline_in_worker_process, args=(job_id,), daemon=True)
-    state["thread"] = worker
-    with jobs_lock:
-        jobs[job_id] = state
-    worker.start()
     return jsonify({"job_id": job_id}), 200
 
 
 @app.route("/api/progress/<job_id>", methods=["GET"])
 def get_progress(job_id: str):
-    with jobs_lock:
-        job = jobs.get(job_id)
-    if job is None:
+    payload = _api_services().get_job_status(job_id)
+    if payload is None:
         return jsonify({"error": "Unknown job id"}), 404
-    return jsonify(
-        {
-            "status": job["status"],
-            "steps": job["steps"],
-            "error": job.get("error"),
-            "weights": job.get("weights"),
-            "eta_seconds": job.get("eta_seconds"),
-            "pose_eta_seconds": job.get("pose_eta_seconds"),
-            "pose_throughput_fps": job.get("pose_throughput_fps"),
-            "library_id": job.get("library_id"),
-        }
-    ), 200
+    return jsonify(payload), 200
 
 
 @app.route("/api/cancel/<job_id>", methods=["POST"])
 def cancel_job(job_id: str):
-    with jobs_lock:
-        job = jobs.get(job_id)
-    if job is None:
+    payload = _api_services().cancel_job(job_id)
+    if payload is None:
         return jsonify({"error": "Unknown job id"}), 404
-    if job["status"] == "in_progress":
-        job["cancelled"] = True
-        job["status"] = "cancelled"
-        process = job.get("process")
-        if process is not None and getattr(process, "poll", lambda: None)() is None:
-            try:
-                process.terminate()
-            except Exception:
-                logging.debug("Could not terminate analysis worker for %s", job_id, exc_info=True)
-    return jsonify({"status": job["status"]}), 200
+    return jsonify(payload), 200
 
 
 @app.route("/api/library", methods=["GET"])
@@ -2202,31 +2234,43 @@ def library_thumbnail(item_id: str):
     return send_file(str(path), mimetype="image/jpeg")
 
 
-@app.route("/api/library/<item_id>/video", methods=["GET"])
-def library_video(item_id: str):
+def _export_library_video(item_id: str) -> Path:
+    """Return the downloadable cut video for a saved match, generating it lazily.
+
+    Raises FileNotFoundError when the item/source/CSV/intervals are missing and
+    ValueError for invalid ids or interval data.
+    """
     source_path = _resolve_library_source(item_id)
-    csv_path = _resolve_library_file(item_id, "segments.csv")
     if source_path is None:
-        return jsonify({"error": "Video not available"}), 404
+        raise FileNotFoundError("Video not available")
+    csv_path = _resolve_library_file(item_id, "segments.csv")
     if csv_path is None:
         # Legacy items may only have an already-cut video.mp4.
         if source_path.name == "video.mp4":
-            return send_file(str(source_path), as_attachment=True, download_name=f"{item_id}_segmented.mp4")
-        return jsonify({"error": "CSV not available"}), 404
+            return source_path
+        raise FileNotFoundError("CSV not available")
 
+    item_dir = _library_item_dir(item_id)
+    export_path = item_dir / "export.mp4"
+    needs_export = not export_path.exists()
+    if not needs_export:
+        export_mtime = export_path.stat().st_mtime
+        needs_export = source_path.stat().st_mtime > export_mtime or csv_path.stat().st_mtime > export_mtime
+    if needs_export:
+        intervals = _sorted_point_intervals(csv_path)
+        if not intervals:
+            raise FileNotFoundError("No point intervals available")
+        _load_segment_video()(str(source_path), intervals, str(export_path))
+    return export_path
+
+
+@app.route("/api/library/<item_id>/video", methods=["GET"])
+def library_video(item_id: str):
     try:
-        item_dir = _library_item_dir(item_id)
-        export_path = item_dir / "export.mp4"
-        needs_export = not export_path.exists()
-        if not needs_export:
-            export_mtime = export_path.stat().st_mtime
-            needs_export = source_path.stat().st_mtime > export_mtime or csv_path.stat().st_mtime > export_mtime
-        if needs_export:
-            intervals = _sorted_point_intervals(csv_path)
-            if not intervals:
-                return jsonify({"error": "No point intervals available"}), 404
-            _load_segment_video()(str(source_path), intervals, str(export_path))
+        export_path = _api_services().export_match(item_id)
         return send_file(str(export_path), as_attachment=True, download_name=f"{item_id}_segmented.mp4")
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:
