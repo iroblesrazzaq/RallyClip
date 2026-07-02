@@ -30,7 +30,8 @@ Not included in the first Mac release:
 - YOLO ONNX runtime replacement. The release still uses the existing Torch/Ultralytics
   analysis stack inside the isolated worker process.
 - The larger engine/API rework where CLI, desktop, browser, and future mobile clients all
-  call one explicit runtime API contract.
+  call one explicit runtime API contract. This is now in progress on
+  `refactor/runtime-api-engine`; it is not part of v0.1.0.
 - A full GitHub Actions release pipeline with Apple signing, notarization, DMG creation,
   and release upload.
 - MLX or CoreML inference runtime.
@@ -89,10 +90,23 @@ Not included in the first Mac release:
 - Replace inference-time Ultralytics/PyTorch pose extraction with the sibling
   `../YOLO-ONNX` runner/wrapper and bundled YOLO ONNX weights, so the app runtime can
   shrink toward ONNX/runtime dependencies unless users explicitly install training extras.
-- Rework the runtime engine behind an explicit API contract shared by CLI, desktop,
-  browser dev UI, and future iOS/mobile clients.
-- Keep CLI support as a first-class interface, but make it a client of the shared runtime
-  API rather than a separate path that can drift from the app.
+- Continue the runtime/API/engine refactor on `refactor/runtime-api-engine`.
+  Current checkpoint:
+  - `rallyclip_core` owns pure contracts, interval helpers, pipeline selection, and
+    source-time playback scheduling.
+  - `rallyclip_engine` owns model-object analysis execution: preprocessing,
+    inference, postprocessing, and CSV/video-ready `RunResult` output.
+  - `rallyclip_api` provides a thin application-service facade that Flask is starting
+    to call.
+  - The native playback scheduler is now a core source-time scheduler alias, so Qt
+    owns rendering but not the pure point-skip rules.
+  - The current branch has passing parity tests but is not yet committed or merged
+    into `main`.
+- Keep CLI support as a first-class interface. Next architecture step: make CLI a
+  thin client of the shared application/runtime contract once full CLI parity is
+  proven, rather than a separate path that can drift from the app.
+- Before rebasing or fast-forwarding `main`, run CLI parity on real or fixture video
+  inputs and confirm CSV/video output behavior remains compatible.
 - Split install extras clearly:
   - replay/library runtime;
   - analysis runtime;

@@ -26,6 +26,8 @@ from infer import (
 from preprocessing.data_preprocessor import DataPreprocessor
 from runtime.video_validation import VideoValidationError, validate_video
 from segmentation.segment import segment_video
+from rallyclip_core.contracts import RunRequest, RuntimeDeps, UnsupportedPipelineError
+from rallyclip_engine import run_analysis
 
 try:  # Python 3.11+ ships tomllib; fall back to tomli otherwise.
     import tomllib
@@ -70,6 +72,8 @@ class RunConfig:
     # Runtime IO prefs (safe defaults are fine here)
     start_time: int = 0
     duration: int = 999999
+    manifest_path: Optional[Path] = None
+    pipeline_id: Optional[str] = None
 
 
 def _load_config_dict(path: Optional[str]) -> Dict[str, Any]:
@@ -234,6 +238,8 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         yolo_device=yolo_device,
         model_path=model_path,
         scaler_path=scaler_path,
+        manifest_path=manifest_path,
+        pipeline_id=arg("pipeline_id") or cfg("pipeline_id"),
         fps=fps,
         seq_len=seq_len,
         imgsz=imgsz,
@@ -263,98 +269,57 @@ def run_pipeline(cfg: RunConfig) -> int:
         print(f"Error: {exc}")
         return 1
 
-    # Fail fast, before the expensive pose/preprocess passes: only feature_set 'v1' is implemented.
-    if cfg.feature_set != "v1":
-        raise SystemExit(
-            f"This model declares feature_set='{cfg.feature_set}', but only 'v1' is implemented "
-            f"in the runtime. See docs/runtime-config-refactor-plan.md (§7, v0 backwards compat)."
-        )
-
-    cfg.output_dir.mkdir(parents=True, exist_ok=True)
-    base_name = cfg.output_name or cfg.video_path.stem
-
     if cfg.yolo_device:
         os.environ["POSE_DEVICE"] = cfg.yolo_device
-    models_dir = str(Path.cwd() / "models")
-
-    pre = DataPreprocessor(
-        screen_width=int(cfg.screen_width),
-        screen_height=int(cfg.screen_height),
-        save_court_masks=False,
-        yolo_model_path=cfg.yolo_weights,
-        conf=float(cfg.conf),
+    request = RunRequest(
+        video_path=cfg.video_path,
+        output_dir=cfg.output_dir,
+        output_name=cfg.output_name,
+        csv_output_dir=cfg.csv_output_dir,
+        write_csv=cfg.write_csv,
+        segment_video=cfg.segment_video,
+        yolo_weights=cfg.yolo_weights,
+        yolo_device=cfg.yolo_device,
+        model_path=cfg.model_path,
+        scaler_path=cfg.scaler_path,
+        manifest_path=cfg.manifest_path,
+        pipeline_id=cfg.pipeline_id,
+        fps=cfg.fps,
+        seq_len=cfg.seq_len,
+        imgsz=cfg.imgsz,
+        conf=cfg.conf,
+        feature_set=cfg.feature_set,
+        screen_width=cfg.screen_width,
+        screen_height=cfg.screen_height,
+        overlap=cfg.overlap,
+        sigma=cfg.sigma,
+        low=cfg.low,
+        high=cfg.high,
+        min_dur_sec=cfg.min_dur_sec,
+        start_time=cfg.start_time,
+        duration=cfg.duration,
+        models_dir=Path.cwd() / "models",
     )
-    # Court detection runs UP FRONT (multi-sample), before the expensive pose pass. If it
-    # fails on every sampled frame we fall back to the empirical default court mask rather
-    # than silently skipping court filtering. compute_court_mask logs which source it used.
-    court_mask, _ = pre.compute_court_mask(str(cfg.video_path))
-
-    pose_extractor = PoseExtractor(model_path=cfg.yolo_weights, model_dir=models_dir)
-    # Fully streaming release path: pose -> preprocess -> features -> inference. Every stage is
-    # a generator, so frames are produced-and-discarded one at a time with no intermediate NPZ
-    # round-trips and no full-length buffer -- peak memory is O(batch + seq_len), independent of
-    # video length. (iter_pose_frames also avoids the old output_dir-less extract_pose_data call
-    # that littered a persistent pose_data/raw/ directory.)
-    # Native source resolution (identity rescale at 720p), as preprocess_single_video did.
-    src_height, src_width, _ = pre._source_frame_shape(str(cfg.video_path))
-    pose_stream = pose_extractor.iter_pose_frames(
-        video_path=str(cfg.video_path),
-        confidence_threshold=float(cfg.conf),
-        start_time_seconds=int(cfg.start_time),
-        duration_seconds=int(cfg.duration),
-        target_fps=int(cfg.fps),
-        imgsz=int(cfg.imgsz),
-        annotations_csv=None,
+    deps = RuntimeDeps(
+        np=np,
+        PoseExtractor=PoseExtractor,
+        DataPreprocessor=DataPreprocessor,
+        FeatureEngineer=FeatureEngineer,
+        load_scaler_asset=load_scaler_asset,
+        load_model_from_checkpoint=load_model_from_checkpoint,
+        run_windowed_inference_average_onnx_stream=run_windowed_inference_average_onnx_stream,
+        run_windowed_inference_average_torch_stream=run_windowed_inference_average_torch_stream,
+        gaussian_filter1d=gaussian_filter1d,
+        hysteresis_threshold=hysteresis_threshold,
+        extract_segments_from_binary=extract_segments_from_binary,
+        write_segments_csv=write_segments_csv,
+        segment_video=segment_video,
+        apply_pose_device=None,
     )
-    preprocessed_stream = pre.iter_preprocess_frames(pose_stream, court_mask, src_width, src_height)
-
-    fe = FeatureEngineer(
-        screen_width=int(cfg.screen_width),
-        screen_height=int(cfg.screen_height),
-        target_fps=float(cfg.fps),
-    )
-    scaler = load_scaler_asset(str(cfg.scaler_path))
-
-    def _scaled_feature_rows():
-        # Scale each feature row as it streams. StandardScaler is per-feature, so row-wise
-        # scaling is identical to transforming the whole matrix at once.
-        for feature_vector, _target in fe.iter_build_features(preprocessed_stream):
-            row = np.asarray(feature_vector, dtype=np.float32).reshape(1, -1)
-            yield scaler.transform(row)[0].astype(np.float32)
-
-    if cfg.model_path.suffix.lower() == ".onnx":
-        avg_probs = run_windowed_inference_average_onnx_stream(
-            str(cfg.model_path),
-            _scaled_feature_rows(),
-            sequence_length=int(cfg.seq_len),
-            overlap=int(cfg.overlap),
-        )
-    else:
-        model, device = load_model_from_checkpoint(str(cfg.model_path), return_logits=False)
-        avg_probs = run_windowed_inference_average_torch_stream(
-            model, device, _scaled_feature_rows(),
-            sequence_length=int(cfg.seq_len), overlap=int(cfg.overlap),
-        )
-    smoothed_probs = gaussian_filter1d(avg_probs.astype(np.float32), sigma=float(cfg.sigma))
-    min_duration_frames = int(round(max(0.0, float(cfg.min_dur_sec)) * float(cfg.fps)))
-    binary_pred = hysteresis_threshold(
-        smoothed_probs, low=float(cfg.low), high=float(cfg.high), min_duration=min_duration_frames
-    )
-    segments = extract_segments_from_binary(binary_pred)
-
-    if cfg.write_csv:
-        cfg.csv_output_dir.mkdir(parents=True, exist_ok=True)
-        csv_out = cfg.csv_output_dir / f"{base_name}_segments.csv"
-        write_segments_csv(segments, str(csv_out), fps=float(cfg.fps), overwrite=True)
-
-    if cfg.segment_video:
-        video_out = cfg.output_dir / f"{base_name}_segmented.mp4"
-        intervals_sec = [
-            (start_idx / float(cfg.fps), end_idx / float(cfg.fps))
-            for (start_idx, end_idx) in segments
-        ]
-        if intervals_sec:
-            segment_video(str(cfg.video_path), intervals_sec, str(video_out))
+    try:
+        run_analysis(request, deps=deps)
+    except UnsupportedPipelineError as exc:
+        raise SystemExit(str(exc)) from exc
 
     print(f"✅ Done. Outputs in {cfg.output_dir}")
     return 0
@@ -383,6 +348,7 @@ def main() -> int:
     p.add_argument("--scaler-path", help="Path to scaler artifact (.json preferred, legacy .joblib supported)")
     p.add_argument("--artifact-dir", help="Directory containing model.onnx, scaler.json, and manifest.json")
     p.add_argument("--manifest-path", help="Path to model manifest.json for runtime defaults")
+    p.add_argument("--pipeline-id", help="Explicit analysis pipeline override for compatible artifacts")
     p.add_argument("--yolo-size", choices=list(YOLO_SIZE_MAP.keys()), help="YOLO pose model size (auto-downloads if needed)")
     p.add_argument("--yolo-device", choices=["cpu", "cuda", "mps"], help="Force YOLO device (overrides POSE_DEVICE env)")
 

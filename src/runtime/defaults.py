@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from runtime.assets import YOLO_SIZE_MAP, manifest_values, resolve_asset
+from rallyclip_core.pipelines import pipeline_id_from_manifest_values
 
 
 def resolve_default_artifacts(
@@ -72,6 +73,7 @@ def build_gui_defaults(artifact_dir: Optional[str] = None) -> Dict[str, Any]:
         "output_name": None,
         "model_path": str(model_path),
         "artifact_dir": str(model_path.parent),
+        "pipeline_id": pipeline_id_from_manifest_values(manifest),
         "fps": float(manifest["fps"]),
         "seq_len": int(manifest["seq_len"]),
         "overlap": int(manifest["overlap"]),

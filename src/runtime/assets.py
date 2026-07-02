@@ -82,8 +82,10 @@ def manifest_values(model_path: Path, manifest_path: Optional[Path] = None) -> D
         return {}
 
     inference = payload.get("inference", {}) or {}
-    postprocess = (payload.get("postprocess", {}) or {}).get("params", {}) or {}
+    postprocess_payload = payload.get("postprocess", {}) or {}
+    postprocess = postprocess_payload.get("params", {}) or {}
     feature_pipeline = payload.get("feature_pipeline", {}) or {}
+    pipeline_payload = payload.get("pipeline", {}) or {}
     values: Dict[str, Any] = {}
 
     # Contract (immutable)
@@ -103,6 +105,10 @@ def manifest_values(model_path: Path, manifest_path: Optional[Path] = None) -> D
         values["screen_height"] = int(feature_pipeline["screen_height"])
     if feature_pipeline.get("yolo_model") is not None:
         values["yolo_model"] = str(feature_pipeline["yolo_model"])
+    if pipeline_payload.get("id") is not None:
+        values["pipeline_id"] = str(pipeline_payload["id"])
+    if postprocess_payload.get("method") is not None:
+        values["postprocess_method"] = str(postprocess_payload["method"])
 
     # Postprocess (mutable)
     if inference.get("overlap_frames") is not None:
