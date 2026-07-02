@@ -18,8 +18,8 @@ class RallyClipServices:
     runtime_status_provider: Callable[[], Dict[str, Any]]
     runtime_warmup: Callable[[], None]
     start_job_handler: Optional[Callable[..., Any]] = None
-    job_status_provider: Optional[Callable[[str], Dict[str, Any]]] = None
-    cancel_job_handler: Optional[Callable[[str], Dict[str, Any]]] = None
+    job_status_provider: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None
+    cancel_job_handler: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None
     library_provider: Optional[Callable[[], Dict[str, Any]]] = None
     playback_manifest_provider: Optional[Callable[[str], Dict[str, Any]]] = None
     export_handler: Optional[Callable[[str], Any]] = None
@@ -40,12 +40,14 @@ class RallyClipServices:
             raise NotImplementedError("start_job is not wired")
         return self.start_job_handler(*args, **kwargs)
 
-    def get_job_status(self, job_id: str) -> Dict[str, Any]:
+    def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Job progress payload, or None for an unknown job."""
         if self.job_status_provider is None:
             raise NotImplementedError("get_job_status is not wired")
         return self.job_status_provider(job_id)
 
-    def cancel_job(self, job_id: str) -> Dict[str, Any]:
+    def cancel_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Cancel a job (idempotent), or None for an unknown job."""
         if self.cancel_job_handler is None:
             raise NotImplementedError("cancel_job is not wired")
         return self.cancel_job_handler(job_id)
