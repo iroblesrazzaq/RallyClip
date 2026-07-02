@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
+from rallyclip_core.library import SavedMatchStore
+
 
 @dataclass
 class RallyClipServices:
@@ -21,6 +23,7 @@ class RallyClipServices:
     library_provider: Optional[Callable[[], Dict[str, Any]]] = None
     playback_manifest_provider: Optional[Callable[[str], Dict[str, Any]]] = None
     export_handler: Optional[Callable[[str], Any]] = None
+    saved_match_store: Optional[SavedMatchStore] = None
 
     def get_defaults(self) -> Dict[str, Any]:
         return self.defaults_provider()
@@ -48,9 +51,11 @@ class RallyClipServices:
         return self.cancel_job_handler(job_id)
 
     def list_library(self) -> Dict[str, Any]:
-        if self.library_provider is None:
-            raise NotImplementedError("list_library is not wired")
-        return self.library_provider()
+        if self.library_provider is not None:
+            return self.library_provider()
+        if self.saved_match_store is not None:
+            return {"items": self.saved_match_store.list_items()}
+        raise NotImplementedError("list_library is not wired")
 
     def get_playback_manifest(self, item_id: str) -> Dict[str, Any]:
         if self.playback_manifest_provider is None:

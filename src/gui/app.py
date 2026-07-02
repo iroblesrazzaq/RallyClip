@@ -40,6 +40,8 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
 from runtime.assets import candidate_roots, resolve_asset
 from runtime.defaults import build_gui_defaults
 from runtime.paths import resolve_frontend_dir
+from rallyclip_core.intervals import read_point_intervals
+from rallyclip_core.library import SavedMatchStore, new_item_id
 from rallyclip_core.playback import build_playback_manifest, playback_manifest_payload
 
 JobDict = Dict[str, Any]
@@ -493,18 +495,17 @@ def _ensure_job_dir(job_id: str) -> Path:
     return job_dir
 
 
+def _library_store() -> SavedMatchStore:
+    """Store over the current LIBRARY_DIR (read lazily so tests can patch it)."""
+    return SavedMatchStore(root=Path(LIBRARY_DIR))
+
+
 def _new_library_id() -> str:
-    """Sortable, unique library item id (timestamp + short random suffix)."""
-    return datetime.now().strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
+    return new_item_id()
 
 
 def _library_item_dir(item_id: str) -> Path:
-    """Resolve a library item folder, rejecting ids that escape LIBRARY_DIR."""
-    item_dir = (LIBRARY_DIR / item_id).resolve()
-    root = LIBRARY_DIR.resolve()
-    if root not in item_dir.parents:
-        raise ValueError(f"Invalid library id: {item_id!r}")
-    return item_dir
+    return _library_store().item_dir(item_id)
 
 
 def _write_thumbnail(video_path: Path, thumb_path: Path, max_width: int = 480) -> bool:
@@ -1200,27 +1201,7 @@ def _start_web_preview_background(item_id: str, source_path: Path) -> str:
 
 
 def _read_library_items() -> list[Dict[str, Any]]:
-    """List saved matches (newest first). An item needs meta.json + a source video."""
-    items: list[Dict[str, Any]] = []
-    if not LIBRARY_DIR.exists():
-        return items
-    for child in LIBRARY_DIR.iterdir():
-        if not child.is_dir():
-            continue
-        meta_path = child / "meta.json"
-        if not meta_path.exists() or not ((child / "source.mp4").exists() or (child / "video.mp4").exists()):
-            continue
-        try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        meta["id"] = child.name  # trust the folder name, not the file contents
-        meta["has_csv"] = (child / "segments.csv").exists()
-        meta["has_thumbnail"] = (child / "thumb.jpg").exists()
-        meta["has_export"] = (child / "export.mp4").exists()
-        items.append(meta)
-    items.sort(key=lambda m: m.get("created_ts", 0), reverse=True)
-    return items
+    return _library_store().list_items()
 
 
 def _persist_library_item(
@@ -1447,8 +1428,8 @@ def _api_services():
         defaults_provider=lambda: {**DEFAULT_CONFIG},
         runtime_status_provider=lambda: dict(_RUNTIME_STATUS),
         runtime_warmup=_start_runtime_warmup,
-        library_provider=lambda: {"items": _read_library_items()},
         playback_manifest_provider=_library_playback_manifest_payload,
+        saved_match_store=_library_store(),
     )
 
 
@@ -2038,61 +2019,19 @@ def library_list():
 
 
 def _resolve_library_file(item_id: str, filename: str) -> Optional[Path]:
-    """Resolve a file inside a library item, or None if the id/file is invalid."""
-    try:
-        item_dir = _library_item_dir(item_id)
-    except ValueError:
-        return None
-    path = item_dir / filename
-    return path if path.exists() else None
+    return _library_store().resolve_file(item_id, filename)
 
 
 def _resolve_library_source(item_id: str) -> Optional[Path]:
-    """Resolve the full source video for a library item.
-
-    source.mp4 is the current storage contract. video.mp4 is accepted only as a
-    legacy fallback for library items created before lazy export existed.
-    """
-    try:
-        item_dir = _library_item_dir(item_id)
-    except ValueError:
-        return None
-    for filename in ("source.mp4", "video.mp4"):
-        path = item_dir / filename
-        if path.exists():
-            return path
-    return None
+    return _library_store().resolve_source(item_id)
 
 
 def _read_library_meta(item_dir: Path) -> Dict[str, Any]:
-    meta_path = item_dir / "meta.json"
-    if not meta_path.exists():
-        return {}
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except Exception:
-        logging.warning("Could not read library metadata from %s", meta_path, exc_info=True)
-        return {}
-    return meta if isinstance(meta, dict) else {}
+    return _library_store().read_meta(item_dir)
 
 
 def _sorted_point_intervals(csv_path: Optional[Path]) -> list[tuple[float, float]]:
-    if csv_path is None or not csv_path.exists():
-        return []
-    intervals: list[tuple[float, float]] = []
-    with csv_path.open(newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh)
-        if reader.fieldnames:
-            reader.fieldnames = [field.strip().lower() for field in reader.fieldnames]
-        for row in reader:
-            try:
-                start = float(row.get("start_time", ""))
-                end = float(row.get("end_time", ""))
-            except (TypeError, ValueError):
-                continue
-            if end > start:
-                intervals.append((start, end))
-    return sorted(intervals)
+    return read_point_intervals(csv_path)
 
 
 def _native_playback_proxy_path(item_id: str) -> Path:
