@@ -115,7 +115,8 @@ def _fabricate_library_item(library_dir: Path, *, n_segments: int = 3, with_csv:
     (item_dir / "preview.webm").write_bytes(b"fake-webm-preview")
     preview_windows = item_dir / "preview_windows"
     preview_windows.mkdir()
-    (preview_windows / "000000001000_005000.webm").write_bytes(b"fake-webm-window")
+    window_path = preview_windows / "000000000000_008000.webm"
+    window_path.write_bytes(b"fake-webm-window")
     if with_csv:
         (item_dir / "segments.csv").write_text("start_time,end_time\n1.000,3.500\n", encoding="utf-8")
     if with_thumb:
@@ -130,6 +131,8 @@ def _fabricate_library_item(library_dir: Path, *, n_segments: int = 3, with_csv:
         "n_segments": n_segments,
     }
     (item_dir / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    now = time.time()
+    os.utime(window_path, (now + 1, now + 1))
     return item_id
 
 

@@ -1,9 +1,17 @@
 # Runtime Config Refactor + Backwards Compat — Plan
 
-**Status:** Planning (not yet implemented)
-**Branch:** `fix/runtime-pipeline-drift` (refactor will likely get its own branch off this)
+**Status:** Historical planning note; superseded for active architecture work by
+`docs/runtime-api-engine-refactor.md`.
+**Branch:** Originally planned for `fix/runtime-pipeline-drift`; current active
+runtime split is on `refactor/runtime-api-engine`.
 **Owner:** ismael
-**Last updated:** 2026-06-03
+**Last updated:** 2026-07-01
+
+> 2026-07-01 note: this document remains useful for the older manifest/config
+> contract analysis, but it is not the current handoff for the runtime/API/engine
+> branch. The active branch now adds `rallyclip_core`, `rallyclip_engine`, and
+> `rallyclip_api`, with model-object pipelines and shared playback contracts.
+> Continue from `docs/runtime-api-engine-refactor.md` for current work.
 
 ---
 

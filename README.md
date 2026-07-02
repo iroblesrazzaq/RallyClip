@@ -8,6 +8,31 @@ This repo ships:
 - `rallyclip gui` browser-based local UI for development
 - open training pipeline code
 
+## Current release status
+
+The first public desktop release is `v0.1.0` for **Apple Silicon macOS only**.
+It was built, signed, notarized, stapled, and uploaded manually as a DMG. There
+is not yet a full GitHub Actions release pipeline.
+
+The packaged app uses the native QtMultimedia replay viewer for saved matches.
+Browser/WebM playback remains a development fallback.
+
+## Runtime architecture direction
+
+The `refactor/runtime-api-engine` branch is splitting the runtime into:
+
+- `rallyclip_core`: pure contracts, interval helpers, pipeline selection, saved
+  playback manifests, and source-time scheduler rules.
+- `rallyclip_engine`: analysis execution. A model pipeline owns preprocessing,
+  inference, postprocessing, and CSV/video-ready output.
+- `rallyclip_api`: application service layer that Flask, CLI, desktop, and future
+  clients can share.
+- UI clients: native macOS, browser dev UI, and future mobile clients own their
+  own video rendering and controls.
+
+See `ENVIRONMENT.md` and `docs/runtime-api-engine-refactor.md` for the current
+branch handoff and test commands.
+
 
 ## Features coming soon (in rough order)
 - gh release (desktop app)
@@ -144,7 +169,13 @@ rallyclip --config config.toml
 ```
 
 ## GitHub Releases
-Tagged releases (`v*`) build desktop bundles for macOS, Windows, and Linux via GitHub Actions.
+
+The current `v0.1.0` macOS release was created manually. GitHub Releases hosts
+the DMG exactly as uploaded; GitHub does not convert zips or app bundles into a
+DMG.
+
+Future work: add GitHub Actions CI/CD for tests, app build, Apple signing,
+notarization, stapling, DMG creation, and release upload.
 
 To cut a release locally:
 ```bash

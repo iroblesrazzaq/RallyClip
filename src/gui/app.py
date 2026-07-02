@@ -40,6 +40,7 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
 from runtime.assets import candidate_roots, resolve_asset
 from runtime.defaults import build_gui_defaults
 from runtime.paths import resolve_frontend_dir
+from rallyclip_core.playback import build_playback_manifest, playback_manifest_payload
 
 JobDict = Dict[str, Any]
 FIXED_YOLO_MODEL = "yolov8n-pose.pt"
@@ -193,6 +194,7 @@ def _load_default_config() -> Dict[str, Any]:
             "conf": 0.25,
             "imgsz": 960,
             "feature_set": "v1",
+            "pipeline_id": "frame_probability_hysteresis",
             "screen_width": 1280,
             "screen_height": 720,
             "start_time": 0,
@@ -394,6 +396,28 @@ def _get_analysis_runtime() -> SimpleNamespace:
         except Exception as exc:
             _set_runtime_status("error", error=str(exc))
             raise
+
+
+def _runtime_with_injected_globals(runtime: SimpleNamespace) -> SimpleNamespace:
+    """Honor test/dev monkeypatches even if the runtime was warmed earlier."""
+    for name in (
+        "PoseExtractor",
+        "FeatureEngineer",
+        "DataPreprocessor",
+        "extract_segments_from_binary",
+        "gaussian_filter1d",
+        "hysteresis_threshold",
+        "load_scaler_asset",
+        "load_model_from_checkpoint",
+        "run_windowed_inference_average_onnx_stream",
+        "run_windowed_inference_average_torch_stream",
+        "write_segments_csv",
+        "apply_pose_device",
+    ):
+        value = globals().get(name)
+        if value is not None:
+            setattr(runtime, name, value)
+    return runtime
 
 
 def _set_runtime_status(state: str, *, error: Optional[str] = None, **extra: Any) -> None:
@@ -1416,11 +1440,24 @@ def _safe_open_browser(port: int) -> None:
         pass
 
 
+def _api_services():
+    from rallyclip_api import RallyClipServices  # noqa: WPS433
+
+    return RallyClipServices(
+        defaults_provider=lambda: {**DEFAULT_CONFIG},
+        runtime_status_provider=lambda: dict(_RUNTIME_STATUS),
+        runtime_warmup=_start_runtime_warmup,
+        library_provider=lambda: {"items": _read_library_items()},
+        playback_manifest_provider=_library_playback_manifest_payload,
+    )
+
+
 # Keys the browser may override. Everything else (manifest-pinned inference
 # params, model/artifact paths) keeps the server-side default even though the
 # frontend round-trips the full defaults payload.
 _CLIENT_KEYS = {
     "output_name",
+    "pipeline_id",
     "yolo_device",
     "write_csv",
     "segment_video",
@@ -1544,7 +1581,10 @@ def _run_pipeline(job_id: str) -> None:
     cfg = job["config"]
     pose_cancelled_type = None
     try:
-        runtime = _get_analysis_runtime()
+        from rallyclip_core.contracts import ProgressEvent, RunRequest, RuntimeDeps  # noqa: WPS433
+        from rallyclip_engine import run_analysis  # noqa: WPS433
+
+        runtime = _runtime_with_injected_globals(_get_analysis_runtime())
         pose_cancelled_type = runtime.PoseExtractionCancelled
         upload_path = Path(job["paths"]["upload"])
         job_dir = Path(job["paths"]["job_dir"])
@@ -1565,185 +1605,73 @@ def _run_pipeline(job_id: str) -> None:
         job["weights"] = weights
 
         yolo_weights = _resolve_yolo_weights(cfg)
-        if cfg.get("yolo_device"):
-            pose_device = runtime.apply_pose_device(
-                str(cfg["yolo_device"]), model_path=yolo_weights, set_env=False
-            )
-        else:
-            pose_device = runtime.apply_pose_device(None, model_path=yolo_weights, set_env=False)
-
         model_path, scaler_path = _resolve_model_paths(cfg)
         models_dir = None
         frozen_root = _frozen_data_root()
         if frozen_root is not None:
-            models_dir = str(frozen_root / "models")
+            models_dir = frozen_root / "models"
         else:
             for root in candidate_roots():
                 candidate = Path(root) / "models"
                 if candidate.exists():
-                    models_dir = str(candidate.resolve())
+                    models_dir = candidate.resolve()
                     break
 
-        _check_cancel(job)
-        if str(cfg.get("feature_set", "v1")) != "v1":
-            raise RuntimeError(
-                f"Unsupported feature_set '{cfg.get('feature_set')}'. Only 'v1' is implemented."
-            )
+        def progress(event: ProgressEvent) -> None:
+            _set_step(job, event.stage, event.status, event.progress)
 
-        pre = runtime.DataPreprocessor(
-            screen_width=int(cfg["screen_width"]),
-            screen_height=int(cfg["screen_height"]),
-            save_court_masks=False,
-            yolo_model_path=yolo_weights,
+        _check_cancel(job)
+        request = RunRequest(
+            video_path=upload_path,
+            output_dir=DEFAULT_OUTPUT_DIR,
+            output_name=base_name,
+            csv_output_dir=DEFAULT_CSV_DIR,
+            write_csv=False,
+            segment_video=False,
+            yolo_weights=yolo_weights,
+            yolo_device=cfg.get("yolo_device"),
+            model_path=model_path,
+            scaler_path=scaler_path,
+            pipeline_id=cfg.get("pipeline_id"),
+            fps=float(cfg["fps"]),
+            seq_len=int(cfg["seq_len"]),
+            imgsz=int(cfg["imgsz"]),
             conf=float(cfg["conf"]),
-            yolo_device=pose_device,
-        )
-        _check_cancel(job)
-        _set_step(job, "pose", "in_progress", 1)
-        _check_cancel(job)
-        court_mask, _ = pre.compute_court_mask(str(upload_path))
-        # Court mask detection has no inner progress hooks; tick so the bar
-        # visibly moves before pose extraction starts reporting.
-        _set_step(job, "pose", "in_progress", 3)
-        _log_memory("after_court_mask", job_id=job_id, elapsed_s=time.perf_counter() - pipeline_start)
-
-        _check_cancel(job)
-        extractor = runtime.PoseExtractor(
-            model_dir=models_dir,
-            model_path=yolo_weights,
-            imgsz=int(cfg["imgsz"]),
-            device=pose_device,
-        )
-
-        def pose_progress(frac: float, meta: Optional[Dict[str, Any]] = None) -> None:
-            nonlocal last_memory_log
-            if job.get("cancelled"):
-                raise runtime.PoseExtractionCancelled("Job cancelled during pose extraction")
-            _set_step(job, "pose", "in_progress", int(3 + max(0.0, min(1.0, frac)) * 96))
-            if meta:
-                frames_seen = meta.get("frames_seen", meta.get("frames_done", 0))
-                frames_total = meta.get("frames_total", 1)
-                # prefer FPS derived from frames_seen to mirror tqdm ETA
-                smoothed_fps = max(1e-3, meta.get("smoothed_seen_fps", meta.get("smoothed_proc_fps", 0.0)))
-                remaining_frames = max(0, frames_total - frames_seen)
-                pose_eta = remaining_frames / smoothed_fps
-                # Tail buffer: 10s minimum, 60s max, scaled by minutes
-                tail = max(10.0, min(60.0, (duration_seconds / 60.0) * 5.0))
-                job["eta_seconds"] = pose_eta + tail
-                job["pose_eta_seconds"] = pose_eta
-                job["pose_throughput_fps"] = smoothed_fps
-                now = time.perf_counter()
-                if now - last_memory_log >= 10.0 or frac >= 1.0:
-                    last_memory_log = now
-                    _log_memory(
-                        "pose_progress",
-                        job_id=job_id,
-                        elapsed_s=now - pipeline_start,
-                        frames_seen=frames_seen,
-                        frames_total=frames_total,
-                        progress=frac,
-                        pose_fps=smoothed_fps,
-                    )
-
-        # Streaming hand-off: pose -> preprocess -> features chain through their generators, so
-        # pose_data and the preprocessed records are produced-and-discarded one frame at a time
-        # (no intermediate NPZ, no full-length pose/preprocess buffers). The pose progress
-        # callback drives the bar while the chain is consumed. Native source resolution gives an
-        # identity rescale at 720p, exactly as preprocess_single_video did internally.
-        src_height, src_width, _ = pre._source_frame_shape(str(upload_path))
-        pose_stream = extractor.iter_pose_frames(
-            video_path=str(upload_path),
-            confidence_threshold=float(cfg["conf"]),
-            start_time_seconds=int(cfg["start_time"]),
-            duration_seconds=int(cfg["duration"]),
-            target_fps=int(cfg["fps"]),
-            imgsz=int(cfg["imgsz"]),
-            annotations_csv=None,
-            progress_callback=pose_progress,
-        )
-        preprocessed_stream = pre.iter_preprocess_frames(pose_stream, court_mask, src_width, src_height)
-        fe = runtime.FeatureEngineer(
+            feature_set=str(cfg.get("feature_set", "v1")),
             screen_width=int(cfg["screen_width"]),
             screen_height=int(cfg["screen_height"]),
-            target_fps=float(cfg["fps"]),
-        )
-        feature_stream = fe.iter_build_features(preprocessed_stream)
-
-        _check_cancel(job)
-        _set_step(job, "preprocess", "in_progress", 1)
-        _set_step(job, "feature", "in_progress", 1)
-        _set_step(job, "inference", "in_progress", 5)
-        scaler = runtime.load_scaler_asset(str(scaler_path))
-        _log_memory("before_streaming_inference", job_id=job_id, elapsed_s=time.perf_counter() - pipeline_start)
-        estimated_feature_rows = max(0, int(round(duration_seconds * float(cfg["fps"]))) - 1)
-        estimated_windows = _estimate_stream_window_count(
-            estimated_feature_rows,
-            int(cfg["seq_len"]),
-            int(cfg["overlap"]),
-        )
-        feature_rows_seen = 0
-        last_stream_progress = 0.0
-
-        def scaled_feature_rows():
-            nonlocal feature_rows_seen, last_stream_progress
-            for feature_vector, _target in feature_stream:
-                _check_cancel(job)
-                feature_rows_seen += 1
-                now = time.perf_counter()
-                if estimated_feature_rows > 0 and (now - last_stream_progress >= 2.0 or feature_rows_seen >= estimated_feature_rows):
-                    last_stream_progress = now
-                    frac = min(1.0, feature_rows_seen / float(estimated_feature_rows))
-                    stage_progress = int(1 + frac * 94)
-                    _set_step(job, "preprocess", "in_progress", stage_progress)
-                    _set_step(job, "feature", "in_progress", stage_progress)
-                    if estimated_windows is None:
-                        _set_step(job, "inference", "in_progress", int(5 + frac * 80))
-                row = runtime.np.asarray(feature_vector, dtype=runtime.np.float32).reshape(1, -1)
-                yield scaler.transform(row)[0].astype(runtime.np.float32)
-
-        def infer_progress(frac: float) -> None:
-            _set_step(job, "inference", "in_progress", int(5 + max(0.0, min(1.0, frac)) * 90))
-        if model_path.suffix.lower() == ".onnx":
-            avg_probs = runtime.run_windowed_inference_average_onnx_stream(
-                str(model_path),
-                scaled_feature_rows(),
-                sequence_length=int(cfg["seq_len"]),
-                overlap=int(cfg["overlap"]),
-                progress_callback=infer_progress,
-                total_windows=estimated_windows,
-            )
-        else:
-            model, device = runtime.load_model_from_checkpoint(str(model_path), return_logits=False)
-            avg_probs = runtime.run_windowed_inference_average_torch_stream(
-                model,
-                device,
-                scaled_feature_rows(),
-                sequence_length=int(cfg["seq_len"]),
-                overlap=int(cfg["overlap"]),
-                progress_callback=infer_progress,
-                total_windows=estimated_windows,
-            )
-        _set_step(job, "pose", "completed", 100)
-        _set_step(job, "preprocess", "completed", 100)
-        _set_step(job, "feature", "completed", 100)
-        _log_memory("after_streaming_inference", job_id=job_id, elapsed_s=time.perf_counter() - pipeline_start)
-        smoothed_probs = runtime.gaussian_filter1d(avg_probs.astype(runtime.np.float32), sigma=float(cfg["sigma"]))
-        min_duration_frames = int(round(max(0.0, float(cfg["min_dur_sec"])) * float(cfg["fps"])))
-        binary_pred = runtime.hysteresis_threshold(
-            smoothed_probs,
+            overlap=int(cfg["overlap"]),
+            sigma=float(cfg["sigma"]),
             low=float(cfg["low"]),
             high=float(cfg["high"]),
-            min_duration=min_duration_frames,
+            min_dur_sec=float(cfg["min_dur_sec"]),
+            start_time=int(cfg["start_time"]),
+            duration=int(cfg["duration"]),
+            models_dir=models_dir,
+            estimated_duration_s=duration_seconds,
         )
-        segments = runtime.extract_segments_from_binary(binary_pred)
-        _set_step(job, "inference", "completed", 100)
+        deps = RuntimeDeps(
+            np=runtime.np,
+            PoseExtractor=runtime.PoseExtractor,
+            DataPreprocessor=runtime.DataPreprocessor,
+            FeatureEngineer=runtime.FeatureEngineer,
+            load_scaler_asset=runtime.load_scaler_asset,
+            load_model_from_checkpoint=runtime.load_model_from_checkpoint,
+            run_windowed_inference_average_onnx_stream=runtime.run_windowed_inference_average_onnx_stream,
+            run_windowed_inference_average_torch_stream=runtime.run_windowed_inference_average_torch_stream,
+            gaussian_filter1d=runtime.gaussian_filter1d,
+            hysteresis_threshold=runtime.hysteresis_threshold,
+            extract_segments_from_binary=runtime.extract_segments_from_binary,
+            write_segments_csv=runtime.write_segments_csv,
+            segment_video=_load_segment_video(),
+            apply_pose_device=runtime.apply_pose_device,
+        )
+        result = run_analysis(request, deps=deps, progress_callback=progress, cancel_check=lambda: _check_cancel(job))
+        segments = result.frame_segments
 
         _check_cancel(job)
         _set_step(job, "output", "in_progress", 5)
-        intervals_sec = [
-            (start_idx / float(cfg["fps"]), end_idx / float(cfg["fps"]))
-            for start_idx, end_idx in segments
-        ]
+        intervals_sec = result.intervals_sec
         # Persist a found match as one library item (full source + csv + thumb +
         # meta in a single folder): survives restarts, deletes atomically. No
         # segments -> nothing worth saving, so no item is created.
@@ -1990,7 +1918,8 @@ def open_update_page() -> tuple[Any, int]:
 
 @app.route("/api/config/defaults", methods=["GET"])
 def config_defaults() -> tuple[Any, int]:
-    defaults = {**DEFAULT_CONFIG}
+    services = _api_services()
+    defaults = services.get_defaults()
     # Server-internal values; the frontend never edits these (see _CLIENT_KEYS)
     # and absolute server paths don't belong in the browser payload.
     for key in ("model_path", "artifact_dir", "scaler_path", "yolo_weights"):
@@ -2009,13 +1938,12 @@ def config_defaults() -> tuple[Any, int]:
 
 @app.route("/api/runtime/status", methods=["GET"])
 def runtime_status() -> tuple[Any, int]:
-    return jsonify(dict(_RUNTIME_STATUS)), 200
+    return jsonify(_api_services().get_runtime_status()), 200
 
 
 @app.route("/api/runtime/warmup", methods=["POST"])
 def runtime_warmup() -> tuple[Any, int]:
-    _start_runtime_warmup()
-    return jsonify(dict(_RUNTIME_STATUS)), 202
+    return jsonify(_api_services().warmup_runtime()), 202
 
 
 @app.route("/api/upload-and-start", methods=["POST"])
@@ -2106,7 +2034,7 @@ def cancel_job(job_id: str):
 
 @app.route("/api/library", methods=["GET"])
 def library_list():
-    return jsonify({"items": _read_library_items()}), 200
+    return jsonify(_api_services().list_library()), 200
 
 
 def _resolve_library_file(item_id: str, filename: str) -> Optional[Path]:
@@ -2209,15 +2137,21 @@ def native_playback_descriptor(item_id: str) -> Dict[str, Any]:
     if source_duration <= 0:
         source_duration = _estimate_duration_seconds(source_path)
     proxy_path = item_dir / NATIVE_PLAYBACK_PROXY_FILENAME
+    manifest = build_playback_manifest(
+        source_duration_s=source_duration,
+        chunk_duration_s=PREVIEW_WINDOW_DURATION_S,
+        point_intervals=intervals,
+    )
+    manifest_payload = playback_manifest_payload(manifest)
     return {
         "id": item_id,
         "name": str(meta.get("name") or item_id),
         "source_name": meta.get("source_name"),
         "created": meta.get("created"),
         "source_path": str(source_path),
-        "source_duration_s": round(source_duration, 3) if source_duration > 0 else None,
-        "point_intervals": [{"start": start, "end": end} for start, end in intervals],
-        "point_duration_s": round(sum(end - start for start, end in intervals), 3),
+        "source_duration_s": manifest_payload["source_duration_s"],
+        "point_intervals": manifest_payload["point_intervals"],
+        "point_duration_s": manifest_payload["point_duration_s"],
         "has_csv": csv_path.exists(),
         "has_export": (item_dir / "export.mp4").exists(),
         "csv_url": f"/api/library/{item_id}/csv" if csv_path.exists() else None,
@@ -2296,6 +2230,29 @@ def ensure_native_playback_proxy(item_id: str) -> Dict[str, Any]:
     if not _native_playback_proxy_ready(source_path, proxy_path):
         _write_native_playback_proxy(source_path, proxy_path)
     return _native_playback_proxy_state(source_path, proxy_path)
+
+
+def _library_playback_manifest_payload(item_id: str) -> Dict[str, Any]:
+    source_path = _resolve_library_source(item_id)
+    csv_path = _resolve_library_file(item_id, "segments.csv")
+    if source_path is None:
+        raise FileNotFoundError("Video not available")
+    if csv_path is None:
+        raise FileNotFoundError("CSV not available")
+    intervals = _sorted_point_intervals(csv_path)
+    meta = _read_library_meta(_library_item_dir(item_id))
+    try:
+        source_duration = float(meta.get("duration_s") or 0.0)
+    except (TypeError, ValueError):
+        source_duration = 0.0
+    if source_duration <= 0:
+        source_duration = _estimate_duration_seconds(source_path)
+    manifest = build_playback_manifest(
+        source_duration_s=source_duration,
+        chunk_duration_s=PREVIEW_WINDOW_DURATION_S,
+        point_intervals=intervals,
+    )
+    return playback_manifest_payload(manifest)
 
 
 @app.route("/api/library/<item_id>/thumbnail", methods=["GET"])
@@ -2459,32 +2416,13 @@ def library_video_preview_window(item_id: str):
 
 @app.route("/api/library/<item_id>/playback", methods=["GET"])
 def library_playback(item_id: str):
-    source_path = _resolve_library_source(item_id)
-    csv_path = _resolve_library_file(item_id, "segments.csv")
-    if source_path is None:
-        return jsonify({"error": "Video not available"}), 404
-    if csv_path is None:
-        return jsonify({"error": "CSV not available"}), 404
     try:
-        intervals = _sorted_point_intervals(csv_path)
-        meta = _read_library_meta(_library_item_dir(item_id))
-        try:
-            source_duration = float(meta.get("duration_s") or 0.0)
-        except (TypeError, ValueError):
-            source_duration = 0.0
-        if source_duration <= 0:
-            source_duration = _estimate_duration_seconds(source_path)
+        payload = _api_services().get_playback_manifest(item_id)
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify(
-        {
-            "source_duration_s": round(source_duration, 3) if source_duration > 0 else None,
-            "chunk_duration_s": PREVIEW_WINDOW_DURATION_S,
-            "segments": [{"start": start, "end": end} for start, end in intervals],
-            "point_intervals": [{"start": start, "end": end} for start, end in intervals],
-            "point_duration_s": round(sum(end - start for start, end in intervals), 3),
-        }
-    ), 200
+    return jsonify(payload), 200
 
 
 @app.route("/api/library/<item_id>/segments", methods=["GET"])
