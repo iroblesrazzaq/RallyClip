@@ -220,3 +220,44 @@ def test_concurrent_status_cancel_and_merges_stay_consistent(services, job, monk
 
     assert not errors, errors
     assert gui_app.jobs["job-1"]["status"] == "cancelled"
+
+
+def test_concurrent_exports_generate_once(services, monkeypatch, tmp_path):
+    """Simultaneous export requests for the same item must run the slow
+    re-encode once; the second caller waits and reuses the fresh cut."""
+    import threading
+    import time
+
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", tmp_path)
+    monkeypatch.setattr(gui_app, "_export_locks", {})
+    item_dir = tmp_path / "item-a"
+    item_dir.mkdir()
+    (item_dir / "source.mp4").write_bytes(b"\x00")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,2.0\n", encoding="utf-8")
+
+    calls = []
+
+    def slow_segment_video(source, intervals, out_path):
+        calls.append(out_path)
+        time.sleep(0.2)  # long enough for the second request to pile up
+        Path(out_path).write_bytes(b"\x00")
+
+    monkeypatch.setattr(gui_app, "_load_segment_video", lambda: slow_segment_video)
+
+    results, errors = [], []
+
+    def export():
+        try:
+            results.append(services.export_match("item-a"))
+        except Exception as exc:  # pragma: no cover - failure reporting
+            errors.append(exc)
+
+    threads = [threading.Thread(target=export) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not errors, errors
+    assert len(calls) == 1, f"segment_video ran {len(calls)} times"
+    assert results == [item_dir / "export.mp4"] * 4

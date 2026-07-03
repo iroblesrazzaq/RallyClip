@@ -2253,6 +2253,15 @@ def library_thumbnail(item_id: str):
     return send_file(str(path), mimetype="image/jpeg")
 
 
+_export_locks: Dict[str, threading.Lock] = {}
+_export_locks_guard = threading.Lock()
+
+
+def _export_lock(item_id: str) -> threading.Lock:
+    with _export_locks_guard:
+        return _export_locks.setdefault(item_id, threading.Lock())
+
+
 def _export_library_video(item_id: str) -> Path:
     """Return the downloadable cut video for a saved match, generating it lazily.
 
@@ -2271,15 +2280,18 @@ def _export_library_video(item_id: str) -> Path:
 
     item_dir = _library_item_dir(item_id)
     export_path = item_dir / "export.mp4"
-    needs_export = not export_path.exists()
-    if not needs_export:
-        export_mtime = export_path.stat().st_mtime
-        needs_export = source_path.stat().st_mtime > export_mtime or csv_path.stat().st_mtime > export_mtime
-    if needs_export:
-        intervals = _sorted_point_intervals(csv_path)
-        if not intervals:
-            raise FileNotFoundError("No point intervals available")
-        _load_segment_video()(str(source_path), intervals, str(export_path))
+    # Serialize per item so simultaneous export requests don't both run the
+    # slow re-encode; the loser of the race re-checks freshness and reuses.
+    with _export_lock(item_id):
+        needs_export = not export_path.exists()
+        if not needs_export:
+            export_mtime = export_path.stat().st_mtime
+            needs_export = source_path.stat().st_mtime > export_mtime or csv_path.stat().st_mtime > export_mtime
+        if needs_export:
+            intervals = _sorted_point_intervals(csv_path)
+            if not intervals:
+                raise FileNotFoundError("No point intervals available")
+            _load_segment_video()(str(source_path), intervals, str(export_path))
     return export_path
 
 
