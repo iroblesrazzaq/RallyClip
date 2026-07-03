@@ -59,31 +59,28 @@ class CourtDetector:
         Returns:
             np.ndarray: Clean frame with player occlusions removed
         """
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            raise RuntimeError(f"Failed to open video: {video_path}")
-        
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        
+        from runtime.video_frames import VideoFrameReader
+
+        reader = VideoFrameReader(video_path)
+        fps = reader.fps
+        total_frames = reader.total_frames
+
         try:
             if self.yolo_model is None:
                 # Fallback to single frame extraction
                 logging.info("YOLO not available, using single frame at target time")
-                cap.set(cv2.CAP_PROP_POS_FRAMES, int(fps * target_time))
-                ret, frame = cap.read()
-                if not ret or frame is None:
+                frame = reader.read_frame_at_index(int(fps * target_time))
+                if frame is None:
                     raise RuntimeError("Could not read frame at target time.")
                 return frame
-            
+
             # Use YOLO + Homography for robust background reconstruction
             logging.info("Using YOLO + Homography for robust background reconstruction")
-            
+
             # Step 1: Select base frame and find occlusions
             base_frame_num = int(target_time * fps)
-            cap.set(cv2.CAP_PROP_POS_FRAMES, base_frame_num)
-            ret, base_frame = cap.read()
-            if not ret or base_frame is None:
+            base_frame = reader.read_frame_at_index(base_frame_num)
+            if base_frame is None:
                 raise RuntimeError("Could not read base frame at target time.")
             
             # Run YOLO on base frame to detect players
@@ -114,9 +111,8 @@ class CourtDetector:
                     continue
                     
                 frame_num = int(search_time * fps)
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
-                ret, candidate_frame = cap.read()
-                if not ret or candidate_frame is None:
+                candidate_frame = reader.read_frame_at_index(frame_num)
+                if candidate_frame is None:
                     continue
                 
                 # Run YOLO on candidate frame
@@ -224,7 +220,7 @@ class CourtDetector:
                 return base_frame
                 
         finally:
-            cap.release()
+            reader.close()
     
     def detect_court_lines(self, frame: np.ndarray) -> Tuple[List, List, List, List]:
         """

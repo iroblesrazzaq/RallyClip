@@ -163,15 +163,7 @@ class DataPreprocessor:
         """Timestamps (seconds) to try for court detection, spread across the video."""
         duration = 0.0
         try:
-            import cv2
-            cap = cv2.VideoCapture(video_path)
-            try:
-                fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
-                frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
-            finally:
-                cap.release()
-            if fps > 0:
-                duration = frames / fps
+            duration = float(probe_video(video_path).duration_s)
         except Exception:
             duration = 0.0
         if duration > 10:
