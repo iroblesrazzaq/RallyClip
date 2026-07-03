@@ -19,9 +19,15 @@ from rallyclip_core.intervals import frame_segments_to_intervals
 from rallyclip_core.pipelines import FRAME_PROBABILITY_HYSTERESIS, START_END_ATTENTION_VOTING
 
 
-def _emit(callback: Optional[ProgressCallback], stage: str, progress: int, status: str = "in_progress") -> None:
+def _emit(
+    callback: Optional[ProgressCallback],
+    stage: str,
+    progress: int,
+    status: str = "in_progress",
+    metadata: Optional[dict] = None,
+) -> None:
     if callback is not None:
-        callback(ProgressEvent(stage=stage, progress=progress, status=status))
+        callback(ProgressEvent(stage=stage, progress=progress, status=status, metadata=metadata or {}))
 
 
 def _check(cancel_check: Optional[CancelCheck]) -> None:
@@ -149,9 +155,11 @@ class FrameProbabilityHysteresisModel(AnalysisModel):
             extractor_kwargs["device"] = pose_device
         extractor = deps.PoseExtractor(**extractor_kwargs)
 
-        def pose_progress(frac: float, _meta=None) -> None:
+        def pose_progress(frac: float, meta=None) -> None:
             _check(cancel_check)
-            _emit(progress_callback, "pose", int(3 + max(0.0, min(1.0, frac)) * 96))
+            # meta (frames_seen/frames_total/smoothed fps) feeds client-side
+            # ETA display; forward it rather than dropping it here.
+            _emit(progress_callback, "pose", int(3 + max(0.0, min(1.0, frac)) * 96), metadata=meta or {})
 
         src_height, src_width, _ = pre._source_frame_shape(str(request.video_path))
         pose_stream = extractor.iter_pose_frames(
