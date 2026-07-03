@@ -94,16 +94,15 @@ Currently wired:
 - defaults
 - runtime status
 - runtime warmup
-- library listing
+- library listing (via `SavedMatchStore` fallback)
 - playback manifest
+- start job / job status / cancel job (None for unknown jobs)
+- export match (lazy cut generation; raises FileNotFoundError/ValueError)
+- analysis runs (`run_analysis` with lazy engine import; used by the CLI)
+- saved-match storage resolution (`rallyclip_core.library.SavedMatchStore`)
 
-Still to wire:
-
-- start job
-- job status
-- cancel job
-- export match
-- saved-match storage resolution
+JSON serialization for `RunResult` and `SavedMatch` lives in
+`rallyclip_api.serialization` with exact-shape contract tests.
 
 ## Analysis Engine Contract
 
@@ -271,29 +270,41 @@ Results:
 - `parity_segmented.mp4` byte-for-byte identical (same SHA-1, 13.5 MB, 53.0s)
 - Output file naming and locations unchanged
 
+## Completed in This Pass (2026-07-02)
+
+1. Saved-match/library file resolution moved into
+   `rallyclip_core.library.SavedMatchStore`; `gui.app` helpers are thin
+   delegators (`e161b69`). Unit tests: `tests/test_saved_match_store.py`.
+2. Job start/status/cancel/export wired through `RallyClipServices`; routes
+   keep only HTTP glue (`1f20343`). Facade tests:
+   `tests/test_api_job_lifecycle.py`.
+3. JSON serialization contracts for `RunResult` and `SavedMatch` in
+   `rallyclip_api.serialization` (`e64e810`). Tests:
+   `tests/test_api_serialization.py`.
+4. CLI is a thin client of the facade via `RallyClipServices.run_analysis`
+   with a lazy engine import (`94f8077`). CLI contract/smoke tests pass
+   unchanged.
+5. Committed golden CLI parity test: 24s/2.4MB fixture clip +
+   `golden_segments.csv` in `tests/fixtures/golden_cli/`, byte-exact CSV
+   assertion, self-skips without heavy deps or model artifacts (`077931c`).
+6. Runtime video decode consolidated onto PyAV: `runtime/video_frames.py`
+   `VideoFrameReader` replaces the last runtime `cv2.VideoCapture` uses in
+   court detection and the preprocessor duration probe (`73cceaa`). OpenCV
+   remains image-ops only at runtime; the package itself cannot be dropped
+   until the ONNX YOLO migration because Ultralytics requires it.
+
 ## What Is Still Not Done
 
 - `main` has not been rebased onto this branch.
-- Saved-match storage and file resolution still mostly live in `gui.app`.
-- Flask still owns much of the job lifecycle glue.
-- CLI calls the shared engine directly; it is not yet a thin client of the
-  application service facade.
-- API JSON contracts need explicit serialization tests for `RunResult` and
-  saved-match models.
 - Real `start_end_attention_voting` production preprocess/infer is not
   implemented; only the interface and decoder test exist.
-- ONNX YOLO replacement, storage migration, CI/CD, and v0.2 product work remain
-  out of scope for this branch.
+- ONNX YOLO replacement (which would also allow dropping OpenCV entirely),
+  storage migration, CI/CD, and v0.2 product work remain out of scope for
+  this branch.
 
 ## Recommended Next Steps
 
-1. ~~Commit the current refactor checkpoint.~~ Done: `5d266c2`.
-2. ~~Run a direct CLI parity check against a known fixture.~~ Done: exact
-   CSV and byte-identical video parity (see above).
-3. Move saved-match/library file resolution from `gui.app` into
-   `rallyclip_api`/`rallyclip_core`.
-4. Wire job start/status/cancel/export through `RallyClipServices`.
-5. Add a stronger golden parity test proving the shipped pipeline produces the
-   same intervals before and after the refactor.
-6. Only after CLI and GUI/API parity are proven, rebase or fast-forward `main`
-   to this branch.
+1. Decide whether to rebase or fast-forward `main` now that CLI and GUI/API
+   parity are proven and the facade wiring is complete.
+2. Implement `start_end_attention_voting` preprocess/infer when the E2E
+   start/end-head model is ready.
