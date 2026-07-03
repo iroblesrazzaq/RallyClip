@@ -1329,10 +1329,17 @@ def _merge_worker_job(job_id: str, worker_job: Dict[str, Any]) -> None:
             return
         thread = current.get("thread")
         process = current.get("process")
+        cancelled = bool(current.get("cancelled"))
         current.clear()
         current.update(worker_job)
         current["thread"] = thread
         current["process"] = process
+        if cancelled:
+            # Cancellation is decided parent-side; a late worker snapshot
+            # (still "in_progress") must not resurrect the job, or the
+            # non-zero exit from terminate() would flip it to "failed".
+            current["cancelled"] = True
+            current["status"] = "cancelled"
 
 
 def _run_pipeline_in_worker_process(job_id: str) -> None:
@@ -1604,6 +1611,18 @@ def _run_pipeline(job_id: str) -> None:
 
         def progress(event: ProgressEvent) -> None:
             _set_step(job, event.stage, event.status, event.progress)
+            if event.stage == "pose" and event.metadata:
+                meta = event.metadata
+                frames_seen = meta.get("frames_seen", meta.get("frames_done", 0))
+                frames_total = meta.get("frames_total", 1)
+                # prefer FPS derived from frames_seen to mirror tqdm ETA
+                smoothed_fps = max(1e-3, meta.get("smoothed_seen_fps", meta.get("smoothed_proc_fps", 0.0)))
+                pose_eta = max(0, frames_total - frames_seen) / smoothed_fps
+                # Tail buffer: 10s minimum, 60s max, scaled by minutes
+                tail = max(10.0, min(60.0, (duration_seconds / 60.0) * 5.0))
+                job["eta_seconds"] = pose_eta + tail
+                job["pose_eta_seconds"] = pose_eta
+                job["pose_throughput_fps"] = smoothed_fps
 
         _check_cancel(job)
         request = RunRequest(

@@ -24,6 +24,7 @@ from infer import (
     write_segments_csv,
 )
 from preprocessing.data_preprocessor import DataPreprocessor
+from runtime.device import apply_pose_device
 from runtime.video_validation import VideoValidationError, validate_video
 from segmentation.segment import segment_video
 from rallyclip_core.contracts import RunRequest, RuntimeDeps, UnsupportedPipelineError
@@ -316,7 +317,10 @@ def run_pipeline(cfg: RunConfig) -> int:
         extract_segments_from_binary=extract_segments_from_binary,
         write_segments_csv=write_segments_csv,
         segment_video=segment_video,
-        apply_pose_device=None,
+        # Only wired for an explicit --yolo-device so the requested device also
+        # reaches court detection (not just pose, via POSE_DEVICE). Without the
+        # flag, PoseExtractor keeps its own env/auto resolution as before.
+        apply_pose_device=apply_pose_device if cfg.yolo_device else None,
     )
     try:
         result = RallyClipServices().run_analysis(request, deps=deps)

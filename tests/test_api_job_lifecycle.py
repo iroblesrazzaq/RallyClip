@@ -167,3 +167,56 @@ def test_export_legacy_precut_video_served_directly(services, monkeypatch, tmp_p
     item_dir.mkdir()
     (item_dir / "video.mp4").write_bytes(b"\x00")
     assert services.export_match("item-legacy") == item_dir / "video.mp4"
+
+
+def test_cancel_survives_late_worker_snapshot(services, job):
+    """A worker progress snapshot arriving after cancel must not resurrect the
+    job into in_progress (which would then be flipped to 'failed' by the
+    worker's non-zero exit)."""
+    assert services.cancel_job("job-1") == {"status": "cancelled"}
+    late_snapshot = {**gui_app._new_job_state("job-1", {}), "status": "in_progress", "cancelled": False}
+    gui_app._merge_worker_job("job-1", late_snapshot)
+    assert gui_app.jobs["job-1"]["status"] == "cancelled"
+    assert gui_app.jobs["job-1"]["cancelled"] is True
+
+
+def test_concurrent_status_cancel_and_merges_stay_consistent(services, job, monkeypatch):
+    """Hammer status/cancel/merge from threads; no exceptions, and the job
+    must end cancelled (never failed/in_progress) once cancel has happened."""
+    import threading
+
+    errors = []
+    stop = threading.Event()
+
+    def poll_status():
+        while not stop.is_set():
+            try:
+                payload = services.get_job_status("job-1")
+                assert payload is not None
+            except Exception as exc:  # pragma: no cover - failure reporting
+                errors.append(exc)
+                return
+
+    def merge_snapshots():
+        while not stop.is_set():
+            try:
+                snapshot = {**gui_app._new_job_state("job-1", {}), "status": "in_progress"}
+                gui_app._merge_worker_job("job-1", snapshot)
+            except Exception as exc:  # pragma: no cover - failure reporting
+                errors.append(exc)
+                return
+
+    workers = [threading.Thread(target=poll_status) for _ in range(4)]
+    workers += [threading.Thread(target=merge_snapshots) for _ in range(2)]
+    for t in workers:
+        t.start()
+    try:
+        for _ in range(50):
+            assert services.cancel_job("job-1")["status"] == "cancelled"
+    finally:
+        stop.set()
+        for t in workers:
+            t.join(timeout=10)
+
+    assert not errors, errors
+    assert gui_app.jobs["job-1"]["status"] == "cancelled"
