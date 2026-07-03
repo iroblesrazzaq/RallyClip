@@ -27,7 +27,7 @@ from preprocessing.data_preprocessor import DataPreprocessor
 from runtime.video_validation import VideoValidationError, validate_video
 from segmentation.segment import segment_video
 from rallyclip_core.contracts import RunRequest, RuntimeDeps, UnsupportedPipelineError
-from rallyclip_api import RallyClipServices
+from rallyclip_api import RallyClipServices, run_result_payload
 
 try:  # Python 3.11+ ships tomllib; fall back to tomli otherwise.
     import tomllib
@@ -74,6 +74,7 @@ class RunConfig:
     duration: int = 999999
     manifest_path: Optional[Path] = None
     pipeline_id: Optional[str] = None
+    emit_json: bool = False
 
 
 def _load_config_dict(path: Optional[str]) -> Dict[str, Any]:
@@ -254,6 +255,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         min_dur_sec=min_dur_sec,
         start_time=int(arg("start_time") if arg("start_time") is not None else cfg("start_time", 0)),
         duration=int(arg("duration") if arg("duration") is not None else cfg("duration", 999999)),
+        emit_json=bool(arg("emit_json") or False),
     )
 
 
@@ -317,11 +319,14 @@ def run_pipeline(cfg: RunConfig) -> int:
         apply_pose_device=None,
     )
     try:
-        RallyClipServices().run_analysis(request, deps=deps)
+        result = RallyClipServices().run_analysis(request, deps=deps)
     except UnsupportedPipelineError as exc:
         raise SystemExit(str(exc)) from exc
 
-    print(f"✅ Done. Outputs in {cfg.output_dir}")
+    if cfg.emit_json:
+        print(json.dumps(run_result_payload(result), indent=2))
+    else:
+        print(f"✅ Done. Outputs in {cfg.output_dir}")
     return 0
 
 
@@ -368,6 +373,7 @@ def main() -> int:
     p.add_argument("--no-csv", dest="write_csv", action="store_false", help="Skip writing segments CSV")
     p.add_argument("--segment-video", dest="segment_video", action="store_true", default=None, help="Write segmented MP4")
     p.add_argument("--no-segment-video", dest="segment_video", action="store_false", help="Skip segmented MP4")
+    p.add_argument("--json", dest="emit_json", action="store_true", help="Print the analysis result as JSON on stdout")
     args = p.parse_args()
 
     cfg = build_run_config(args)
