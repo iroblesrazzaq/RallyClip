@@ -30,7 +30,7 @@ The `refactor/runtime-api-engine` branch is splitting the runtime into:
 - UI clients: native macOS, browser dev UI, and future mobile clients own their
   own video rendering and controls.
 
-See `ENVIRONMENT.md` and `docs/runtime-api-engine-refactor.md` for the current
+See `docs/ENVIRONMENT.md` and `docs/runtime-api-engine-refactor.md` for the current
 branch handoff and test commands.
 
 
