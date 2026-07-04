@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rallyclip"
 version = "0.1.0"
-description = "AI-powered tennis match analysis CLI"
+description = "Local tennis match segmentation — CLI and desktop app"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -30,12 +30,29 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest",
+  "requests",
+]
+# Browser-driven L2 e2e (frontend journey). Heavy (downloads a browser); kept
+# separate so the core dev/test install stays light. Install the browser with
+# `playwright install chromium` after `pip install .[e2e-ui]`.
+e2e-ui = [
+  "playwright>=1.40",
+  "pytest-playwright>=0.4",
+]
+desktop = [
+  "PySide6>=6.6",
+  "PySide6-Addons>=6.6",
+]
+pack = [
+  "pyinstaller>=6.0",
 ]
 
 [project.scripts]
 rallyclip = "cli:main"
+rallyclip-desktop = "gui.desktop:main"
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
 markers = [
   "slow: long-running tests (heavy I/O or model loads)",
   "e2e: end-to-end tests needing source videos / model weights",
@@ -43,6 +60,7 @@ markers = [
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -50,3 +68,8 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Ship the empirical default court mask used as the detection fallback.
 preprocessing = ["*.png"]
+gui = [
+  "frontend/index.html",
+  "frontend/styles.css",
+  "frontend/script.js",
+]

@@ -1,5 +1,146 @@
 # TODO
 
+## First macOS release scope
+
+Included in the first Mac release:
+
+- Packaged PySide6 desktop app with the local Flask backend embedded in the app.
+- Saved-match library and replay-first startup path.
+- Native QtMultimedia replay viewer for the packaged Mac app.
+- Browser/WebM replay remains as a development fallback, not the production Mac path.
+- Source-time playback timeline with point skipping, manual gap playback, hover controls,
+  fullscreen, keyboard shortcuts, CSV, export, and visible point markers.
+- Stable welcome/get-started persistence through the backend preferences endpoint, not
+  fragile localhost `localStorage` alone.
+- Replay startup does not import Torch, Ultralytics, PyAV, or Numpy.
+- New Match warms the analysis runtime only when the user enters the upload flow.
+- Analysis runs in a child worker process so inference memory can exit after completion,
+  cancellation, or failure.
+- Current playback strategy is native source playback only. Automatic proxy playback was
+  disabled after source-only replay completed successfully and proxy generation/switching
+  was identified as the likely cause of the freeze.
+- Native playback watchdog logging for RSS, frame heartbeat, media status, buffer status,
+  and one guarded reload attempt on stall or rising memory.
+- Level 1 update flow: `/api/update/status` checks the latest GitHub Release, the
+  library UI shows an update action only when a newer tag exists, and
+  `/api/update/open` opens the GitHub Releases page for manual download/install.
+
+Not included in the first Mac release:
+
+- YOLO ONNX runtime replacement. The release still uses the existing Torch/Ultralytics
+  analysis stack inside the isolated worker process.
+- The larger engine/API rework where CLI, desktop, browser, and future mobile clients all
+  call one explicit runtime API contract. This is now in progress on
+  `refactor/runtime-api-engine`; it is not part of v0.1.0.
+- A full GitHub Actions release pipeline with Apple signing, notarization, DMG creation,
+  and release upload.
+- MLX or CoreML inference runtime.
+- iOS app support.
+- Training dependency slimming. Training remains a developer workflow, not a runtime
+  requirement for replaying saved matches.
+- HLS/fMP4 local playback. That experiment was reverted because first-open transcoding
+  blocked playback and overheated the machine.
+
+## First macOS release checklist
+
+1. Clean and commit the release branch.
+2. Rebuild `dist/RallyClip.app` from the committed branch.
+3. Fresh-user smoke test:
+   - remove or move local RallyClip app data;
+   - launch the app;
+   - confirm welcome appears once;
+   - click Get Started;
+   - quit and reopen;
+   - confirm the app opens straight to the library/home view.
+4. Packaged replay smoke test:
+   - open an existing saved match;
+   - confirm native viewer opens rather than browser chunk playback;
+   - play at least 15 minutes;
+   - confirm memory stabilizes, controls remain responsive, fullscreen works, and the app
+     does not steal foreground focus when inactive.
+5. Packaged processing smoke test:
+   - start New Match from the packaged app;
+   - confirm runtime warmup appears only in the upload flow;
+   - process one short valid video;
+   - confirm progress updates, saved library output, CSV output, export, and worker exit.
+6. Input-validation smoke test:
+   - missing upload field returns a clear error;
+   - non-video input returns a clear error before pose extraction;
+   - unreadable/unsupported video returns a clear error before expensive inference.
+7. Bundle audit:
+   - confirm frontend assets are bundled;
+   - confirm model artifacts are bundled or resolved from the app data root;
+   - confirm QtWebEngine and QtMultimedia resources are bundled;
+   - confirm no automatic proxy generation runs during replay.
+8. Apple release packaging:
+   - sign app with Developer ID Application certificate;
+   - enable hardened runtime with required entitlements;
+   - notarize with Apple;
+   - staple the notarization ticket;
+   - package as a signed DMG or zip;
+   - install and launch on a second Mac.
+9. Level 1 update check:
+   - embed current app version in the packaged app;
+   - check the latest GitHub Release tag;
+   - show an update-available action when the release tag is newer;
+   - open the GitHub Releases page in the browser for manual download/install.
+
+## Post-release product/architecture work
+
+- Replace inference-time Ultralytics/PyTorch pose extraction with the sibling
+  `../YOLO-ONNX` runner/wrapper and bundled YOLO ONNX weights, so the app runtime can
+  shrink toward ONNX/runtime dependencies unless users explicitly install training extras.
+- Continue the runtime/API/engine refactor on `refactor/runtime-api-engine`.
+  Current checkpoint:
+  - `rallyclip_core` owns pure contracts, interval helpers, pipeline selection, and
+    source-time playback scheduling.
+  - `rallyclip_engine` owns model-object analysis execution: preprocessing,
+    inference, postprocessing, and CSV/video-ready `RunResult` output.
+  - `rallyclip_api` provides a thin application-service facade that Flask is starting
+    to call.
+  - The native playback scheduler is now a core source-time scheduler alias, so Qt
+    owns rendering but not the pure point-skip rules.
+  - The current branch has passing parity tests but is not yet committed or merged
+    into `main`.
+- Keep CLI support as a first-class interface. Next architecture step: make CLI a
+  thin client of the shared application/runtime contract once full CLI parity is
+  proven, rather than a separate path that can drift from the app.
+- Before rebasing or fast-forwarding `main`, run CLI parity on real or fixture video
+  inputs and confirm CSV/video output behavior remains compatible.
+- Split install extras clearly:
+  - replay/library runtime;
+  - analysis runtime;
+  - training/evaluation runtime.
+- Audit video/vision runtime dependencies and choose one FFmpeg owner. The current
+  packaged app can include FFmpeg-family dylibs from both PyAV (`av`) and OpenCV
+  (`cv2`), which produces duplicate Objective-C class warnings in the frozen analysis
+  worker. Decide whether runtime video IO should standardize on PyAV, OpenCV, or a
+  direct ffmpeg subprocess wrapper, then remove or isolate the redundant bundled copy.
+- Add release CI/CD:
+  - run tests;
+  - build the macOS app on GitHub Actions;
+  - sign and notarize with Apple credentials;
+  - create DMG/zip artifacts;
+  - publish GitHub Release assets.
+- Add fresh-machine release tests for app launch, first-run preference persistence,
+  replay, New Match, export, and CLI mode.
+- Later update improvements:
+  - assisted DMG download from inside the app;
+  - checksum verification;
+  - automatic update installation via Sparkle or a dedicated signed updater helper.
+- Decide whether to keep a manual compatibility proxy tool. Automatic proxy generation and
+  hot-swapping are disabled for v1 because source playback is stable and the proxy path was
+  the likely source of the playback freeze.
+- Add durable playback diagnostics UI or exportable log bundle for user support.
+- Confirm storage model and cleanup policy for copied source videos, CSV files, proxies,
+  exports, logs, and preferences.
+
+## Backlog
+
+- Native Mac source playback validation: a full saved-match replay completed successfully
+  after deleting `playback_proxy.mp4` and disabling automatic proxy fallback. Watchdog logs
+  stayed on `media=source`; RSS fluctuated but remained bounded, generally around
+  130-190 MB with no runaway growth. Keep proxy generation out of automatic playback for v1.
 - Add W&B integration behind `wandb.enabled` (run metadata, metrics, artifacts).
 - Add integration tests for the full pipeline on synthetic HDF5 inputs.
 - Add CLI smoke tests for `train.py` and `visualize.py`.

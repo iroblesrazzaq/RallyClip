@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -20,24 +19,28 @@ from infer import (
     hysteresis_threshold,
     load_scaler_asset,
     load_model_from_checkpoint,
-    run_windowed_inference_average_onnx,
-    run_windowed_inference_average,
+    run_windowed_inference_average_onnx_stream,
+    run_windowed_inference_average_torch_stream,
     write_segments_csv,
 )
 from preprocessing.data_preprocessor import DataPreprocessor
+from runtime.device import apply_pose_device
+from runtime.video_validation import VideoValidationError, validate_video
 from segmentation.segment import segment_video
+from rallyclip_core.contracts import RunRequest, RuntimeDeps, UnsupportedPipelineError
+from rallyclip_api import RallyClipServices, run_result_payload
 
 try:  # Python 3.11+ ships tomllib; fall back to tomli otherwise.
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - dependent on interpreter version
     import tomli as tomllib
 
-YOLO_SIZE_MAP = {
-    "nano": "yolov8n-pose.pt",
-    "small": "yolov8s-pose.pt",
-    "medium": "yolov8m-pose.pt",
-    "large": "yolov8l-pose.pt",
-}
+from runtime.assets import (  # noqa: E402 — re-exported under legacy names
+    YOLO_SIZE_MAP,
+    candidate_roots as _candidate_roots,
+    manifest_values as _manifest_values,
+    resolve_asset as _resolve_asset,
+)
 
 
 @dataclass
@@ -70,50 +73,9 @@ class RunConfig:
     # Runtime IO prefs (safe defaults are fine here)
     start_time: int = 0
     duration: int = 999999
-
-
-def _candidate_roots() -> list[Path]:
-    """Possible roots where assets might live (repo root, cwd, site-packages)."""
-    here = Path(__file__).resolve()
-    roots = [Path.cwd()]
-    for depth in (2, 3, 4):
-        try:
-            roots.append(here.parents[depth])
-        except IndexError:
-            continue
-    seen: list[Path] = []
-    for r in roots:
-        if r not in seen:
-            seen.append(r)
-    return seen
-
-
-def _resolve_asset(explicit: Optional[str], env_var: str, relatives: list[str], description: str) -> Path:
-    """Resolve a required asset from CLI/config/env/default locations."""
-    if explicit:
-        path = Path(explicit).expanduser().resolve()
-        if not path.exists():
-            raise FileNotFoundError(f"{description} not found at '{path}'")
-        return path
-
-    env_val = os.environ.get(env_var)
-    if env_val:
-        path = Path(env_val).expanduser().resolve()
-        if not path.exists():
-            raise FileNotFoundError(f"{description} not found at '{path}' (from {env_var})")
-        return path
-
-    for root in _candidate_roots():
-        for rel in relatives:
-            candidate = (Path(root) / rel).expanduser()
-            if candidate.exists():
-                return candidate.resolve()
-
-    roots_str = ", ".join(str(r) for r in _candidate_roots())
-    raise FileNotFoundError(
-        f"{description} not found. Set via CLI flag, config, or env {env_var}; "
-        f"searched relative locations {relatives} under: {roots_str}"
-    )
+    manifest_path: Optional[Path] = None
+    pipeline_id: Optional[str] = None
+    emit_json: bool = False
 
 
 def _load_config_dict(path: Optional[str]) -> Dict[str, Any]:
@@ -143,58 +105,6 @@ def _pick_bool(arg_val: Optional[bool], cfg_val: Optional[Any], default: bool) -
 _CONTRACT_FIELDS = (
     "fps", "seq_len", "imgsz", "conf", "feature_set", "screen_width", "screen_height", "yolo_model",
 )
-
-
-def _manifest_values(model_path: Path, manifest_path: Optional[Path] = None) -> Dict[str, Any]:
-    """Read the model's manifest into a flat dict of contract + postprocess values.
-
-    Returns {} if no manifest can be found/parsed; callers crash on missing required
-    fields rather than substituting phantom defaults.
-    """
-    manifest_path = manifest_path or (model_path.parent / "manifest.json")
-    if not manifest_path.exists():
-        return {}
-    try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except Exception as e:
-        logging.warning("Found manifest at %s but could not parse it (%s); ignoring it.", manifest_path, e)
-        return {}
-
-    inference = payload.get("inference", {}) or {}
-    postprocess = (payload.get("postprocess", {}) or {}).get("params", {}) or {}
-    feature_pipeline = payload.get("feature_pipeline", {}) or {}
-    values: Dict[str, Any] = {}
-
-    # Contract (immutable)
-    if feature_pipeline.get("target_fps") is not None:
-        values["fps"] = float(feature_pipeline["target_fps"])
-    if inference.get("seq_len_frames") is not None:
-        values["seq_len"] = int(inference["seq_len_frames"])
-    if feature_pipeline.get("imgsz") is not None:
-        values["imgsz"] = int(float(feature_pipeline["imgsz"]))
-    if feature_pipeline.get("conf") is not None:
-        values["conf"] = float(feature_pipeline["conf"])
-    if feature_pipeline.get("feature_set") is not None:
-        values["feature_set"] = str(feature_pipeline["feature_set"])
-    if feature_pipeline.get("screen_width") is not None:
-        values["screen_width"] = int(feature_pipeline["screen_width"])
-    if feature_pipeline.get("screen_height") is not None:
-        values["screen_height"] = int(feature_pipeline["screen_height"])
-    if feature_pipeline.get("yolo_model") is not None:
-        values["yolo_model"] = str(feature_pipeline["yolo_model"])
-
-    # Postprocess (mutable)
-    if inference.get("overlap_frames") is not None:
-        values["overlap"] = int(inference["overlap_frames"])
-    if postprocess.get("sigma") is not None:
-        values["sigma"] = float(postprocess["sigma"])
-    if postprocess.get("low") is not None:
-        values["low"] = float(postprocess["low"])
-    if postprocess.get("high") is not None:
-        values["high"] = float(postprocess["high"])
-    if postprocess.get("min_dur_sec") is not None:
-        values["min_dur_sec"] = float(postprocess["min_dur_sec"])
-    return values
 
 
 def _num_differs(a: Any, b: Any) -> bool:
@@ -330,6 +240,8 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         yolo_device=yolo_device,
         model_path=model_path,
         scaler_path=scaler_path,
+        manifest_path=manifest_path,
+        pipeline_id=arg("pipeline_id") or cfg("pipeline_id"),
         fps=fps,
         seq_len=seq_len,
         imgsz=imgsz,
@@ -344,6 +256,7 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         min_dur_sec=min_dur_sec,
         start_time=int(arg("start_time") if arg("start_time") is not None else cfg("start_time", 0)),
         duration=int(arg("duration") if arg("duration") is not None else cfg("duration", 999999)),
+        emit_json=bool(arg("emit_json") or False),
     )
 
 
@@ -352,97 +265,72 @@ def run_pipeline(cfg: RunConfig) -> int:
         print(f"Error: video file not found at '{cfg.video_path}'")
         return 1
 
-    # Fail fast, before the expensive pose/preprocess passes: only feature_set 'v1' is implemented.
-    if cfg.feature_set != "v1":
-        raise SystemExit(
-            f"This model declares feature_set='{cfg.feature_set}', but only 'v1' is implemented "
-            f"in the runtime. See docs/runtime-config-refactor-plan.md (§7, v0 backwards compat)."
-        )
-
-    cfg.output_dir.mkdir(parents=True, exist_ok=True)
-    base_name = cfg.output_name or cfg.video_path.stem
+    # Preflight the input before the expensive pose/preprocess passes.
+    try:
+        validate_video(cfg.video_path, seq_len=int(cfg.seq_len), fps=float(cfg.fps))
+    except VideoValidationError as exc:
+        print(f"Error: {exc}")
+        return 1
 
     if cfg.yolo_device:
         os.environ["POSE_DEVICE"] = cfg.yolo_device
-    models_dir = str(Path.cwd() / "models")
-
-    pre = DataPreprocessor(
-        screen_width=int(cfg.screen_width),
-        screen_height=int(cfg.screen_height),
-        save_court_masks=False,
-        yolo_model_path=cfg.yolo_weights,
-        conf=float(cfg.conf),
+    request = RunRequest(
+        video_path=cfg.video_path,
+        output_dir=cfg.output_dir,
+        output_name=cfg.output_name,
+        csv_output_dir=cfg.csv_output_dir,
+        write_csv=cfg.write_csv,
+        segment_video=cfg.segment_video,
+        yolo_weights=cfg.yolo_weights,
+        yolo_device=cfg.yolo_device,
+        model_path=cfg.model_path,
+        scaler_path=cfg.scaler_path,
+        manifest_path=cfg.manifest_path,
+        pipeline_id=cfg.pipeline_id,
+        fps=cfg.fps,
+        seq_len=cfg.seq_len,
+        imgsz=cfg.imgsz,
+        conf=cfg.conf,
+        feature_set=cfg.feature_set,
+        screen_width=cfg.screen_width,
+        screen_height=cfg.screen_height,
+        overlap=cfg.overlap,
+        sigma=cfg.sigma,
+        low=cfg.low,
+        high=cfg.high,
+        min_dur_sec=cfg.min_dur_sec,
+        start_time=cfg.start_time,
+        duration=cfg.duration,
+        models_dir=Path.cwd() / "models",
     )
-    # Court detection runs UP FRONT (multi-sample), before the expensive pose pass. If it
-    # fails on every sampled frame we fall back to the empirical default court mask rather
-    # than silently skipping court filtering. compute_court_mask logs which source it used.
-    court_mask, _ = pre.compute_court_mask(str(cfg.video_path))
-
-    pose_extractor = PoseExtractor(model_path=cfg.yolo_weights, model_dir=models_dir)
-    raw_npz = pose_extractor.extract_pose_data(
-        video_path=str(cfg.video_path),
-        confidence_threshold=float(cfg.conf),
-        start_time_seconds=int(cfg.start_time),
-        duration_seconds=int(cfg.duration),
-        target_fps=int(cfg.fps),
-        imgsz=int(cfg.imgsz),
-        annotations_csv=None,
+    deps = RuntimeDeps(
+        np=np,
+        PoseExtractor=PoseExtractor,
+        DataPreprocessor=DataPreprocessor,
+        FeatureEngineer=FeatureEngineer,
+        load_scaler_asset=load_scaler_asset,
+        load_model_from_checkpoint=load_model_from_checkpoint,
+        run_windowed_inference_average_onnx_stream=run_windowed_inference_average_onnx_stream,
+        run_windowed_inference_average_torch_stream=run_windowed_inference_average_torch_stream,
+        gaussian_filter1d=gaussian_filter1d,
+        hysteresis_threshold=hysteresis_threshold,
+        extract_segments_from_binary=extract_segments_from_binary,
+        write_segments_csv=write_segments_csv,
+        segment_video=segment_video,
+        # Only wired for an explicit --yolo-device so the requested device also
+        # reaches court detection (not just pose, via POSE_DEVICE). Without the
+        # flag, PoseExtractor keeps its own env/auto resolution as before.
+        apply_pose_device=apply_pose_device if cfg.yolo_device else None,
     )
+    try:
+        result = RallyClipServices().run_analysis(request, deps=deps)
+    except UnsupportedPipelineError as exc:
+        raise SystemExit(str(exc)) from exc
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_dir = Path(tmp)
-        preprocessed_npz = tmp_dir / "preprocessed.npz"
-        features_npz = tmp_dir / "features.npz"
-
-        pre.preprocess_single_video(
-            raw_npz, str(cfg.video_path), str(preprocessed_npz), overwrite=True, court_mask=court_mask
-        )
-
-        fe = FeatureEngineer(
-            screen_width=int(cfg.screen_width),
-            screen_height=int(cfg.screen_height),
-            target_fps=float(cfg.fps),
-        )
-        fe.create_features_from_preprocessed(str(preprocessed_npz), str(features_npz), overwrite=True)
-
-        with np.load(str(features_npz)) as data:
-            features = data["features"].copy()
-        scaler = load_scaler_asset(str(cfg.scaler_path))
-        features = scaler.transform(features)
-        if cfg.model_path.suffix.lower() == ".onnx":
-            avg_probs = run_windowed_inference_average_onnx(
-                str(cfg.model_path),
-                features,
-                sequence_length=int(cfg.seq_len),
-                overlap=int(cfg.overlap),
-            )
-        else:
-            model, device = load_model_from_checkpoint(str(cfg.model_path), return_logits=False)
-            avg_probs = run_windowed_inference_average(
-                model, device, features, sequence_length=int(cfg.seq_len), overlap=int(cfg.overlap)
-            )
-        smoothed_probs = gaussian_filter1d(avg_probs.astype(np.float32), sigma=float(cfg.sigma))
-        min_duration_frames = int(round(max(0.0, float(cfg.min_dur_sec)) * float(cfg.fps)))
-        binary_pred = hysteresis_threshold(
-            smoothed_probs, low=float(cfg.low), high=float(cfg.high), min_duration=min_duration_frames
-        )
-        segments = extract_segments_from_binary(binary_pred)
-
-    if cfg.write_csv:
-        cfg.csv_output_dir.mkdir(parents=True, exist_ok=True)
-        csv_out = cfg.csv_output_dir / f"{base_name}_segments.csv"
-        write_segments_csv(segments, str(csv_out), fps=float(cfg.fps), overwrite=True)
-
-    if cfg.segment_video:
-        video_out = cfg.output_dir / f"{base_name}_segmented.mp4"
-        intervals_sec = [
-            (start_idx / float(cfg.fps), end_idx / float(cfg.fps))
-            for (start_idx, end_idx) in segments
-        ]
-        if intervals_sec:
-            segment_video(str(cfg.video_path), intervals_sec, str(video_out))
-
-    print(f"✅ Done. Outputs in {cfg.output_dir}")
+    if cfg.emit_json:
+        print(json.dumps(run_result_payload(result), indent=2))
+    else:
+        print(f"✅ Done. Outputs in {cfg.output_dir}")
     return 0
 
 
@@ -469,6 +357,7 @@ def main() -> int:
     p.add_argument("--scaler-path", help="Path to scaler artifact (.json preferred, legacy .joblib supported)")
     p.add_argument("--artifact-dir", help="Directory containing model.onnx, scaler.json, and manifest.json")
     p.add_argument("--manifest-path", help="Path to model manifest.json for runtime defaults")
+    p.add_argument("--pipeline-id", help="Explicit analysis pipeline override for compatible artifacts")
     p.add_argument("--yolo-size", choices=list(YOLO_SIZE_MAP.keys()), help="YOLO pose model size (auto-downloads if needed)")
     p.add_argument("--yolo-device", choices=["cpu", "cuda", "mps"], help="Force YOLO device (overrides POSE_DEVICE env)")
 
@@ -488,6 +377,7 @@ def main() -> int:
     p.add_argument("--no-csv", dest="write_csv", action="store_false", help="Skip writing segments CSV")
     p.add_argument("--segment-video", dest="segment_video", action="store_true", default=None, help="Write segmented MP4")
     p.add_argument("--no-segment-video", dest="segment_video", action="store_false", help="Skip segmented MP4")
+    p.add_argument("--json", dest="emit_json", action="store_true", help="Print the analysis result as JSON on stdout")
     args = p.parse_args()
 
     cfg = build_run_config(args)

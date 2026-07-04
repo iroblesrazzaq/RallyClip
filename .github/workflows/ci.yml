@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# Use bash on every runner (incl. Windows via Git Bash) so quoting/heredocs and
+# `pip install ".[extra]"` behave identically across OS.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: pip install ".[dev]"
+      - name: Install OpenCV runtime libs (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
+      - name: Run tests
+        run: pytest -m "not slow and not e2e"
+
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: pip install ".[dev,e2e-ui]"
+      - name: Install OpenCV runtime libs (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
+      - name: Install Playwright browser (Linux, with OS deps)
+        if: runner.os == 'Linux'
+        run: python -m playwright install --with-deps chromium
+      - name: Install Playwright browser (macOS/Windows)
+        if: runner.os != 'Linux'
+        run: python -m playwright install chromium
+      - name: Fetch YOLO weights
+        run: python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt')"
+      - name: Run e2e (L1 backend + L2 browser UI)
+        # Golden-clip tests self-skip here (private footage lives only locally).
+        run: pytest -m e2e

@@ -1,5 +1,7 @@
 dist/
 build/
+dist_venv/
+build_venv/
 *.spec
 
 # generated data and outputs
