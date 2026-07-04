@@ -25,7 +25,7 @@ def test_run_pipeline_streams_runtime_stages(tmp_path, monkeypatch):
     class FakePoseExtractor:
         def __init__(self, model_path, model_dir):
             calls.append("pose:init")
-            assert model_path == "yolov8n-pose.pt"
+            assert Path(model_path).name == "yolov8n-pose.pt"
             assert Path(model_dir).name == "models"
 
         def iter_pose_frames(self, **kwargs):
@@ -41,7 +41,7 @@ def test_run_pipeline_streams_runtime_stages(tmp_path, monkeypatch):
             assert save_court_masks is False
             assert screen_width == 1280
             assert screen_height == 720
-            assert yolo_model_path == "yolov8n-pose.pt"
+            assert Path(yolo_model_path).name == "yolov8n-pose.pt"
             assert conf == 0.25
 
         def compute_court_mask(self, vp):

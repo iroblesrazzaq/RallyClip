@@ -208,6 +208,10 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
         description="RallyClip scaler artifact (JSON)",
     )
     manifest_path = Path(manifest_path_raw).expanduser().resolve() if manifest_path_raw else None
+    if manifest_path is None and (model_path.parent / "manifest.json").is_file():
+        # Carry the implicit sibling manifest so downstream consumers (engine
+        # pose-weights resolution) know the artifact directory.
+        manifest_path = model_path.parent / "manifest.json"
     manifest = _manifest_values(model_path, manifest_path)
 
     # Immutable contract: manifest is authoritative; only an explicit CLI flag overrides (warns).

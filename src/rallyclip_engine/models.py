@@ -127,6 +127,20 @@ class FrameProbabilityHysteresisModel(AnalysisModel):
             )
 
         yolo_weights = request.yolo_weights
+        if not Path(yolo_weights).is_absolute():
+            # Resolve bare weight names (from the manifest) against the models
+            # directory and the manifest's own directory, so every consumer —
+            # court detection included — gets a concrete file path. Names that
+            # don't resolve stay bare and fall through to ultralytics' own
+            # download/resolution, as before.
+            search_dirs = [Path(request.models_dir or (Path.cwd() / "models"))]
+            if request.manifest_path is not None:
+                search_dirs.append(Path(request.manifest_path).parent)
+            for base in search_dirs:
+                candidate = base / yolo_weights
+                if candidate.exists():
+                    yolo_weights = str(candidate)
+                    break
         pose_device = None
         if request.yolo_device and deps.apply_pose_device is not None:
             pose_device = deps.apply_pose_device(str(request.yolo_device), model_path=yolo_weights, set_env=False)

@@ -49,7 +49,7 @@ def test_gui_health_and_defaults(tmp_path, monkeypatch):
     assert payload["defaults"]["fps"] == 5.0
     assert payload["defaults"]["feature_set"] == "v1"
     assert payload["defaults"]["yolo_size"] == "nano"
-    assert payload["yolo_model"] == "yolov8n-pose.pt"
+    assert payload["yolo_model"] == gui_app.FIXED_YOLO_MODEL
     assert "available_devices" in payload
     assert "auto_device" in payload
     assert "output_dir" not in payload["defaults"]
@@ -168,7 +168,7 @@ def test_gui_config_forces_yolo_nano():
     normalized = gui_app._normalize_config({"yolo_size": "large", "yolo_weights": "custom.pt"})
 
     assert normalized["yolo_size"] == "nano"
-    assert normalized["yolo_weights"] == "yolov8n-pose.pt"
+    assert normalized["yolo_weights"] == gui_app.FIXED_YOLO_MODEL
 
 
 def test_persist_library_item_saves_source_without_cutting(tmp_path, monkeypatch):
