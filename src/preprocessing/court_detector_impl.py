@@ -277,9 +277,12 @@ class CourtDetector:
         
         # Detect lines using Hough Transform
         linesP = cv2.HoughLinesP(masked_result, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=40)
-        
+
         if linesP is None:
             return [], [], [], []
+        # OpenCV 4 returns shape (N, 1, 4); OpenCV 5 dropped the middle axis.
+        # Normalize so every downstream `line[0]` unpack works on both.
+        linesP = np.asarray(linesP).reshape(-1, 1, 4)
         
         # Classify lines
         screen_center_x = frame.shape[1] / 2
