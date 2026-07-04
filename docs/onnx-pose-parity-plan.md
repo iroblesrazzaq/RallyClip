@@ -17,7 +17,7 @@ results = model.predict(
     verbose=False,
     device=self.device,       # cpu | mps | cuda (resolved via runtime.device)
     conf=confidence_threshold,
-    imgsz=predict_imgsz,      # DEFAULT 1920 — not 640
+    imgsz=predict_imgsz,      # 960 in production (manifest contract) — see below
     batch=self.batch_size,    # 1 on cpu, 16 otherwise
 )
 # per result, exactly four arrays:
@@ -38,9 +38,22 @@ end-to-end `[1, 300, 57]` with NMS inside the graph — no NMS matching needed.
 
 ## ⚠ Gotchas that invalidate naive comparisons
 
-1. **imgsz=1920.** All YOLO-ONNX numbers so far (IoU 0.992, kpt err 0.42px)
-   were measured at 640. The export must be at 1920 (or dynamic axes) and all
-   parity runs re-measured there. Pixel-error tolerances scale ~3× vs 640.
+1. **imgsz=960, from the model manifest — not 640, not 1920.** The shipped
+   v0.3.1 manifest declares `feature_pipeline.imgsz: 960`; CLI resolves it
+   from the manifest and the GUI defaults to 960. (`PoseExtractor`'s
+   constructor default of 1920 is legacy/dead — every production call passes
+   imgsz explicitly.) All YOLO-ONNX numbers so far (IoU 0.992, kpt err
+   0.42px) were measured at 640 and do not transfer; export and re-measure
+   at 960. The wrapper must accept imgsz per call, since it is a per-artifact
+   contract value.
+1b. **Rectangular vs square letterbox.** Ultralytics `.predict()` on a `.pt`
+   model uses rect inference: a 16:9 frame at imgsz=960 is letterboxed to
+   ~960×544 (padded to stride multiples), NOT 960×960. A static-shape ONNX
+   export runs square 960×960 with heavy padding — numerically different
+   activations even with identical weights. Either export with dynamic H/W
+   and replicate rect inference in the runner, or quantify the square-vs-rect
+   output difference in Stage 1 before blaming the wrapper. This alone can
+   dominate all other divergence sources.
 2. **NMS semantics.** For the v8n raw export, the runner's NMS must replicate
    `iou=0.7`, class-aware=off-by-default behavior, and Ultralytics
    tie-breaking. This is the single most likely source of discrete
@@ -70,8 +83,8 @@ end-to-end `[1, 300, 57]` with NMS inside the graph — no NMS matching needed.
   per frame as the oracle NPZ.
 
 ### Stage 1 — export + byte-level tests
-- Export `yolov8n-pose.pt` → ONNX at imgsz=1920 (`nms=False` and `nms=True`
-  variants); export the retrained YOLO26 e2e at 1920.
+- Export `yolov8n-pose.pt` → ONNX at imgsz=960 (`nms=False` and `nms=True`
+  variants, dynamic axes for rect inference); export the retrained YOLO26 e2e at 960.
 - **Test 1a (torch vs ORT, same graph semantics):** feed the *same
   preprocessed input tensor* (one shared numpy letterbox) to torch `.pt` and
   ORT `.onnx`; diff raw output tensors. Expected verdict: **not byte-equal**
@@ -85,7 +98,7 @@ end-to-end `[1, 300, 57]` with NMS inside the graph — no NMS matching needed.
 Compare oracle vs runner on the four arrays, per frame:
 - detection count match rate (target 1.000 at matched conf/iou),
 - greedy box matching: matched IoU ≥ 0.95,
-- keypoint px error (report mean/p95/max; interpret relative to 1920),
+- keypoint px error (report mean/p95/max; interpret relative to 960),
 - keypoint/box confidence deltas,
 - **order agreement** (conf-descending) — player_assigner sensitivity.
 Include adversarial frames: near-threshold detections, near-tie NMS pairs,
@@ -113,13 +126,13 @@ zero-person frames (empty-array paths).
   C++ decode logic (`yolo_onnx_runner` per the design notes). RallyClip
   already ships onnxruntime for the LSTM; zero new build toolchain; the C++
   CLI remains the reference implementation + benchmark harness. pybind11
-  binding of the C++ is the fallback if Python decode is too slow at 1920.
+  binding of the C++ is the fallback if Python decode is too slow at 960.
 - **Model choice:** v8n-onnx (drop-in weights, NMS risk) vs YOLO26 e2e
   (NMS-free decode, retrained at parity) — decide on Stage 2/4 data.
 - Device map: `cpu`→CPUExecutionProvider now; `mps`→CoreML EP studied
   separately before enabling.
 - Gate: golden parity + full e2e suite green + memory benchmark (expect
-  ~150MB vs ~530MB class of win, re-measured at 1920), then remove
+  ~150MB vs ~530MB class of win, re-measured at 960), then remove
   torch/ultralytics from the runtime dependency set (keep as dev/export
   extra).
 
