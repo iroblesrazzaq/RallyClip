@@ -1447,12 +1447,13 @@ def _api_services():
 # Keys the browser may override. Everything else (manifest-pinned inference
 # params, model/artifact paths) keeps the server-side default even though the
 # frontend round-trips the full defaults payload.
+# write_csv/segment_video are deliberately absent: the GUI job always runs the
+# engine with both off (the library owns the CSV; exports are cut lazily), so
+# advertising them as client-controllable would be a lie.
 _CLIENT_KEYS = {
     "output_name",
     "pipeline_id",
     "yolo_device",
-    "write_csv",
-    "segment_video",
     "low",
     "high",
     "min_dur_sec",
@@ -1610,6 +1611,7 @@ def _run_pipeline(job_id: str) -> None:
                     break
 
         def progress(event: ProgressEvent) -> None:
+            nonlocal last_memory_log
             _set_step(job, event.stage, event.status, event.progress)
             if event.stage == "pose" and event.metadata:
                 meta = event.metadata
@@ -1623,6 +1625,18 @@ def _run_pipeline(job_id: str) -> None:
                 job["eta_seconds"] = pose_eta + tail
                 job["pose_eta_seconds"] = pose_eta
                 job["pose_throughput_fps"] = smoothed_fps
+                now = time.perf_counter()
+                if now - last_memory_log >= 10.0 or event.progress >= 99:
+                    last_memory_log = now
+                    _log_memory(
+                        "pose_progress",
+                        job_id=job_id,
+                        elapsed_s=now - pipeline_start,
+                        frames_seen=frames_seen,
+                        frames_total=frames_total,
+                        progress=event.progress,
+                        pose_fps=smoothed_fps,
+                    )
 
         _check_cancel(job)
         request = RunRequest(

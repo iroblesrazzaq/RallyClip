@@ -45,6 +45,8 @@ class VideoFrameReader:
         target_s = max(0.0, frame_num / self.fps)
         # Seek to the keyframe at/before the target, then decode forward.
         time_base = self._stream.time_base
+        if not time_base:
+            return None
         try:
             self._container.seek(int(target_s / time_base), stream=self._stream, backward=True)
         except av.AVError:
