@@ -56,7 +56,7 @@ jobs:
           test -f models/rallyclip_v0.3.1/model.onnx
           test -f models/rallyclip_v0.3.1/scaler.json
           test -f models/rallyclip_v0.3.1/manifest.json
-          test -f models/yolov8n-pose.pt
+          test -f models/rallyclip_v0.3.1/yolov8n-pose-960-dynamic.onnx
           test -f src/preprocessing/default_court_mask.png
           test -f docs/rallyclip.icns
           test -f docs/rallyclip_favicon_transparent2.png
@@ -156,7 +156,7 @@ jobs:
             sleep 2
           done
           if [ -n "$ok" ]; then
-            curl -s -m 5 http://127.0.0.1:8765/api/config/defaults | grep -q "yolov8n-pose.pt" || ok=""
+            curl -s -m 5 http://127.0.0.1:8765/api/config/defaults | grep -q "yolov8n-pose-960-dynamic.onnx" || ok=""
           fi
           kill $GUI_PID 2>/dev/null || true
           if [ -z "$ok" ]; then
