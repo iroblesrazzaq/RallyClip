@@ -226,6 +226,12 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
         "() => Boolean(window.rallyClipApp?.viewerHasVideo?.())",
         timeout=30_000,
     )
+    # The initial seek to the first point lands asynchronously after the video
+    # element appears; on slow runners seekValue is still 0 at this point.
+    page.wait_for_function(
+        "() => Number(window.rallyClipApp?.viewerSeek?.value) > 0",
+        timeout=30_000,
+    )
     expect(page.locator("#viewerBackBtn")).to_be_visible()
     expect(page.locator("#viewerPlayPauseBtn")).to_be_visible()
     expect(page.locator("#viewerForwardBtn")).to_be_visible()
