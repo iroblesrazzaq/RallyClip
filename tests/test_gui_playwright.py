@@ -80,6 +80,19 @@ def ui_backend(tmp_path_factory, monkeypatch_module) -> BackendClient:
         yield client
 
 
+@pytest.fixture(autouse=True)
+def _fresh_welcome_state(ui_backend):
+    """Every test starts from a never-seen-welcome install.
+
+    Welcome-seen is persisted server-side (one shared backend per module), so
+    without this reset the first test's dismissal skips the welcome screen for
+    every test after it.
+    """
+    from gui import app as gui_app
+
+    Path(gui_app.PREFERENCES_PATH).unlink(missing_ok=True)
+
+
 def _fabricate_ui_item() -> str:
     """Drop a fake library item on disk (into the running backend's library dir)
     so the library UI can be tested without running the pipeline."""

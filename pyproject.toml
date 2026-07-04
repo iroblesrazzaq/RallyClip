@@ -12,7 +12,9 @@ dependencies = [
   "numpy",
   "torch",
   "ultralytics",
-  "opencv-python",
+  # Court-detection golden fixtures are validated against the 4.x algorithms;
+  # bump past 5 only after re-checking tests/test_court_detection_deterministic.
+  "opencv-python>=4.8,<5",
   "av",
   "tqdm",
   "joblib",
