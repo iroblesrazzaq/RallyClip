@@ -53,6 +53,8 @@ def test_detection_deterministic(monkeypatch, fixture_id):
     frame = cv2.imread(str(FIX_DIR / "frames" / f"{fixture_id}.png"))
     golden = cv2.imread(str(FIX_DIR / "masks" / f"{fixture_id}.png"), cv2.IMREAD_GRAYSCALE)
     assert frame is not None and golden is not None, f"missing fixture files for {fixture_id}"
+    # OpenCV 4.13 on some platforms returns (H, W, 1) for grayscale reads.
+    golden = golden.reshape(golden.shape[0], golden.shape[1])
 
     det = _detector(monkeypatch, frame)
     out_mask, _, meta = det.process_video("dummy.mp4", target_time=60)

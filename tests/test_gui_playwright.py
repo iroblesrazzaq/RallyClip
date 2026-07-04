@@ -35,7 +35,7 @@ pytest.importorskip("av")
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from playwright.sync_api import Page, expect  # noqa: E402
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, expect  # noqa: E402
 
 from helpers.e2e_backend import BackendClient, running_backend  # noqa: E402
 
@@ -78,6 +78,19 @@ def ui_backend(tmp_path_factory, monkeypatch_module) -> BackendClient:
     monkeypatch_module.setenv("RALLYCLIP_KEEP_JOBS", "1")
     with running_backend(root / "jobs", root / "output", root / "csv", root / "library") as client:
         yield client
+
+
+@pytest.fixture(autouse=True)
+def _fresh_welcome_state(ui_backend):
+    """Every test starts from a never-seen-welcome install.
+
+    Welcome-seen is persisted server-side (one shared backend per module), so
+    without this reset the first test's dismissal skips the welcome screen for
+    every test after it.
+    """
+    from gui import app as gui_app
+
+    Path(gui_app.PREFERENCES_PATH).unlink(missing_ok=True)
 
 
 def _fabricate_ui_item() -> str:
@@ -132,16 +145,31 @@ def _fabricate_viewer_item() -> str:
 
 
 def _open_to_library(page: Page, base_url: str) -> None:
+    """Land on the library view, dismissing the welcome screen if it shows.
+
+    The per-test prefs reset usually brings the welcome back, but a previous
+    test's fire-and-forget welcome-seen POST can land after the reset — so
+    treat the welcome as optional here. test_ui_welcome_dismisses_to_library
+    (first in the module, nothing racing it) asserts the strict welcome flow.
+    """
     page.goto(base_url)
-    # Fresh browser context -> no localStorage -> welcome screen is shown.
-    expect(page.locator("#welcomeScreen")).to_be_visible()
-    page.locator("#welcomeStartBtn").click()
+    start = page.locator("#welcomeStartBtn")
+    try:
+        start.wait_for(state="visible", timeout=3_000)
+        start.click()
+    except PlaywrightTimeoutError:
+        pass
     expect(page.locator("#libraryView")).to_be_visible()
 
 
 def test_ui_welcome_dismisses_to_library(page: Page, ui_backend: BackendClient):
     """Welcome dismisses to the saved-matches library (the default view)."""
-    _open_to_library(page, ui_backend.base_url)
+    page.goto(ui_backend.base_url)
+    # Fresh install (prefs reset) + fresh context (no localStorage): the
+    # welcome must show, and dismissing it must land on the library.
+    expect(page.locator("#welcomeScreen")).to_be_visible()
+    page.locator("#welcomeStartBtn").click()
+    expect(page.locator("#libraryView")).to_be_visible()
     expect(page.locator("#welcomeScreen")).to_be_hidden()
     expect(page.locator("#newMatchBtn")).to_be_visible()
 
@@ -211,6 +239,12 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
     )
     page.wait_for_function(
         "() => Boolean(window.rallyClipApp?.viewerHasVideo?.())",
+        timeout=30_000,
+    )
+    # The initial seek to the first point lands asynchronously after the video
+    # element appears; on slow runners seekValue is still 0 at this point.
+    page.wait_for_function(
+        "() => Number(window.rallyClipApp?.viewerSeek?.value) > 0",
         timeout=30_000,
     )
     expect(page.locator("#viewerBackBtn")).to_be_visible()
