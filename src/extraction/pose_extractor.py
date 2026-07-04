@@ -31,7 +31,10 @@ class PoseExtractor:
         self,
         model_dir: Optional[str] = None,
         model_path: str = "yolov8s-pose.pt",
-        imgsz: int = 1920,
+        # Fallback only: production callers pass imgsz per call from the model
+        # manifest (v0.3.1 contract: 960). Keep this aligned with the shipped
+        # contract so a missing per-call value cannot silently change scale.
+        imgsz: int = 960,
         device: Optional[str] = None,
     ) -> None:
         # When device is set, use it as-is. Auto-selected devices should be
