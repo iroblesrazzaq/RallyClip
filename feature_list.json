@@ -1,62 +1,123 @@
 [
-    {
-        "id": "runtime-video-validation",
-        "priority": 1,
-        "area": "runtime",
-        "title": "Validate input videos before segmentation",
-        "user_visible_behavior": "CLI and GUI runs reject missing, unreadable, or unsupported video inputs with a clear error before starting expensive pose extraction.",
-        "status": "not_started",
-        "evidence_plan": [],
-        "evidence": "",
-        "notes": ""
-    },
-    {
-        "id": "cli-config-contract",
-        "priority": 2,
-        "area": "cli",
-        "title": "Keep CLI config behavior stable",
-        "user_visible_behavior": "Users can run RallyClip with a TOML config file or explicit CLI flags and get consistent output paths, CSV options, and inference settings.",
-        "status": "not_started",
-        "evidence_plan": [],
-        "evidence": "",
-        "notes": ""
-    },
-    {
-        "id": "desktop-gui-processing-flow",
-        "priority": 3,
-        "area": "desktop_gui",
-        "title": "Preserve desktop and browser GUI processing flow",
-        "user_visible_behavior": "Users can select a video, start segmentation, view progress, and receive completion or error status from the local GUI without losing device or output settings.",
-        "status": "passing",
-        "evidence_plan": [
-            "Import regression: gui.app startup does not load torch, ultralytics, av, or numpy.",
-            "Backend defaults/runtime endpoints stay responsive without device probing on library startup.",
-            "Upload processing runs in an analysis worker subprocess and reports progress through the existing API.",
-            "Manual app launch confirms replay library opens quickly and New Match warmup does not bring inference memory into the parent process."
-        ],
-        "evidence": "2026-06-28: PYTHONPATH=src import probe showed gui.app imports in 0.216s with torch/ultralytics/av/numpy all unloaded. Tests passed: tests/test_gui_startup_imports.py; tests/test_gui_smoke.py::test_gui_health_and_defaults; tests/test_gui_smoke.py::test_gui_pipeline_streams_features_into_inference; tests/test_gui_e2e.py::test_config_defaults_contract; tests/test_gui_e2e.py::test_upload_rejects_non_video; tests/test_gui_e2e.py::test_upload_rejects_missing_field; tests/test_gui_e2e.py::test_default_job_completes. 2026-06-30: packaged Mac release on feat/first-release was built, Developer ID signed with hardened runtime, notarized by Apple, stapled, mounted, and Gatekeeper accepted the app from the DMG. User manually verified source-only native replay completed without the proxy freeze, packaged app launch worked, welcome persistence worked, and inference/replay smoke flow was acceptable for v0.1.0. 2026-06-30 update: downloaded/installed notarized DMG showed a blank QtWebEngine window; diagnostic launch showed V8 CodeRange OOM from missing hardened-runtime JIT entitlements. Fixed local dist app and fixed DMG now carry QtWebEngine/V8 entitlements and render, but the fixed DMG is pending Apple notarization/stapling before publication.",
-        "notes": "Release startup blocker mitigated and v0.1.0 desktop flow is release-ready. Replay/library startup no longer imports analysis/transcode stack, /api/config/defaults is static, New Match warmup runs in a child process, and upload jobs run in an analysis worker subprocess so Torch/YOLO memory exits after completion/cancel. Production Mac replay uses native source playback; automatic proxy/HLS playback is not part of v0.1.0. Remaining separate tracked work: runtime-video-validation, ONNX/Ultralytics replacement, bundle slimming, CI/CD, and shared runtime/API restructuring. Release artifact publication is blocked until the entitlement-fixed DMG is notarized and stapled; the previous notarized DMG must not ship."
-    },
-    {
-        "id": "segmentation-postprocess",
-        "priority": 4,
-        "area": "segmentation",
-        "title": "Stabilize rally interval decoding",
-        "user_visible_behavior": "Frame probabilities decode into tennis rally intervals with stable thresholds, minimum duration handling, and CSV/video output timing.",
-        "status": "not_started",
-        "evidence_plan": [],
-        "evidence": "",
-        "notes": ""
-    },
-    {
-        "id": "training-quality-harness",
-        "priority": 5,
-        "area": "training",
-        "title": "Track training and evaluation quality",
-        "user_visible_behavior": "Training changes report repeatable frame and segment metrics so model quality regressions are visible before release.",
-        "status": "not_started",
-        "evidence_plan": [],
-        "evidence": "",
-        "notes": ""
-    }
+  {
+    "id": "runtime-video-validation",
+    "priority": 1,
+    "area": "runtime",
+    "title": "Validate input videos before segmentation",
+    "user_visible_behavior": "CLI and GUI runs reject missing, unreadable, or unsupported video inputs with a clear error before starting expensive pose extraction.",
+    "status": "passing",
+    "evidence_plan": [
+      "CLI preflights inputs via validate_video before pose extraction and exits with a clear error.",
+      "GUI upload rejects non-video and missing-field requests with 4xx JSON errors.",
+      "Unit + e2e coverage for corrupt, unsupported, too-short, and missing inputs."
+    ],
+    "evidence": "2026-07-04: src/runtime/video_validation.py validates by content (PyAV probe), not extension; cli.main.run_pipeline preflights via validate_video (min duration vs seq_len/fps) and returns exit 1 with a clear message; GUI /api/upload-and-start rejects non-video and missing-field uploads. Tests green in CI run 28692435270 (all 6 jobs, 3 OSes): tests/test_video_validation.py, tests/test_gui_e2e.py::test_upload_rejects_non_video, ::test_upload_rejects_missing_field, tests/test_cli_pipeline_smoke.py short-video rejection.",
+    "notes": ""
+  },
+  {
+    "id": "runtime-api-engine-refactor",
+    "priority": 2,
+    "area": "architecture",
+    "title": "Split core contracts, analysis engine, API services, and playback contracts",
+    "user_visible_behavior": "CLI, desktop, browser GUI, and future clients can share one runtime/API contract while preserving current CLI and GUI behavior.",
+    "status": "passing",
+    "evidence_plan": [
+      "Branch refactor/runtime-api-engine is based on shipped feat/first-release and main remains untouched until parity is proven.",
+      "rallyclip_core imports stay lightweight and own contracts, intervals, pipeline selection, and pure playback scheduling.",
+      "rallyclip_engine owns model-object analysis execution from preprocessing through CSV-ready intervals.",
+      "rallyclip_api provides a service facade used by Flask routes.",
+      "Current CLI smoke/config, GUI smoke/e2e, startup import, native playback, and video-validation tests pass."
+    ],
+    "evidence": "2026-07-04: COMPLETE and merged to main. rallyclip_core (contracts, intervals, pipeline resolution, SavedMatchStore, playback scheduling), rallyclip_engine (AnalysisModel preprocess/infer/postprocess, manifest-driven pipeline selection), rallyclip_api (RallyClipServices facade + JSON serialization). CLI and Flask GUI are both thin facade clients; CLI gained --json. Golden CLI parity on committed fixture (byte-exact same-machine; 0.25s cross-platform bar). Landed via PR #24 (fcda361) and PR #25 (ed39983); main == feat/first-release. CI matrix (3 OS x test/e2e) fully green for the first time in repo history (run 28692435270). Also fixed en route: issue #21 A/V sync drift (336ms -> 0.3ms, per-interval seek + sample-granular audio reconciliation), jobs_lock status/cancel race caught by the new concurrency hammer test, PyAV consolidated as the only runtime video decoder.",
+    "notes": "Done. Follow-on tracked separately: onnx-pose-runner-swap, frozen-app e2e tiers, CI dependency lockfile, gui.app config-object injection (retire module-global monkeypatching)."
+  },
+  {
+    "id": "cli-config-contract",
+    "priority": 3,
+    "area": "cli",
+    "title": "Keep CLI config behavior stable",
+    "user_visible_behavior": "Users can run RallyClip with a TOML config file or explicit CLI flags and get consistent output paths, CSV options, and inference settings.",
+    "status": "passing",
+    "evidence_plan": [
+      "Contract fields (fps/seq_len/imgsz/conf/feature_set/screen size/yolo_model) resolve manifest-first; config.toml cannot silently override them.",
+      "Mutable postprocess + IO resolve CLI -> config.toml -> manifest.",
+      "README-documented flags parse; --json emits the stable RunResult payload."
+    ],
+    "evidence": "2026-07-04: tests/test_cli_config_contract.py (11 tests) pins resolution order and the config-sets-contract-field warning path; tests/test_cli_json_output.py pins the --json payload; golden parity test runs the real CLI end-to-end. All green in CI run 28692435270 on 3 OSes.",
+    "notes": ""
+  },
+  {
+    "id": "desktop-gui-processing-flow",
+    "priority": 4,
+    "area": "desktop_gui",
+    "title": "Preserve desktop and browser GUI processing flow",
+    "user_visible_behavior": "Users can select a video, start segmentation, view progress, and receive completion or error status from the local GUI without losing device or output settings.",
+    "status": "passing",
+    "evidence_plan": [
+      "Import regression: gui.app startup does not load torch, ultralytics, av, or numpy.",
+      "Backend defaults/runtime endpoints stay responsive without device probing on library startup.",
+      "Upload processing runs in an analysis worker subprocess and reports progress through the existing API.",
+      "Manual app launch confirms replay library opens quickly and New Match warmup does not bring inference memory into the parent process."
+    ],
+    "evidence": "2026-06-28: PYTHONPATH=src import probe showed gui.app imports in 0.216s with torch/ultralytics/av/numpy all unloaded. Tests passed: tests/test_gui_startup_imports.py; tests/test_gui_smoke.py::test_gui_health_and_defaults; tests/test_gui_smoke.py::test_gui_pipeline_streams_features_into_inference; tests/test_gui_e2e.py::test_config_defaults_contract; tests/test_gui_e2e.py::test_upload_rejects_non_video; tests/test_gui_e2e.py::test_upload_rejects_missing_field; tests/test_gui_e2e.py::test_default_job_completes. 2026-06-30: packaged Mac release on feat/first-release was built, Developer ID signed with hardened runtime, notarized by Apple, stapled, mounted, and Gatekeeper accepted the app from the DMG. User manually verified source-only native replay completed without the proxy freeze, packaged app launch worked, welcome persistence worked, and inference/replay smoke flow was acceptable for v0.1.0. 2026-06-30 update: downloaded/installed notarized DMG showed a blank QtWebEngine window; diagnostic launch showed V8 CodeRange OOM from missing hardened-runtime JIT entitlements. Fixed local dist app and fixed DMG now carry QtWebEngine/V8 entitlements and render, but the fixed DMG is pending Apple notarization/stapling before publication. 2026-06-30 final: entitlement-fixed DMG was Apple-accepted, stapled, uploaded to GitHub Releases, downloaded from GitHub, installed, and opened successfully.",
+    "notes": "Release startup blocker mitigated and v0.1.0 desktop flow is release-ready. Replay/library startup no longer imports analysis/transcode stack, /api/config/defaults is static, New Match warmup runs in a child process, and upload jobs run in an analysis worker subprocess so Torch/YOLO memory exits after completion/cancel. Production Mac replay uses native source playback; automatic proxy/HLS playback is not part of v0.1.0. Remaining separate tracked work: runtime-video-validation, ONNX/Ultralytics replacement, bundle slimming, CI/CD, and shared runtime/API restructuring. Entitlement-fixed GitHub release DMG was downloaded, installed, and opened successfully; the previous notarized DMG must not ship."
+  },
+  {
+    "id": "segmentation-postprocess",
+    "priority": 5,
+    "area": "segmentation",
+    "title": "Stabilize rally interval decoding",
+    "user_visible_behavior": "Frame probabilities decode into tennis rally intervals with stable thresholds, minimum duration handling, and CSV/video output timing.",
+    "status": "passing",
+    "evidence_plan": [
+      "Gaussian + hysteresis decode with min-duration handling produces stable intervals on the golden fixture.",
+      "Exported segment video stays lip-synced across many cuts."
+    ],
+    "evidence": "2026-07-04: golden CLI parity locks decode output on the committed fixture (byte-exact same-machine; 0.25s cross-platform tolerance = one 0.2s hysteresis hop, the measured torch-version noise floor). Issue #21 fixed: segment_video rewritten to per-interval seek+decode with sample-granular audio reconciliation; measured drift 336ms -> 0.3ms over 10 segments (tests/test_segment_av_sync.py). tests/test_segment.py + av-sync suite green in CI run 28692435270.",
+    "notes": ""
+  },
+  {
+    "id": "training-quality-harness",
+    "priority": 6,
+    "area": "training",
+    "title": "Track training and evaluation quality",
+    "user_visible_behavior": "Training changes report repeatable frame and segment metrics so model quality regressions are visible before release.",
+    "status": "not_started",
+    "evidence_plan": [],
+    "evidence": "",
+    "notes": ""
+  },
+  {
+    "id": "macos-native-app-storage",
+    "priority": 7,
+    "area": "desktop_storage",
+    "title": "Use standard macOS app storage locations",
+    "user_visible_behavior": "Packaged Mac installs store saved matches, preferences, logs, caches, and scratch files in standard macOS locations instead of a top-level ~/RallyClip folder, while existing ~/RallyClip data migrates without data loss.",
+    "status": "not_started",
+    "evidence_plan": [
+      "Packaged app resolves saved match data under ~/Library/Application Support/RallyClip.",
+      "Preview/cache/job scratch data resolves under ~/Library/Caches/RallyClip where appropriate.",
+      "Logs resolve under ~/Library/Logs/RallyClip.",
+      "One-time migration preserves existing ~/RallyClip/library matches, preferences, and outputs.",
+      "Tests or manual migration evidence prove old installs still open existing saved matches."
+    ],
+    "evidence": "",
+    "notes": "Current v0.1.0 packaged app stores data under ~/RallyClip. This worked for first release but is not the normal macOS app-storage convention; migrate in a future release with a clear fallback/backup strategy."
+  },
+  {
+    "id": "onnx-pose-runner-swap",
+    "priority": 8,
+    "area": "runtime",
+    "title": "Replace Ultralytics/torch pose inference with a torch-free ONNX runner",
+    "user_visible_behavior": "Analysis produces identical segments without importing torch or ultralytics at runtime, cutting inference memory (~530MB -> ~155MB class) and enabling opencv-python removal.",
+    "status": "in_progress",
+    "evidence_plan": [
+      "Preprocessing bitwise-equal to Ultralytics rect letterbox at the production contract (imgsz=960, dynamic-axes export).",
+      "Decoded contract parity (boxes/conf/keypoints, iou=0.7 NMS, max_det=300, conf-sorted) on a wide frame set.",
+      "Full-pipeline segment parity vs torch on the golden clip and 60s samples from all 11 raw match videos.",
+      "Memory/perf benchmark at 960; then integrate runner into RallyClip src and demote torch/ultralytics to a dev extra."
+    ],
+    "evidence": "2026-07-04: yolo_onnx_runner (YOLO-ONNX repo, python/yolo_onnx_runner.py) validated: letterbox bitwise-equal to Ultralytics; decoded outputs on 40-frame set IoU >= 0.999997, kpt err <= 3.1e-4 px, count+order match 1.000; stage-3 golden clip e2e via RuntimeDeps injection produced a BYTE-EQUAL segments CSV vs the torch path. 11-video 60s-sample sweep running. Plan + results: RallyClip-perf/docs/onnx-pose-parity-plan.md.",
+    "notes": "Model export must be at imgsz=960 with dynamic axes (rect letterbox 960x544 for 16:9); Ultralytics NMS defaults iou=0.7/max_det=300. YOLO26 e2e export (NMS in graph) is the strategic alternative."
+  }
 ]

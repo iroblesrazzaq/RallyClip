@@ -6,7 +6,8 @@
 | Standard startup path | `./init.sh` |
 | Standard evidence path | Feature-specific; define before marking a feature `passing` |
 | Highest priority unfinished feature | `runtime-video-validation` |
-| Current blocker | None for v0.1.0 packaging; GitHub Release asset upload/publish may still need website completion |
+| Current active branch work | `runtime-api-engine-refactor` in `/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/RallyClip-perf` |
+| Current blocker | None for v0.1.0 packaging; GitHub-downloaded DMG install/open verified. Runtime/API/engine refactor is an uncommitted checkpoint; `main` has not been rebased yet. |
 
 # Session Record
 
@@ -69,3 +70,64 @@ New fixed local DMG was created but is not notarized yet:
 - `spctl` reports `rejected source=Unnotarized Developer ID`, which is expected until this new DMG is submitted to Apple, accepted, and stapled.
 
 Important correction: do not publish the previous notarized DMG. Build/sign/notarize from the entitlement-fixed app.
+
+## Session 6 - 2026-06-30
+
+The entitlement-fixed macOS DMG was accepted by Apple notarization, stapled, validated, renamed to the normal release filename, uploaded to GitHub Releases, downloaded from GitHub, installed, and opened successfully. User confirmed the GitHub-downloaded app works. Old local DMGs and old app bundles were deleted for a clean install test.
+
+Final release artifact state:
+
+- GitHub release asset name: `RallyClip-0.1.0-macOS-arm64.dmg`
+- Final local artifact was removed after upload/download validation.
+- Final SHA256 before deletion: `8370eaefd0a9f2bf2dedc7e1892667b3f55105175bf79dc618b80b4d4988fcf8`
+- Release branch fix commit pushed: `80ba932 fix mac release webengine entitlements`
+
+Packaged-app storage contract confirmed from code: app data is stored under `~/RallyClip`. Saved matches live in `~/RallyClip/library/<item-id>/`; each saved match stores the copied full source video as `source.mp4`, detected points as `segments.csv`, metadata as `meta.json`, and thumbnail as `thumb.jpg`. Analysis scratch jobs live under `~/RallyClip/jobs`, logs under `~/RallyClip/logs`, and lazy export/cache files may be created inside the relevant match folder.
+
+## Session 7 - 2026-06-30
+
+Added future feature tracking for standard macOS app storage. Current v0.1.0 behavior remains `~/RallyClip`, which is acceptable for the first release but should be migrated later to normal platform locations: saved matches/preferences under `~/Library/Application Support/RallyClip`, cache/scratch data under `~/Library/Caches/RallyClip`, and logs under `~/Library/Logs/RallyClip`.
+
+Feature added: `macos-native-app-storage` with status `not_started`. Evidence required before passing: packaged path resolution uses the standard directories, existing `~/RallyClip` installs migrate without data loss, and old saved matches still open after migration.
+
+## Session 8 - 2026-07-01
+
+Started the runtime/API/engine split on the shipped release baseline in the `RallyClip-perf` worktree. Branch: `refactor/runtime-api-engine`, based on `feat/first-release` at `80ba932`. `main` remains untouched and should not be rebased until CLI and GUI/API parity are proven.
+
+Implemented an uncommitted checkpoint:
+
+- Added `rallyclip_core` for pure contracts, interval helpers, pipeline resolution, playback manifest payloads, and source-time scheduling.
+- Added `rallyclip_engine` for model-object analysis execution. A pipeline now owns preprocessing, inference, postprocessing, and CSV/video-ready result output.
+- Added `rallyclip_api` as a thin service facade. Flask currently delegates defaults, runtime status/warmup, library listing, and playback manifest through it.
+- Moved native point-skip scheduler behavior into `rallyclip_core.playback.SourceTimelineScheduler`; the Qt native player now aliases that pure scheduler while retaining platform-specific rendering/control code.
+- Added `ENVIRONMENT.md` and `docs/runtime-api-engine-refactor.md` documenting the branch architecture, test commands, current git state, and next steps.
+
+Evidence:
+
+- `PYTHONPATH=src:tests python3 -m compileall -q src tests` passed.
+- Runtime/API/CLI/GUI/startup/native/video parity suite passed: `78 passed, 1 skipped`.
+- GUI E2E passed: `15 passed, 3 skipped`.
+
+Still left before merging/rebasing `main`: commit the checkpoint, run direct CLI output parity on a real or fixture video, move saved-match file resolution out of `gui.app`, wire job lifecycle/export through `RallyClipServices`, add stronger golden interval parity, then decide whether to rebase or fast-forward `main`.
+
+## Session 9 - 2026-07-03/04
+
+Completed and landed the runtime/API/engine refactor, achieved the first green CI in repo history, and validated the torch-free ONNX pose runner to byte-equality end-to-end.
+
+Worktree/branch clarification (recorded because past notes were ambiguous): `RallyClip/` and `RallyClip-perf/` are two worktrees of the SAME git repo. `RallyClip/` stays parked on the `docs` branch (harness/progress files live here); `RallyClip-perf/` is where code work happens, on `refactor/runtime-api-engine`. A branch checked out in one worktree cannot be checked out in the other. As of this session `main` == `feat/first-release` == `refactor/runtime-api-engine` == `33a961c` content-wise.
+
+Landed on main (PRs #24 fcda361, #25 ed39983):
+
+- Full facade wiring: job lifecycle, export, library, playback through RallyClipServices; CLI --json; SavedMatchStore; golden CLI parity test on a committed 24s fixture.
+- Issue #21 A/V sync drift fixed (per-interval seek+decode, sample-granular audio reconciliation; 336ms -> 0.3ms measured) and closed.
+- PyAV is the single runtime video decoder (VideoFrameReader); OpenCV demoted to image ops (full removal blocked on ultralytics until the ONNX swap).
+- First fully green CI (run 28692435270, 3 OSes x test/e2e). Root-cause fixes: OpenCV 5 HoughLinesP shape (+ <5 pin), OpenCV 4.13 Windows grayscale imread (H,W,1) normalization (production court-mask loader), e2e PREFERENCES_PATH isolation (tests were writing the real user prefs file + cross-test welcome bleed), macOS cold-boot 120s deadline, golden parity 0.25s cross-platform tolerance (torch 2.7->2.12 alone shifts boundaries one 0.2s hop), Windows path-separator test fixes, and a REAL jobs_lock race caught by the new concurrency hammer test (status reads/cancel writes now hold the lock across the whole access).
+
+ONNX pose swap (YOLO-ONNX repo + docs/onnx-pose-parity-plan.md in the perf worktree):
+
+- Audited the exact Ultralytics surface RallyClip uses: model.predict(source, conf, imgsz=960 from the v0.3.1 manifest (NOT 640/1920), device, batch) -> boxes.xyxy/conf + keypoints.xy/conf; NMS defaults iou=0.7, max_det=300, conf-sorted; rect letterbox (960x544 for 16:9) so exports need dynamic axes.
+- yolo_onnx_runner (onnxruntime+numpy+cv2, no torch/ultralytics): preprocessing bitwise-equal to Ultralytics; decoded parity on 40 frames IoU >= 0.999997, kpt err <= 3.1e-4 px; stage-3 golden clip e2e (runner injected via RuntimeDeps, zero RallyClip changes) BYTE-EQUAL segments CSV vs torch.
+- PoseExtractor imgsz fallback corrected 1920 -> 960 (bb72dd6).
+- In flight: 11-video 60s-sample torch-vs-onnx segment sweep (scripts/sweep_e2e_onnx.py in YOLO-ONNX).
+
+Also: container-level CLAUDE.md written at rallyclip_container/ covering all four sibling checkouts, GH state, and house rules.
