@@ -1992,38 +1992,45 @@ def _start_analysis_job(upload_path: Path, cfg: Dict[str, Any]) -> str:
 
 def _job_status_payload(job_id: str) -> Optional[Dict[str, Any]]:
     """Client-facing job progress payload, or None for an unknown job."""
+    # Build the payload while still holding the lock: _merge_worker_job does
+    # clear()+update() on this same dict, and an unlocked read can land in the
+    # empty window between the two.
     with jobs_lock:
         job = jobs.get(job_id)
-    if job is None:
-        return None
-    return {
-        "status": job["status"],
-        "steps": job["steps"],
-        "error": job.get("error"),
-        "weights": job.get("weights"),
-        "eta_seconds": job.get("eta_seconds"),
-        "pose_eta_seconds": job.get("pose_eta_seconds"),
-        "pose_throughput_fps": job.get("pose_throughput_fps"),
-        "library_id": job.get("library_id"),
-    }
+        if job is None:
+            return None
+        return {
+            "status": job["status"],
+            "steps": job["steps"],
+            "error": job.get("error"),
+            "weights": job.get("weights"),
+            "eta_seconds": job.get("eta_seconds"),
+            "pose_eta_seconds": job.get("pose_eta_seconds"),
+            "pose_throughput_fps": job.get("pose_throughput_fps"),
+            "library_id": job.get("library_id"),
+        }
 
 
 def _cancel_analysis_job(job_id: str) -> Optional[Dict[str, Any]]:
     """Cancel a running job, or None for an unknown job. Idempotent."""
+    # Mutate under the lock: an unlocked cancelled/status write can race a
+    # concurrent _merge_worker_job clear()+update() and be silently lost.
+    process = None
     with jobs_lock:
         job = jobs.get(job_id)
-    if job is None:
-        return None
-    if job["status"] == "in_progress":
-        job["cancelled"] = True
-        job["status"] = "cancelled"
-        process = job.get("process")
-        if process is not None and getattr(process, "poll", lambda: None)() is None:
-            try:
-                process.terminate()
-            except Exception:
-                logging.debug("Could not terminate analysis worker for %s", job_id, exc_info=True)
-    return {"status": job["status"]}
+        if job is None:
+            return None
+        if job["status"] == "in_progress":
+            job["cancelled"] = True
+            job["status"] = "cancelled"
+            process = job.get("process")
+        status = job["status"]
+    if process is not None and getattr(process, "poll", lambda: None)() is None:
+        try:
+            process.terminate()
+        except Exception:
+            logging.debug("Could not terminate analysis worker for %s", job_id, exc_info=True)
+    return {"status": status}
 
 
 @app.route("/api/upload-and-start", methods=["POST"])
