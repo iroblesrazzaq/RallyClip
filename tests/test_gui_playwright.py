@@ -35,7 +35,7 @@ pytest.importorskip("av")
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from playwright.sync_api import Page, expect  # noqa: E402
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, expect  # noqa: E402
 
 from helpers.e2e_backend import BackendClient, running_backend  # noqa: E402
 
@@ -145,16 +145,31 @@ def _fabricate_viewer_item() -> str:
 
 
 def _open_to_library(page: Page, base_url: str) -> None:
+    """Land on the library view, dismissing the welcome screen if it shows.
+
+    The per-test prefs reset usually brings the welcome back, but a previous
+    test's fire-and-forget welcome-seen POST can land after the reset — so
+    treat the welcome as optional here. test_ui_welcome_dismisses_to_library
+    (first in the module, nothing racing it) asserts the strict welcome flow.
+    """
     page.goto(base_url)
-    # Fresh browser context -> no localStorage -> welcome screen is shown.
-    expect(page.locator("#welcomeScreen")).to_be_visible()
-    page.locator("#welcomeStartBtn").click()
+    start = page.locator("#welcomeStartBtn")
+    try:
+        start.wait_for(state="visible", timeout=3_000)
+        start.click()
+    except PlaywrightTimeoutError:
+        pass
     expect(page.locator("#libraryView")).to_be_visible()
 
 
 def test_ui_welcome_dismisses_to_library(page: Page, ui_backend: BackendClient):
     """Welcome dismisses to the saved-matches library (the default view)."""
-    _open_to_library(page, ui_backend.base_url)
+    page.goto(ui_backend.base_url)
+    # Fresh install (prefs reset) + fresh context (no localStorage): the
+    # welcome must show, and dismissing it must land on the library.
+    expect(page.locator("#welcomeScreen")).to_be_visible()
+    page.locator("#welcomeStartBtn").click()
+    expect(page.locator("#libraryView")).to_be_visible()
     expect(page.locator("#welcomeScreen")).to_be_hidden()
     expect(page.locator("#newMatchBtn")).to_be_visible()
 
