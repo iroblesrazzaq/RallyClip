@@ -35,7 +35,6 @@ MODEL_ONNX = REPO_ROOT / "models" / "rallyclip_v0.3.1" / "model.onnx"
 
 pytest.importorskip("requests")
 pytest.importorskip("cv2")
-pytest.importorskip("ultralytics")
 pytest.importorskip("onnxruntime")
 pytest.importorskip("av")
 

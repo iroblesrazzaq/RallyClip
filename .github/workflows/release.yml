@@ -23,9 +23,6 @@ jobs:
       - name: Install Playwright browser
         shell: bash
         run: python -m playwright install chromium
-      - name: Fetch YOLO weights
-        shell: bash
-        run: python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt')"
       - name: Run fast tests
         shell: bash
         run: pytest -m "not slow and not e2e"
@@ -52,25 +49,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install ".[desktop,pack]"
-      - name: Fetch YOLO weights
-        shell: bash
-        run: |
-          python - <<'PY'
-          import shutil
-          from pathlib import Path
-          from ultralytics import YOLO
-          model = YOLO("yolov8n-pose.pt")
-          src = Path(getattr(model, "ckpt_path", "yolov8n-pose.pt"))
-          if not src.exists():
-              src = Path("yolov8n-pose.pt")
-          if not src.exists():
-              raise SystemExit("Could not resolve yolov8n-pose.pt after download")
-          dst = Path("models") / "yolov8n-pose.pt"
-          dst.parent.mkdir(parents=True, exist_ok=True)
-          if src.resolve() != dst.resolve():
-              shutil.copy2(src, dst)
-          print(f"YOLO nano pose weights ready at {dst}")
-          PY
       - name: Verify RallyClip model artifacts
         shell: bash
         run: |
@@ -98,14 +76,17 @@ jobs:
             --hidden-import=runtime.defaults \
             --hidden-import=runtime.paths \
             --collect-submodules=flask \
-            --collect-all=ultralytics \
             --exclude-module=PyQt5 \
             --exclude-module=PyQt6 \
             --exclude-module=PySide2 \
             --exclude-module=openvino \
             --add-data "src/gui/frontend${SEP}gui/frontend" \
             --add-data "models/rallyclip_v0.3.1${SEP}models/rallyclip_v0.3.1" \
-            --add-data "models/yolov8n-pose.pt${SEP}models" \
+            --hidden-import=extraction.yolo_onnx_runner \
+            --hidden-import=onnxruntime \
+            --exclude-module=torch \
+            --exclude-module=torchvision \
+            --exclude-module=ultralytics \
             --add-data "src/preprocessing/default_court_mask.png${SEP}preprocessing" \
             --add-data "docs/rallyclip_logo_cropped.png${SEP}docs" \
             --add-data "docs/rallyclip_favicon_transparent2.png${SEP}docs" \
