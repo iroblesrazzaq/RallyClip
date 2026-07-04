@@ -28,8 +28,8 @@ def test_run_result_payload_contract():
             {"start_s": 5.8, "end_s": 43.4},
             {"start_s": 46.0, "end_s": 56.4},
         ],
-        "csv_path": "/out/match_segments.csv",
-        "video_path": "/out/match_segmented.mp4",
+        "csv_path": str(Path("/out/match_segments.csv")),
+        "video_path": str(Path("/out/match_segmented.mp4")),
         "n_segments": 2,
     }
     json.dumps(payload)  # must be JSON-serializable as-is
@@ -61,9 +61,9 @@ def test_saved_match_payload_contract():
     assert payload == {
         "id": "20260701-120000-abc123",
         "title": "Practice set",
-        "source_path": "/library/20260701-120000-abc123/source.mp4",
-        "csv_path": "/library/20260701-120000-abc123/segments.csv",
-        "thumbnail_path": "/library/20260701-120000-abc123/thumb.jpg",
+        "source_path": str(Path("/library/20260701-120000-abc123/source.mp4")),
+        "csv_path": str(Path("/library/20260701-120000-abc123/segments.csv")),
+        "thumbnail_path": str(Path("/library/20260701-120000-abc123/thumb.jpg")),
         "metadata": {"duration_s": 68.09},
     }
     json.dumps(payload)

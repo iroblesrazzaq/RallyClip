@@ -178,7 +178,9 @@ class DataPreprocessor:
             base = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
             if base is None:
                 raise FileNotFoundError(f"Default court mask not found at {path}")
-            self._default_court_mask_cache = base
+            # OpenCV 4.13 on some platforms returns (H, W, 1) for grayscale
+            # reads; the mask contract is 2-D (H, W).
+            self._default_court_mask_cache = base.reshape(base.shape[0], base.shape[1])
         base = self._default_court_mask_cache
         h, w = int(frame_shape[0]), int(frame_shape[1])
         if base.shape[:2] != (h, w):

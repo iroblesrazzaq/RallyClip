@@ -95,19 +95,27 @@ def running_backend(
         gui_app.DEFAULT_OUTPUT_DIR,
         gui_app.DEFAULT_CSV_DIR,
         gui_app.LIBRARY_DIR,
+        gui_app.PREFERENCES_PATH,
         gui_app.DEFAULT_CONFIG,
     )
     gui_app.JOBS_DIR = jobs_dir.resolve()
     gui_app.DEFAULT_OUTPUT_DIR = output_dir.resolve()
     gui_app.DEFAULT_CSV_DIR = csv_dir.resolve()
     gui_app.LIBRARY_DIR = library_dir.resolve()
+    # Server-side state too: welcome-seen writes here, and without redirection
+    # one test's dismissal bleeds into every later test (and the real user's
+    # preferences file).
+    gui_app.PREFERENCES_PATH = library_dir.resolve().parent / "preferences.json"
     gui_app.DEFAULT_CONFIG = gui_app._load_default_config()
 
-    port = find_free_port()
-    gui_app.start_backend_thread(port=port)
+    # Trust the port the backend actually bound, not the one we asked for —
+    # _choose_gui_port may fall back if the requested port got taken.
+    port, thread = gui_app.start_backend_thread(port=find_free_port())
     client = BackendClient(f"http://127.0.0.1:{port}")
 
-    deadline = time.time() + 30.0
+    # Generous deadline: the first server boot on a cold CI runner can take
+    # well over 30s even though later boots in the same process are instant.
+    deadline = time.time() + 120.0
     while time.time() < deadline:
         try:
             if client.get("/api/health", timeout=1.0).status_code == 200:
@@ -115,7 +123,10 @@ def running_backend(
         except requests.RequestException:
             time.sleep(0.2)
     else:
-        raise RuntimeError(f"backend did not come up on port {port}")
+        raise RuntimeError(
+            f"backend did not come up on port {port} "
+            f"(server thread alive: {thread.is_alive()})"
+        )
 
     try:
         yield client
@@ -125,5 +136,6 @@ def running_backend(
             gui_app.DEFAULT_OUTPUT_DIR,
             gui_app.DEFAULT_CSV_DIR,
             gui_app.LIBRARY_DIR,
+            gui_app.PREFERENCES_PATH,
             gui_app.DEFAULT_CONFIG,
         ) = saved

@@ -66,7 +66,7 @@ def test_json_flag_prints_run_result_payload(tmp_path, monkeypatch, capsys):
     assert payload == {
         "pipeline_id": "frame_probability_hysteresis",
         "intervals": [{"start_s": 5.8, "end_s": 17.0}],
-        "csv_path": "/out/out_segments.csv",
+        "csv_path": str(Path("/out/out_segments.csv")),
         "video_path": None,
         "n_segments": 1,
     }
