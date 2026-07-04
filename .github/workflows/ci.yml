@@ -54,8 +54,6 @@ jobs:
       - name: Install Playwright browser (macOS/Windows)
         if: runner.os != 'Linux'
         run: python -m playwright install chromium
-      - name: Fetch YOLO weights
-        run: python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt')"
       - name: Run e2e (L1 backend + L2 browser UI)
         # Golden-clip tests self-skip here (private footage lives only locally).
         run: pytest -m e2e
