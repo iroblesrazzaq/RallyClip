@@ -1,4 +1,3 @@
-from .model import TennisPointLSTM
 from .inference import (
     extract_segments_from_binary,
     gaussian_filter1d,
@@ -29,3 +28,12 @@ __all__ = [
 ]
 
 
+
+
+def __getattr__(name):
+    # Lazy: .model imports torch, which is optional at runtime (ONNX path).
+    if name == "TennisPointLSTM":
+        from .model import TennisPointLSTM
+
+        return TennisPointLSTM
+    raise AttributeError(name)
