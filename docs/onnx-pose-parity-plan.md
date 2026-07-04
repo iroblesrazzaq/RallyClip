@@ -147,3 +147,25 @@ zero-person frames (empty-array paths).
   end-to-end segment parity within the noise floor we already accept (Stage
   4). That is also exactly what the existing golden + e2e suites can enforce
   in CI forever after the swap.
+
+## Results (2026-07-04)
+
+Harness: `../YOLO-ONNX/scripts/parity_v8n_960.py`; runner:
+`../YOLO-ONNX/python/yolo_onnx_runner.py`; stage 3:
+`../YOLO-ONNX/scripts/golden_e2e_onnx.py`. Env: ultralytics 8.3.176,
+torch 2.7.1, ORT 1.24.4, cv2 4.12, CPU.
+
+- Stage 1 preprocessing: numpy rect letterbox **bitwise-equal** to
+  Ultralytics LetterBox on all 40 frames.
+- Stage 1a raw tensor (torch fused vs ORT, same input): not byte-equal as
+  predicted; max abs 2.6e-3, max rel 2.9e-2 over all proposals.
+- Stage 2 decoded contract (40 frames, 34 detections): count match 1.000,
+  matched IoU >= 0.999997, box conf delta <= 1.1e-6, keypoint error
+  max 3.1e-4 px, order agreement 1.000.
+- **Stage 3 golden e2e: segments CSV BYTE-EQUAL to the torch-path golden**
+  (OnnxPoseExtractor injected via RuntimeDeps; zero RallyClip changes).
+
+Remaining before production swap: widen the stage-2 frame set (multi-person,
+near-threshold, other resolutions), sweep more full videos (stage 4),
+perf/memory benchmark at 960, then integrate the runner into RallyClip and
+demote torch/ultralytics to a dev extra.
