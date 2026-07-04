@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RallyClip</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <section class="welcome-screen" id="welcomeScreen" hidden>
+        <div class="welcome-composition">
+            <div class="welcome-content">
+                <h1 class="welcome-headline" id="welcomeHeadline" aria-live="polite"></h1>
+                <button type="button" class="btn btn-primary welcome-start" id="welcomeStartBtn">Get started</button>
+            </div>
+        </div>
+    </section>
+
+    <div class="app-shell" id="appShell" hidden>
+        <main class="workspace">
+            <section class="run-card library-view" id="libraryView" hidden>
+                <div class="library-head">
+                    <div class="library-title">
+                        <img class="library-logo" src="rallyclip_logo_cropped.png" alt="" aria-hidden="true">
+                        <h2>Saved matches</h2>
+                    </div>
+                    <div class="library-head-actions">
+                        <button type="button" class="btn btn-secondary update-btn" id="updateBtn" hidden>Update available</button>
+                        <button type="button" class="btn btn-primary" id="newMatchBtn">Process a Match</button>
+                    </div>
+                </div>
+                <div class="library-empty" id="libraryEmpty" hidden>
+                    <p class="empty-title">No matches yet</p>
+                    <p class="empty-sub">Drop in a full match and RallyClip saves just the points here.</p>
+                </div>
+                <div class="library-grid" id="libraryGrid"></div>
+            </section>
+
+            <section class="run-card viewer-view" id="viewerView" hidden>
+                <button type="button" class="text-button back-link" id="backFromViewer">← Saved matches</button>
+                <div class="viewer-head">
+                    <div>
+                        <h2 id="viewerTitle">Match</h2>
+                        <p id="viewerMeta"></p>
+                    </div>
+                    <div class="viewer-actions">
+                        <button type="button" class="btn btn-secondary" id="viewerCsvBtn" hidden>CSV</button>
+                        <button type="button" class="btn btn-primary" id="viewerExportBtn">Export video</button>
+                    </div>
+                </div>
+                <div class="viewer-video-wrap">
+                    <video class="match-video is-active" id="matchVideo" playsinline preload="auto" tabindex="0" aria-label="Match video"></video>
+                    <video class="match-video match-video-buffer" id="matchVideoBuffer" playsinline preload="auto" tabindex="-1" aria-hidden="true"></video>
+                    <div class="preview-status" id="previewStatus" aria-label="Loading video preview" hidden></div>
+                    <div class="viewer-overlay" id="viewerOverlay">
+                        <div class="viewer-timeline" id="viewerTimeline" hidden>
+                            <div class="viewer-seek-wrap">
+                                <div class="viewer-buffer-track" id="viewerBufferTrack" aria-hidden="true"></div>
+                                <div class="viewer-point-track" id="viewerPointTrack" aria-hidden="true"></div>
+                                <input type="range" id="viewerSeek" min="0" max="0" step="0.1" value="0" aria-label="Match timeline">
+                            </div>
+                            <div class="viewer-control-row">
+                                <div class="viewer-left-controls">
+                                    <span class="viewer-time"><span id="viewerCurrentTime">0:00</span> / <span id="viewerDuration">0:00</span></span>
+                                    <div class="viewer-controls" id="viewerControls">
+                                        <button type="button" class="viewer-control-btn" id="viewerBackBtn" aria-label="Back 5 seconds">↺</button>
+                                        <button type="button" class="viewer-control-btn viewer-play-btn" id="viewerPlayPauseBtn" aria-label="Play video">▶</button>
+                                        <button type="button" class="viewer-control-btn" id="viewerForwardBtn" aria-label="Forward 5 seconds">↻</button>
+                                    </div>
+                                </div>
+                                <button type="button" class="viewer-control-btn viewer-fullscreen-btn" id="viewerFullscreenBtn" aria-label="Enter fullscreen">⛶</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="run-card" id="uploadView" hidden>
+                <button type="button" class="text-button back-link" id="backToLibrary">← Saved matches</button>
+                <div class="file-drop-zone" id="dropZone">
+                    <p class="drop-title">Drop a match video</p>
+                    <p class="drop-sub"><button type="button" class="text-button" id="browseBtn">Browse files</button></p>
+                    <p class="drop-meta">MP4 · up to 2GB</p>
+                    <input type="file" id="fileInput" accept="video/mp4,video/*" hidden>
+                </div>
+
+                <div class="selected-file" id="selectedFile" hidden>
+                    <div class="file-row">
+                        <div>
+                            <div class="file-name" id="fileName"></div>
+                            <div class="file-size" id="fileSize"></div>
+                        </div>
+                        <button type="button" class="icon-button" id="removeFileBtn" aria-label="Remove file">×</button>
+                    </div>
+                </div>
+
+                <div class="actions">
+                    <button type="button" class="btn btn-primary" id="startBtn" disabled>Start</button>
+                    <button type="button" class="btn btn-ghost" id="advancedToggle">Advanced</button>
+                </div>
+
+                <div class="advanced-panel" id="advancedPanel" hidden>
+                    <div class="advanced-head">
+                        <div>
+                            <h2>Advanced settings</h2>
+                            <p>Defaults follow the bundled model manifest. Change only if you know why.</p>
+                        </div>
+                        <button type="button" class="text-button" id="resetAdvanced">Reset</button>
+                    </div>
+                    <div class="advanced-grid">
+                        <label class="field">
+                            <span>Match name</span>
+                            <input type="text" id="outputName" placeholder="Defaults to video name">
+                        </label>
+                        <label class="field">
+                            <span>Device</span>
+                            <select id="yoloDevice"></select>
+                            <span class="field-note" id="deviceNote"></span>
+                        </label>
+                        <label class="field">
+                            <span>Hysteresis low</span>
+                            <input type="number" step="0.01" min="0" max="1" id="low">
+                            <span class="field-note warning" id="lowWarning"></span>
+                        </label>
+                        <label class="field">
+                            <span>Hysteresis high</span>
+                            <input type="number" step="0.01" min="0" max="1" id="high">
+                            <span class="field-note warning" id="highWarning"></span>
+                        </label>
+                        <label class="field">
+                            <span>Min segment length (sec)</span>
+                            <input type="number" step="0.1" min="0" id="minDurSec">
+                            <span class="field-note warning" id="minDurWarning"></span>
+                        </label>
+                    </div>
+                </div>
+            </section>
+
+            <section class="run-card" id="progress" hidden>
+                <div class="overall">
+                    <div class="overall-row">
+                        <span id="stageText">Ready</span>
+                        <span id="overallPercentage">0%</span>
+                    </div>
+                    <div class="bar"><div class="bar-fill overall-fill" id="overallFill"></div></div>
+                    <p class="eta" id="etaText">ETA: --</p>
+                </div>
+
+                <button type="button" class="btn btn-secondary" id="cancelBtn" disabled>Cancel</button>
+
+                <details class="progress-details">
+                    <summary>Details</summary>
+                    <div class="steps" id="progressSection">
+                        <div class="step" data-step="pose">
+                            <div class="step-row"><span>Pose extraction</span><span id="poseStatus">Waiting</span></div>
+                            <div class="bar"><div class="bar-fill" id="poseFill"></div></div>
+                        </div>
+                        <div class="step" data-step="preprocess">
+                            <div class="step-row"><span>Preprocessing</span><span id="preprocessStatus">Waiting</span></div>
+                            <div class="bar"><div class="bar-fill" id="preprocessFill"></div></div>
+                        </div>
+                        <div class="step" data-step="feature">
+                            <div class="step-row"><span>Features</span><span id="featureStatus">Waiting</span></div>
+                            <div class="bar"><div class="bar-fill" id="featureFill"></div></div>
+                        </div>
+                        <div class="step" data-step="inference">
+                            <div class="step-row"><span>Inference</span><span id="inferenceStatus">Waiting</span></div>
+                            <div class="bar"><div class="bar-fill" id="inferenceFill"></div></div>
+                        </div>
+                        <div class="step" data-step="output">
+                            <div class="step-row"><span>Output</span><span id="outputStatus">Waiting</span></div>
+                            <div class="bar"><div class="bar-fill" id="outputFill"></div></div>
+                        </div>
+                    </div>
+                </details>
+            </section>
+
+        </main>
+    </div>
+
+    <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+    <script src="script.js"></script>
+</body>
+</html>

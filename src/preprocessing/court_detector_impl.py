@@ -20,7 +20,7 @@ class CourtDetector:
     A class for detecting tennis court boundaries and estimating playable areas from video frames.
     """
     
-    def __init__(self, yolo_model_path: str = 'models/yolov8n-pose.pt', conf: float = 0.25):
+    def __init__(self, yolo_model_path: str = 'models/yolov8n-pose.pt', conf: float = 0.25, device: Optional[str] = None):
         """
         Initialize the CourtDetector.
 
@@ -34,12 +34,15 @@ class CourtDetector:
         self.BASELINE_WIDTH_RATIO = 0.6
         self.yolo_model_path = yolo_model_path
         self.conf = float(conf)
+        self.device = device
         self.yolo_model = None
         
         # Initialize YOLO model if available
         if YOLO_AVAILABLE:
             try:
                 self.yolo_model = YOLO(yolo_model_path)
+                if self.device:
+                    self.yolo_model.to(self.device)
                 logging.info("YOLO model loaded successfully")
             except Exception as e:
                 logging.warning("YOLO model failed to load: %s", e)
@@ -56,31 +59,28 @@ class CourtDetector:
         Returns:
             np.ndarray: Clean frame with player occlusions removed
         """
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            raise RuntimeError(f"Failed to open video: {video_path}")
-        
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        
+        from runtime.video_frames import VideoFrameReader
+
+        reader = VideoFrameReader(video_path)
+        fps = reader.fps
+        total_frames = reader.total_frames
+
         try:
             if self.yolo_model is None:
                 # Fallback to single frame extraction
                 logging.info("YOLO not available, using single frame at target time")
-                cap.set(cv2.CAP_PROP_POS_FRAMES, int(fps * target_time))
-                ret, frame = cap.read()
-                if not ret or frame is None:
+                frame = reader.read_frame_at_index(int(fps * target_time))
+                if frame is None:
                     raise RuntimeError("Could not read frame at target time.")
                 return frame
-            
+
             # Use YOLO + Homography for robust background reconstruction
             logging.info("Using YOLO + Homography for robust background reconstruction")
-            
+
             # Step 1: Select base frame and find occlusions
             base_frame_num = int(target_time * fps)
-            cap.set(cv2.CAP_PROP_POS_FRAMES, base_frame_num)
-            ret, base_frame = cap.read()
-            if not ret or base_frame is None:
+            base_frame = reader.read_frame_at_index(base_frame_num)
+            if base_frame is None:
                 raise RuntimeError("Could not read base frame at target time.")
             
             # Run YOLO on base frame to detect players
@@ -111,9 +111,8 @@ class CourtDetector:
                     continue
                     
                 frame_num = int(search_time * fps)
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
-                ret, candidate_frame = cap.read()
-                if not ret or candidate_frame is None:
+                candidate_frame = reader.read_frame_at_index(frame_num)
+                if candidate_frame is None:
                     continue
                 
                 # Run YOLO on candidate frame
@@ -221,7 +220,7 @@ class CourtDetector:
                 return base_frame
                 
         finally:
-            cap.release()
+            reader.close()
     
     def detect_court_lines(self, frame: np.ndarray) -> Tuple[List, List, List, List]:
         """
@@ -353,8 +352,10 @@ class CourtDetector:
             
             max_dist = 0
             p1_final, p2_final = None, None
-            points = contour.reshape(-1, 2)
-            
+            # The farthest pair always lies on the convex hull, so scan the
+            # hull instead of every contour point.
+            points = cv2.convexHull(contour).reshape(-1, 2)
+
             for p1 in points:
                 for p2 in points:
                     dist = np.linalg.norm(p1 - p2)
@@ -669,9 +670,9 @@ class CourtDetector:
             else:
                 # Vertical line
                 cv2.line(final_result_image, (rx1, 0), (rx1, frame.shape[0]), (255, 0, 0), 5)
-            print("Right doubles sideline: FOUND")
+            logging.info("Right doubles sideline: FOUND")
         else:
-            print("Right doubles sideline: NOT FOUND")
+            logging.info("Right doubles sideline: NOT FOUND")
             failures.append("RIGHT SIDELINE")
             
         if left_doubles_sideline is not None:
@@ -689,13 +690,13 @@ class CourtDetector:
             else:
                 # Vertical line
                 cv2.line(final_result_image, (lx1, 0), (lx1, frame.shape[0]), (0, 0, 255), 5)
-            print("Left doubles sideline: FOUND")
+            logging.info("Left doubles sideline: FOUND")
         else:
-            print("Left doubles sideline: NOT FOUND")
+            logging.info("Left doubles sideline: NOT FOUND")
             failures.append("LEFT SIDELINE")
         
         # Draw extended doubles sidelines in pink and yellow (if both sidelines are found)
-        if left_doubles_sideline is not None and right_doubles_sideline is not None:
+        if left_doubles_sideline is not None and right_doubles_sideline is not None and baseline is not None:
             # Calculate shifted sidelines for visualization
             BASE_HORIZONTAL_SHIFT = 100
             screen_width = frame.shape[1]
@@ -740,7 +741,10 @@ class CourtDetector:
                 right_shifted_x = rx1 + dynamic_shift
                 cv2.line(final_result_image, (right_shifted_x, 0), (right_shifted_x, frame.shape[0]), (0, 255, 255), 3)  # Yellow
             
-            print(f"Extended doubles sidelines drawn (left: pink, right: yellow, shift: {dynamic_shift:.1f}px)")
+            logging.info(
+                "Extended doubles sidelines drawn (left: pink, right: yellow, shift: %.1fpx)",
+                dynamic_shift,
+            )
         
         # Add failure text to image
         if failures:
@@ -858,12 +862,17 @@ class CourtDetector:
             if abs(lowest_y - baseline_y) < tolerance:
                 close_lines.append(line)
         
-        print(f"{side.capitalize()} side: Found {len(close_lines)} lines close to baseline out of {len(diagonal_lines)} total")
+        logging.info(
+            "%s side: Found %s lines close to baseline out of %s total",
+            side.capitalize(),
+            len(close_lines),
+            len(diagonal_lines),
+        )
         
         # Decision tree based on number of close lines
         if len(close_lines) == 1:
             # Branch 1: Exactly ONE line is close to baseline
-            print(f"{side.capitalize()} side: Branch 1 - One close line (assumed singles sideline)")
+            logging.info("%s side: Branch 1 - One close line (assumed singles sideline)", side.capitalize())
             
             singles_line = close_lines[0]
             far_lines = [line for line in diagonal_lines if line not in close_lines]
@@ -908,12 +917,12 @@ class CourtDetector:
             if best_candidate is not None:
                 return best_candidate, True
             else:
-                print(f"{side.capitalize()} side: No valid outward candidate found")
+                logging.info("%s side: No valid outward candidate found", side.capitalize())
                 return None, False
                 
         elif len(close_lines) == 2:
             # Branch 2: Exactly TWO lines are close to baseline
-            print(f"{side.capitalize()} side: Branch 2 - Two close lines (singles and doubles sidelines)")
+            logging.info("%s side: Branch 2 - Two close lines (singles and doubles sidelines)", side.capitalize())
             
             line1, line2 = close_lines[0], close_lines[1]
             
@@ -950,7 +959,7 @@ class CourtDetector:
             
         else:
             # Branch 3: ZERO or MORE THAN TWO lines are close to baseline
-            print(f"{side.capitalize()} side: Branch 3 - Ambiguous case ({len(close_lines)} close lines)")
+            logging.info("%s side: Branch 3 - Ambiguous case (%s close lines)", side.capitalize(), len(close_lines))
             return None, False
     
     def _process_partial_baseline_case(self, diagonal_lines: List, baseline: List, 

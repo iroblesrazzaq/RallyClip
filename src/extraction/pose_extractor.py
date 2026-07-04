@@ -1,14 +1,19 @@
 import os
-import subprocess
 import time
 from typing import Callable, Optional
-import numpy as np
+
 import av
-from ultralytics import YOLO
-from ultralytics.utils import SETTINGS
+import logging
+import numpy as np
 import torch
 from tqdm import tqdm
-import logging
+from ultralytics import YOLO
+from ultralytics.utils import SETTINGS
+
+
+def _pipeline_profile() -> str:
+    profile = os.environ.get("PIPELINE_PROFILE", "").strip().lower()
+    return profile or "main"
 
 
 
@@ -22,46 +27,33 @@ class PoseExtractor:
     and saves compressed npz artifacts. Designed for reuse by CLI and GUI.
     """
 
-    def __init__(self, model_dir: Optional[str] = None, model_path: str = "yolov8s-pose.pt", imgsz: int = 1920) -> None:
+    def __init__(
+        self,
+        model_dir: Optional[str] = None,
+        model_path: str = "yolov8s-pose.pt",
+        imgsz: int = 1920,
+        device: Optional[str] = None,
+    ) -> None:
+        # When device is set, use it as-is. Auto-selected devices should be
+        # resolved via runtime.device.apply_pose_device before construction.
         # Set early so downstream checks can use it
         self.model_path = model_path
         self.model_dir = model_dir
         self.imgsz = int(imgsz)
 
-        profile = os.environ.get("PIPELINE_PROFILE", "").strip().lower()
-        if not profile:
-            try:
-                git_branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, check=True)
-                branch_name = git_branch.stdout.strip()
-                profile = "mvp" if branch_name == "mvp" else "main"
-            except Exception:
-                profile = "main"
+        profile = _pipeline_profile()
 
-        env_device = os.environ.get("POSE_DEVICE", "").strip().lower()
-        valid_devices = {"cpu", "cuda", "mps"}
-        device_from_env = env_device in valid_devices
-        if device_from_env:
-            self.device = env_device
+        from runtime.device import prefer_cpu_over_mps_for_pose, resolve_pose_device
+
+        if device is not None:
+            self.device = device
         else:
-            if profile == "mvp":
-                if torch.cuda.is_available():
-                    self.device = "cuda"
-                elif torch.backends.mps.is_available():
-                    self.device = "mps"
-                else:
-                    self.device = "cpu"
-            else:
-                if torch.backends.mps.is_available():
-                    self.device = "mps"
-                elif torch.cuda.is_available():
-                    self.device = "cuda"
-                else:
-                    self.device = "cpu"
-
-        # Work around known MPS pose performance bug unless user explicitly requests it.
-        if (not device_from_env) and self.device == "mps" and "pose" in self.model_path.lower():
-            logging.warning("POSE: defaulting to cpu due to known MPS pose performance issues; set POSE_DEVICE=mps to force MPS.")
-            self.device = "cpu"
+            env_device = os.environ.get("POSE_DEVICE", "").strip().lower()
+            device_from_env = env_device in {"cpu", "cuda", "mps"}
+            self.device = resolve_pose_device(env_device if device_from_env else None)
+            if not device_from_env:
+                self.device = prefer_cpu_over_mps_for_pose(self.device, self.model_path)
+                os.environ["POSE_DEVICE"] = self.device
 
         env_bs = os.environ.get("POSE_BATCH_SIZE", "").strip()
         if env_bs.isdigit():
@@ -99,20 +91,44 @@ class PoseExtractor:
             pass
 
     def frame_iterator_pyav(self, video_path: str):
+        # Yields the decoded ``av.VideoFrame`` (NOT a BGR ndarray) so the caller can defer the
+        # costly to_ndarray(bgr24) conversion to only the frames it actually keeps. At
+        # target_fps << source_fps most frames are downsampled out, so converting eagerly here
+        # wasted ~11/12 of the conversions on a 60fps source. See _to_bgr / iter_pose_frames.
         try:
             with av.open(video_path) as container:
                 stream = container.streams.video[0]
+                # Enable FFmpeg's internal multithreaded decode (deterministic, identical
+                # pixels) so HEVC/H.264 decode overlaps across threads instead of running
+                # single-threaded. Decode is a real slice of wall time on long 1080p clips.
+                try:
+                    stream.thread_type = "AUTO"
+                except Exception:
+                    pass
                 time_base = stream.time_base
                 for frame in container.decode(stream):
                     ts = float(frame.pts * time_base) if frame.pts is not None else None
                     if ts is None:
                         continue
-                    yield frame.to_ndarray(format="bgr24"), ts
+                    yield frame, ts
         except Exception as e:
             logging.error("[PyAV Error] %s", e)
             return
 
-    def extract_pose_data(
+    @staticmethod
+    def _to_bgr(frame):
+        """Convert a decoded frame to a BGR ndarray, only when a frame is actually kept.
+
+        Handles both real ``av.VideoFrame`` objects (-> to_ndarray) and bare ndarrays (the test
+        / bench stubs already yield ndarrays), so the downsample path is identical to before for
+        the frames that pass the timestamp gate.
+        """
+        to_ndarray = getattr(frame, "to_ndarray", None)
+        if to_ndarray is not None:
+            return to_ndarray(format="bgr24")
+        return frame
+
+    def iter_pose_frames(
         self,
         video_path: str,
         confidence_threshold: float,
@@ -122,7 +138,15 @@ class PoseExtractor:
         imgsz: Optional[int] = None,
         annotations_csv: Optional[str] = None,
         progress_callback: Optional[Callable[[float], None]] = None,
-    ) -> str:
+    ):
+        """Streaming pose extraction core (generator).
+
+        Yields per-frame data dicts in stream order -- the same sequence
+        :meth:`extract_pose_frames` returns as a list -- but only buffers one detection
+        batch (plus the downsampled-out frames interleaved with it) at a time, so peak
+        memory is O(batch) instead of O(num_frames). Detection results arrive per batch,
+        so the buffered chunk is filled then flushed out in order at each batch boundary.
+        """
         import csv
         predict_imgsz = int(self.imgsz if imgsz is None else imgsz)
 
@@ -150,7 +174,6 @@ class PoseExtractor:
         except Exception:
             total_frames = 0
 
-        all_frames_data = []
         processed_frames_count = 0  # frames actually processed/saved (downsampled)
         frames_seen = 0  # all frames iterated from the stream
         next_target_timestamp = start_time_seconds
@@ -171,11 +194,16 @@ class PoseExtractor:
             annotation_index = 0
             num_annotations = 0
 
+        # `pending` holds the frame dicts emitted since the last batch flush, in stream
+        # order; processed frames await detection results that the next flush fills in. It
+        # is never rebound (only mutated in place + .clear()) so the _flush_batch closure
+        # always sees the same list object.
+        pending = []
         batch_frames = []
-        batch_indices = []
+        batch_positions = []  # index within `pending` of each batched (processed) frame
 
         def _flush_batch():
-            nonlocal batch_frames, batch_indices
+            nonlocal batch_frames, batch_positions
             if not batch_frames:
                 return
             try:
@@ -196,7 +224,7 @@ class PoseExtractor:
                     imgsz=predict_imgsz,
                 )
             for i, res in enumerate(results):
-                idx = batch_indices[i]
+                pos = batch_positions[i]
                 frame_data = {}
                 if res is not None and getattr(res, "boxes", None) is not None:
                     try:
@@ -216,10 +244,10 @@ class PoseExtractor:
                     frame_data["box_conf"] = np.empty((0,), dtype=np.float32)
                     frame_data["keypoints"] = np.empty((0, 17, 2), dtype=np.float32)
                     frame_data["conf"] = np.empty((0, 17), dtype=np.float32)
-                frame_data["annotation_status"] = all_frames_data[idx].get("annotation_status", 0)
-                all_frames_data[idx] = frame_data
+                frame_data["annotation_status"] = pending[pos].get("annotation_status", 0)
+                pending[pos] = frame_data
             batch_frames = []
-            batch_indices = []
+            batch_positions = []
 
         gen = self.frame_iterator_pyav(video_path)
         show_tqdm = os.environ.get("RALLYCLIP_NO_TQDM", "").strip().lower() not in {"1", "true", "yes"}
@@ -241,18 +269,21 @@ class PoseExtractor:
                         annotation_index += 1
                     if (starts[annotation_index] - EPS) <= current_timestamp <= (ends[annotation_index] + EPS):
                         annotation_status_current = 1
-                all_frames_data.append({
+                pending.append({
                     "boxes": np.empty((0, 4), dtype=np.float32),
                     "box_conf": np.empty((0,), dtype=np.float32),
                     "keypoints": np.empty((0, 17, 2), dtype=np.float32),
                     "conf": np.empty((0, 17), dtype=np.float32),
                     "annotation_status": annotation_status_current,
                 })
-                batch_frames.append(frame)
-                batch_indices.append(len(all_frames_data) - 1)
+                # Convert to BGR only now that this frame passed the downsample gate.
+                batch_frames.append(self._to_bgr(frame))
+                batch_positions.append(len(pending) - 1)
                 appended = True
                 if len(batch_frames) >= self.batch_size:
                     _flush_batch()
+                    yield from pending
+                    pending.clear()
                 next_target_timestamp += (1.0 / target_fps)
                 if first_processed_ts is None:
                     first_processed_ts = time.time()
@@ -290,9 +321,68 @@ class PoseExtractor:
                     "annotation_status": -1,
                 }
             if not appended:
-                all_frames_data.append(frame_data)
+                pending.append(frame_data)
 
         _flush_batch()
+        yield from pending
+        pending.clear()
+
+    def extract_pose_frames(
+        self,
+        video_path: str,
+        confidence_threshold: float,
+        start_time_seconds: int = 0,
+        duration_seconds: int = 60,
+        target_fps: int = 15,
+        imgsz: Optional[int] = None,
+        annotations_csv: Optional[str] = None,
+        progress_callback: Optional[Callable[[float], None]] = None,
+    ) -> list:
+        """In-memory pose extraction core: the full per-frame data list.
+
+        Materializes :meth:`iter_pose_frames` (the streaming core). Kept for callers that
+        want the whole list at once (file-writing wrapper + training scripts); the release
+        path can consume the generator directly for bounded memory.
+        """
+        return list(self.iter_pose_frames(
+            video_path=video_path,
+            confidence_threshold=confidence_threshold,
+            start_time_seconds=start_time_seconds,
+            duration_seconds=duration_seconds,
+            target_fps=target_fps,
+            imgsz=imgsz,
+            annotations_csv=annotations_csv,
+            progress_callback=progress_callback,
+        ))
+
+    def extract_pose_data(
+        self,
+        video_path: str,
+        confidence_threshold: float,
+        start_time_seconds: int = 0,
+        duration_seconds: int = 60,
+        target_fps: int = 15,
+        imgsz: Optional[int] = None,
+        annotations_csv: Optional[str] = None,
+        progress_callback: Optional[Callable[[float], None]] = None,
+        output_dir: Optional[str] = None,
+    ) -> str:
+        """File-writing wrapper around :meth:`extract_pose_frames`.
+
+        Behaviour-preserving: computes the in-memory frame list via the core, then
+        serializes it to the same NPZ path as before and returns that path. Kept for
+        the training ``scripts/``; the release path calls the core directly.
+        """
+        all_frames_data = self.extract_pose_frames(
+            video_path=video_path,
+            confidence_threshold=confidence_threshold,
+            start_time_seconds=start_time_seconds,
+            duration_seconds=duration_seconds,
+            target_fps=target_fps,
+            imgsz=imgsz,
+            annotations_csv=annotations_csv,
+            progress_callback=progress_callback,
+        )
 
         # output path
         if "yolov8" in self.model_path:
@@ -300,10 +390,14 @@ class PoseExtractor:
         else:
             model_size = "s"
         subdir_name = f"yolo{model_size}_{confidence_threshold}conf_{target_fps}fps_{start_time_seconds}s_to_{start_time_seconds + duration_seconds}s"
-        output_dir = os.path.join("pose_data", "raw", subdir_name)
-        os.makedirs(output_dir, exist_ok=True)
         base_name = os.path.splitext(os.path.basename(video_path))[0]
         output_filename = f"{base_name}_posedata_{start_time_seconds}s_to_{start_time_seconds + duration_seconds}s_yolo{model_size}.npz"
-        output_path = os.path.join(output_dir, output_filename)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = os.path.join(output_dir, output_filename)
+        else:
+            output_dir_path = os.path.join("pose_data", "raw", subdir_name)
+            os.makedirs(output_dir_path, exist_ok=True)
+            output_path = os.path.join(output_dir_path, output_filename)
         np.savez_compressed(output_path, frames=all_frames_data)
         return output_path

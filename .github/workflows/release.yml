@@ -1,0 +1,207 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install package
+        shell: bash
+        run: pip install ".[dev,e2e-ui]"
+      - name: Install Playwright browser
+        shell: bash
+        run: python -m playwright install chromium
+      - name: Fetch YOLO weights
+        shell: bash
+        run: python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt')"
+      - name: Run fast tests
+        shell: bash
+        run: pytest -m "not slow and not e2e"
+      - name: Run e2e tests
+        shell: bash
+        run: pytest -m e2e
+
+  build:
+    needs: tests
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: RallyClip-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install build deps
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[desktop,pack]"
+      - name: Fetch YOLO weights
+        shell: bash
+        run: |
+          python - <<'PY'
+          import shutil
+          from pathlib import Path
+          from ultralytics import YOLO
+          model = YOLO("yolov8n-pose.pt")
+          src = Path(getattr(model, "ckpt_path", "yolov8n-pose.pt"))
+          if not src.exists():
+              src = Path("yolov8n-pose.pt")
+          if not src.exists():
+              raise SystemExit("Could not resolve yolov8n-pose.pt after download")
+          dst = Path("models") / "yolov8n-pose.pt"
+          dst.parent.mkdir(parents=True, exist_ok=True)
+          if src.resolve() != dst.resolve():
+              shutil.copy2(src, dst)
+          print(f"YOLO nano pose weights ready at {dst}")
+          PY
+      - name: Verify RallyClip model artifacts
+        shell: bash
+        run: |
+          # Artifacts are tracked in git under models/rallyclip_v0.3.1/
+          test -f models/rallyclip_v0.3.1/model.onnx
+          test -f models/rallyclip_v0.3.1/scaler.json
+          test -f models/rallyclip_v0.3.1/manifest.json
+          test -f models/yolov8n-pose.pt
+          test -f src/preprocessing/default_court_mask.png
+          test -f docs/rallyclip.icns
+          test -f docs/rallyclip_favicon_transparent2.png
+          test -f docs/rallyclip_logo_cropped.png
+      - name: Build desktop bundle
+        shell: bash
+        run: |
+          SEP=":"
+          if [ "${{ runner.os }}" = "Windows" ]; then SEP=";"; fi
+          pyinstaller --noconfirm --windowed --onedir \
+            --name RallyClip \
+            --icon docs/rallyclip.icns \
+            --hidden-import=gui.app \
+            --hidden-import=cli.main \
+            --hidden-import=runtime.assets \
+            --hidden-import=runtime.device \
+            --hidden-import=runtime.defaults \
+            --hidden-import=runtime.paths \
+            --collect-submodules=flask \
+            --collect-all=ultralytics \
+            --exclude-module=PyQt5 \
+            --exclude-module=PyQt6 \
+            --exclude-module=PySide2 \
+            --exclude-module=openvino \
+            --add-data "src/gui/frontend${SEP}gui/frontend" \
+            --add-data "models/rallyclip_v0.3.1${SEP}models/rallyclip_v0.3.1" \
+            --add-data "models/yolov8n-pose.pt${SEP}models" \
+            --add-data "src/preprocessing/default_court_mask.png${SEP}preprocessing" \
+            --add-data "docs/rallyclip_logo_cropped.png${SEP}docs" \
+            --add-data "docs/rallyclip_favicon_transparent2.png${SEP}docs" \
+            src/gui/desktop.py
+      - name: Smoke test headless CLI in bundle
+        shell: bash
+        run: |
+          BIN="$(pwd)/dist/RallyClip/RallyClip"
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="$BIN.exe"; fi
+
+          # 1) Frozen import chain + argparse work.
+          "$BIN" --cli --help
+
+          # 2) Frozen asset resolution: hide the repo's models/ and run from a
+          #    neutral cwd so ONLY the bundled copy can satisfy resolve_asset
+          #    (candidate_roots includes the checkout via cwd/parent dirs).
+          #    Must fail cleanly on the missing video (exit 1, no traceback) —
+          #    a broken resolution also exits 1, but with a traceback.
+          mv models models_hidden
+          set +e
+          out=$(cd "$RUNNER_TEMP" && "$BIN" --cli --video ./missing.mp4 --no-segment-video 2>&1)
+          code=$?
+          set -e
+          mv models_hidden models
+          echo "$out"
+          test "$code" -eq 1
+          echo "$out" | grep -q "video file not found"
+          ! echo "$out" | grep -q "Traceback"
+      - name: Run pipeline e2e on synthetic clip
+        shell: bash
+        run: |
+          BIN="$(pwd)/dist/RallyClip/RallyClip"
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="$BIN.exe"; fi
+
+          # Full frozen pipeline: PyAV decode -> court-mask fallback -> pose
+          # (downloads nano YOLO weights into $RUNNER_TEMP/models) -> features
+          # -> ONNX inference -> CSV. Zero detected segments is expected on a
+          # synthetic clip; the assertion is exit 0 + a header CSV.
+          python scripts/make_smoke_clip.py "$RUNNER_TEMP/smoke.mp4"
+          cd "$RUNNER_TEMP"
+          "$BIN" --cli --video ./smoke.mp4 --yolo-size nano \
+            --write-csv --csv-output-dir ./csv_out --no-segment-video
+          test -f csv_out/smoke_segments.csv
+          head -1 csv_out/smoke_segments.csv | grep -q "start_time,end_time"
+      - name: Install QtWebEngine runtime libs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3 libxkbcommon0 libasound2t64 libgbm1 \
+            libxcomposite1 libxdamage1 libxrandr2 libxtst6
+      - name: Probe GUI backend boot
+        shell: bash
+        run: |
+          BIN="$(pwd)/dist/RallyClip/RallyClip"
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="$BIN.exe"; fi
+
+          # Boot the GUI personality headlessly and prove Flask + Qt +
+          # WebEngine all come up in the frozen bundle (catches missing
+          # QtWebEngine helpers/resources per-OS).
+          export QT_QPA_PLATFORM=offscreen
+          export RALLYCLIP_GUI_PORT=8765
+          "$BIN" > gui_probe.log 2>&1 &
+          GUI_PID=$!
+          ok=""
+          for i in $(seq 1 60); do
+            if curl -s -m 2 http://127.0.0.1:8765/api/health | grep -q '"ok"'; then ok=1; break; fi
+            sleep 2
+          done
+          if [ -n "$ok" ]; then
+            curl -s -m 5 http://127.0.0.1:8765/api/config/defaults | grep -q "yolov8n-pose.pt" || ok=""
+          fi
+          kill $GUI_PID 2>/dev/null || true
+          if [ -z "$ok" ]; then
+            echo "GUI backend did not come up; log follows:"
+            cat gui_probe.log
+            exit 1
+          fi
+      - name: Archive build
+        shell: bash
+        run: |
+          test -d dist/RallyClip.app
+          cd dist && tar -czf "../${{ matrix.artifact }}.tar.gz" RallyClip.app
+          cd ..
+          shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          files: |
+            ${{ matrix.artifact }}.*
+          draft: true
+          generate_release_notes: true
+      - name: Upload workflow artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.*
+          retention-days: 7
