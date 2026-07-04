@@ -10,8 +10,6 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "numpy",
-  "torch",
-  "ultralytics",
   # Court-detection golden fixtures are validated against the 4.x algorithms;
   # bump past 5 only after re-checking tests/test_court_detection_deterministic.
   "opencv-python>=4.8,<5",
@@ -30,6 +28,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Training / .pt-weights path only. The shipped runtime is torch-free: pose
+# runs on the bundled ONNX via onnxruntime (extraction.yolo_onnx_runner).
+train = [
+  "torch",
+  "ultralytics",
+]
 dev = [
   "pytest",
   "requests",
