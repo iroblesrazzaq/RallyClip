@@ -1,0 +1,51 @@
+{
+  "_meta": {
+    "note": "Scope ledger. `passing` requires running the verification command in-session with evidence. Update in the same commit as the work.",
+    "py": "/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/RallyClip/.venv-train/bin/python3",
+    "run_from": "repo root, PYTHONPATH=src:tests"
+  },
+  "features": [
+    {
+      "id": "unit-suite",
+      "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
+      "status": "passing",
+      "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
+      "evidence": "2026-07-03: 212 passed, 44 deselected, 27.5s"
+    },
+    {
+      "id": "golden-cli-parity",
+      "name": "CLI end-to-end golden parity on committed fixture clip (0.25s boundary tolerance)",
+      "status": "passing",
+      "verification": "PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_cli_golden_parity.py",
+      "evidence": "2026-07-03: 1 passed, 14.0s"
+    },
+    {
+      "id": "compileall",
+      "name": "src+tests byte-compile cleanly",
+      "status": "passing",
+      "verification": "$PY -m compileall -q src tests",
+      "evidence": "2026-07-03: exit 0, no output"
+    },
+    {
+      "id": "e2e-suite",
+      "name": "Full e2e set: L1 backend golden jobs, L2 playwright UI, quality harness, court e2e (44 tests)",
+      "status": "active",
+      "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m e2e -p no:cacheprovider",
+      "evidence": "Not run this session (heavy; needs playwright chromium + local footage for quality/court e2e). CI ran it green as of 2026-07-04 snapshot per container CLAUDE.md; golden-cli-parity subset verified locally 2026-07-03."
+    },
+    {
+      "id": "onnx-pose-swap",
+      "name": "Replace Ultralytics/torch pose extraction with torch-free ONNX Runtime runner via RuntimeDeps.PoseExtractor seam",
+      "status": "active",
+      "verification": "Stage 3 of docs/onnx-pose-parity-plan.md: run CLI on golden clip with OnnxPoseExtractor injected; segments within existing 0.25s tolerance; then full unit + e2e gates",
+      "evidence": "Plan committed (dca2ef2); imgsz-960 contract fix committed (bb72dd6); decoded-contract parity vs Ultralytics measured in ../YOLO-ONNX (IoU >=0.99999, kpt err <=3e-4 px on smoke set). No OnnxPoseExtractor in this repo yet."
+    },
+    {
+      "id": "frozen-app-e2e",
+      "name": "Frozen .app smoke/e2e (rebuild v0.1.0-class app from refactored code, run L1 suite against binary)",
+      "status": "not_started",
+      "verification": "Planned: build dist/RallyClip.app, dispatch --backend-only, reuse L1 suite; see docs/e2e_test_plan.md + docs/cli-in-release-binary-plan.md",
+      "evidence": "Shipped v0.1.0 was built from pre-refactor code; rebuild+smoke is a known pending task (container CLAUDE.md)."
+    }
+  ]
+}
