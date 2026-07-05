@@ -45,7 +45,7 @@ from rallyclip_core.library import SavedMatchStore, new_item_id
 from rallyclip_core.playback import build_playback_manifest, playback_manifest_payload
 
 JobDict = Dict[str, Any]
-FIXED_YOLO_MODEL = "yolov8n-pose.pt"
+FIXED_YOLO_MODEL = "yolov8n-pose-960-dynamic.onnx"
 GITHUB_REPO = "iroblesrazzaq/RallyClip"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 GITHUB_LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -1477,6 +1477,7 @@ def _resolve_yolo_weights(cfg: Dict[str, Any]) -> str:
         None,
         env_var="RALLYCLIP_YOLO_MODEL_PATH",
         relatives=[
+            f"models/rallyclip_v0.3.1/{FIXED_YOLO_MODEL}",
             f"models/{FIXED_YOLO_MODEL}",
             FIXED_YOLO_MODEL,
         ],

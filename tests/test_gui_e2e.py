@@ -35,7 +35,6 @@ MODEL_ONNX = REPO_ROOT / "models" / "rallyclip_v0.3.1" / "model.onnx"
 
 pytest.importorskip("requests")
 pytest.importorskip("cv2")
-pytest.importorskip("ultralytics")
 pytest.importorskip("onnxruntime")
 pytest.importorskip("av")
 
@@ -170,13 +169,15 @@ def test_health_ok(backend: BackendClient):
 
 
 def test_config_defaults_contract(backend: BackendClient):
+    from gui import app as gui_app
+
     resp = backend.get("/api/config/defaults")
     assert resp.status_code == 200
     payload = resp.json()
     defaults = payload["defaults"]
     assert defaults["fps"] == 5.0
     assert defaults["feature_set"] == "v1"
-    assert payload["yolo_model"] == "yolov8n-pose.pt"
+    assert payload["yolo_model"] == gui_app.FIXED_YOLO_MODEL
     assert defaults["yolo_size"] == "nano"
     assert "available_devices" in payload
     assert "auto_device" in payload
