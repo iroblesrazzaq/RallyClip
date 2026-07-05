@@ -1,0 +1,30 @@
+{
+  "cpu": {
+    "s": 2.571,
+    "fps": 15.6
+  },
+  "coreml_default": {
+    "s": 2.065,
+    "fps": 19.4,
+    "load_s": 0.8,
+    "speedup_vs_cpu": 1.25,
+    "max_abs_diff": 0.25006103515625,
+    "confident_det_max_abs_diff": 0.24688720703125
+  },
+  "coreml_mlprogram": {
+    "s": 2.135,
+    "fps": 18.7,
+    "load_s": 1.6,
+    "speedup_vs_cpu": 1.2,
+    "max_abs_diff": 0.003997802734375,
+    "confident_det_max_abs_diff": 0.000244140625
+  },
+  "coreml_mlprogram_cpu_gpu": {
+    "s": 2.286,
+    "fps": 17.5,
+    "load_s": 1.4,
+    "speedup_vs_cpu": 1.12,
+    "max_abs_diff": 0.003997802734375,
+    "confident_det_max_abs_diff": 0.000244140625
+  }
+}
