@@ -987,7 +987,9 @@ class RallyClipApp {
         const point = this.pointIntervals[nextPointIndex];
         // Edits can rewrite pointIntervals after the standby was prepared;
         // a mismatched target means the pre-seek landed in the wrong place.
-        if (!point || point.start !== state.target || Math.abs(standby.currentTime - state.target) > 0.75) {
+        // One-sided tolerance: forward overshoot stays inside the point, but a
+        // backward miss would briefly play inter-point gap content.
+        if (!point || point.start !== state.target || standby.currentTime < state.target - 0.1 || standby.currentTime > state.target + 0.75) {
             this.directStandby = null;
             return false;
         }
