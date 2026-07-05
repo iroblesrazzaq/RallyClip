@@ -334,7 +334,9 @@ def run_pipeline(cfg: RunConfig) -> int:
     if cfg.emit_json:
         print(json.dumps(run_result_payload(result), indent=2))
     else:
-        print(f"✅ Done. Outputs in {cfg.output_dir}")
+        # ASCII only: Windows consoles default to cp1252 and a bare CLI
+    # (no ultralytics stdout reconfiguration) crashes on emoji.
+    print(f"Done. Outputs in {cfg.output_dir}")
     return 0
 
 
