@@ -166,7 +166,7 @@
       "Bundle-size impact measured (MLX deps vs onnxruntime)."
     ],
     "evidence": "Spike complete 2026-07-05 (docs/perf/coreml-spike/ on RallyClip-perf + DECISIONS.md entry): CoreML EP in stock onnxruntime 1.24.4 with a STATIC 544x960 re-export (MLProgram, MLComputeUnits=ALL) runs pose at 120.4 fps vs 15.6 fps shipping CPU path (8.05x); confident-detection divergence 1.2e-4. Dynamic-axes model blocks ANE (only 1.2x). LSTM measured slower on CoreML \u2014 stays CPU. Decision: no MLX rewrite; productionize static export + opt-in CoreML provider (CPU stays parity default). Remaining: bundle static export, provider flag + fallback, sweep benchmark, golden tolerance policy. Spike docs MERGED 2026-07-05 (PR #30). Runtime productionization not started.",
-    "notes": "Requested 2026-07-05. Consider coremltools/onnxruntime-coreml EP as a lower-risk alternative to full MLX rewrite; decide in a spike first. Spike verdict 2026-07-05: CoreML EP wins, MLX rejected."
+    "notes": "Requested 2026-07-05. Consider coremltools/onnxruntime-coreml EP as a lower-risk alternative to full MLX rewrite; decide in a spike first. Spike verdict 2026-07-05: CoreML EP wins, MLX rejected. Re-confirmed 2026-07-05: user wants the inference speedup shipped ('speeding up the inference for sure')."
   },
   {
     "id": "segment-edit-mode",
@@ -218,7 +218,7 @@
       "17-sample sweep re-run with the new model for sanity."
     ],
     "evidence": "",
-    "notes": "Requested 2026-07-05. Blocks on/pairs with training-quality-harness so improvement is measurable. See also e2e-seg model memory (per-frame segment head)."
+    "notes": "Requested 2026-07-05. Blocks on/pairs with training-quality-harness so improvement is measurable. See also e2e-seg model memory (per-frame segment head). Re-confirmed as a near-term priority 2026-07-05 during v0.2 DMG QA ('improve our models, so retrain on our big thing')."
   },
   {
     "id": "macos-app-distribution",
@@ -236,5 +236,37 @@
     ],
     "evidence": "",
     "notes": "Requested 2026-07-05 ('making it an app'). Spec already has entitlements file; bundle_identifier currently None in RallyClip.spec."
+  },
+  {
+    "id": "continuous-playback-no-gaps",
+    "priority": 11,
+    "area": "gui",
+    "title": "Continuous point playback with no gaps between plays",
+    "user_visible_behavior": "When watching a match in the viewer, playback jumps from the end of one point directly to the start of the next with no pause: audio and video are continuous. Today there is a noticeable gap between plays (audio stops, then restarts), which the user can hear; that gap must be eliminated.",
+    "status": "not_started",
+    "evidence_plan": [
+      "Reproduce and measure the current inter-point gap (audio dropout duration) in the direct-playback path.",
+      "Identify the cause (seek latency on the <video> element vs scheduling logic in playback.py/script.js).",
+      "Playback transitions between consecutive points are seamless to the ear on a real match video.",
+      "Automated check where feasible (e.g. playwright asserting currentTime jumps without a paused state, or bounded transition time).",
+      "Manual QA sign-off from the user on a real match."
+    ],
+    "evidence": "",
+    "notes": "Requested 2026-07-05 after manual QA of the v0.2 DMG. Applies to the point-only viewing experience (direct playback via /api/library/<id>/source with client-side seeks). Likely fixes: preload/seek-ahead before the current point ends, or crossfade/buffered double-video approach."
+  },
+  {
+    "id": "edit-mode-timeline-zoom",
+    "priority": 12,
+    "area": "gui",
+    "title": "Zoom in/out on the edit-mode timeline",
+    "user_visible_behavior": "In segment edit mode, the user can zoom the timeline in and out so that short points (a few seconds in a long match) become wide enough to grab and drag their trim handles precisely. Most points are small on the full-match timeline today, making timing adjustments hard.",
+    "status": "not_started",
+    "evidence_plan": [
+      "Zoom control (buttons, pinch, or scroll) scales the edit track around the playhead/selected point.",
+      "Trim handles remain draggable and accurate at all zoom levels.",
+      "Playwright e2e covering zoom + drag-trim of a short point."
+    ],
+    "evidence": "",
+    "notes": "Requested 2026-07-05 during DMG QA but explicitly DEFERRED by the user ('that feature is a little harder to do, so skip that for now; editing is lower priority'). Do not start until continuous playback and inference speedup are done."
   }
 ]
