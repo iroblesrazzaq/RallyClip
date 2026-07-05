@@ -23,3 +23,24 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
 - Test interpreter standardized on `../RallyClip/.venv-train/bin/python3` because it
   was verified in-session (212 passed); container CLAUDE.md's `tennis_env` note kept
   as an unverified alternative.
+
+## 2026-07-04 — ONNX pose runner is the production path (PR #26)
+
+- **What:** manifest points `feature_pipeline.yolo_model` at a bundled dynamic-axes
+  960 ONNX; PoseExtractor and CourtDetector dispatch on the weights extension;
+  torch/ultralytics moved to the `[train]` extra.
+- **Why:** byte-equal segments on 17/17 sweep samples + golden clip; ~1.45× faster,
+  ~40% less RSS; removes torch from install and bundle.
+- **Rejected:** YOLO26 end-to-end export (NMS in graph — different output contract,
+  raises typed error instead of silent mis-decode); keeping ultralytics as runtime
+  fallback (would keep torch in the dependency closure).
+
+## 2026-07-04 — System webview shell replaces QtWebEngine (PR #27)
+
+- **What:** pywebview (WKWebView/WebView2) window over the unchanged Flask backend;
+  deleted gui/native_player.py and the QWebChannel bridge.
+- **Why:** the native Qt player existed only because Chromium-in-QtWebEngine ships no
+  H.264/HEVC; the system webview plays both, and the frontend already had a complete
+  HTML5 fallback. Bundle 765→266MB; ~1600 lines deleted; frontend unchanged.
+- **Rejected:** pruning unused Qt modules only (~60-100MB, keeps Chromium + native
+  player complexity); Tauri/Electron-style rewrite (new stack for no extra benefit).

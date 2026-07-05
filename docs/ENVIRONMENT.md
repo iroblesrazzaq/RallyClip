@@ -4,7 +4,7 @@
 
 Verified interpreter (2026-07-03): the sibling clone's venv —
 `/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/RallyClip/.venv-train/bin/python3`
-(Python 3.11.14; torch 2.12, ultralytics, cv2 4.13, av, onnxruntime, pytest 9.0.3).
+(Python 3.11.14; cv2 4.13, av, onnxruntime, pytest 9.0.3; torch/ultralytics installed for training but unused by the runtime).
 No venv in this worktree. Alternative full-stack interpreters (unverified this session):
 conda `tennis_env`, `/Users/ismaelrobles-razzaq/anaconda3/bin/python`.
 
@@ -12,7 +12,7 @@ Fresh setup (if you need your own env):
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev,desktop]"        # core + pytest + PySide6
+pip install -e ".[dev,desktop]"        # core + pytest + pywebview; add [train] for torch/ultralytics
 pip install -e ".[e2e-ui]" && playwright install chromium   # browser e2e only
 pip install -e ".[pack]"               # PyInstaller packaging only
 ```
@@ -25,7 +25,7 @@ From a checkout without editable install, prefix commands with `PYTHONPATH=src:t
 rallyclip --help                 # CLI (entry: cli:main)
 rallyclip --video match.mp4      # segment a match
 rallyclip gui                    # Flask dev UI in browser
-rallyclip-desktop                # PySide6/QWebEngine shell (entry: gui.desktop:main)
+rallyclip-desktop                # pywebview shell, WKWebView/WebView2 (entry: gui.desktop:main)
 ```
 
 Local runtime config: `config.toml` (don't commit machine-specific paths).
