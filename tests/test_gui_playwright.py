@@ -737,13 +737,13 @@ def test_ui_direct_playback_swaps_to_preseeked_standby_between_points(page: Page
             const app = window.rallyClipApp;
             app.matchVideo.muted = true;
             app.matchVideoBuffer.muted = true;
-            app.seekViewerToSourceTime(1.4, true);
+            app.seekViewerToSourceTime(1.0, true);
         }"""
     )
     # Playback must roll out of point 1 (1-2s) and land in point 2 (4-5s) on
     # its own — the watcher prepares the standby and swaps at the boundary.
     page.wait_for_function(
-        "() => window.rallyClipApp.getViewerSourceTime() >= 3.9",
+        "() => window.rallyClipApp.getViewerSourceTime() >= 4.0",
         timeout=20_000,
     )
     after = page.evaluate(
@@ -762,7 +762,7 @@ def test_ui_direct_playback_swaps_to_preseeked_standby_between_points(page: Page
     assert after["direct"] is True
     assert after["paused"] is False
     assert after["windowStart"] == 0
-    assert 3.9 <= after["time"] <= 5.1
+    assert 4.0 <= after["time"] <= 5.1
 
 
 def test_ui_segment_edit_mode_trims_adds_deletes_and_resets(page: Page, ui_backend: BackendClient):
