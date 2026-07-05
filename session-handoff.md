@@ -16,8 +16,8 @@ Updated: 2026-07-04 (Session 10)
   docs/{REPO_MAP,PROGRESS,DECISIONS,ENVIRONMENT,testing}.md.
 
 Sibling independent repos: `YOLO-ONNX/` (torch-free ONNX pose runner + parity
-harness) and `rallyclip-prod/` (Modal cloud experiments). Cross-repo context:
-`../CLAUDE.md` (container level).
+harness) and `rallyclip-prod/` (Modal cloud experiments, deprecated). Cross-repo
+context: the sibling table in `RallyClip-perf/docs/REPO_MAP.md`.
 
 ## GitHub state
 
