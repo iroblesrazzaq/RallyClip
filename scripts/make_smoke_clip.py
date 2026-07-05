@@ -20,11 +20,17 @@ import numpy as np
 WIDTH, HEIGHT, FPS = 1280, 720, 10
 
 
-def make_clip(out_path: Path, duration_s: float = 30.0, width: int = WIDTH, height: int = HEIGHT) -> None:
+def make_clip(
+    out_path: Path,
+    duration_s: float = 30.0,
+    width: int = WIDTH,
+    height: int = HEIGHT,
+    codec: str = "mpeg4",
+) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     total_frames = int(duration_s * FPS)
     with av.open(str(out_path), mode="w") as container:
-        stream = container.add_stream("mpeg4", rate=FPS)
+        stream = container.add_stream(codec, rate=FPS)
         stream.width = width
         stream.height = height
         stream.pix_fmt = "yuv420p"
