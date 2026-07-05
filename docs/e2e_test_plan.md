@@ -130,8 +130,8 @@ L3 — frozen bundle (CI, extend `release.yml`)
 
 - **Synthetic clip**: reuse `scripts/make_smoke_clip.py` (30s @ 10fps, mpeg4). One
   shared session fixture builds it once into a tmp dir.
-- **YOLO weights**: download once into a cached `models/` (nano); skip the layer if
-  ultralytics/weights unavailable (mirror `test_court_detection_e2e.py` gating).
+- **YOLO weights**: the pose ONNX ships in-repo under `models/rallyclip_v0.3.1/`
+  (torch-free runtime since 2026-07-04); no download step.
 - **Live backend fixture**: start the real server via `start_backend_thread()` on an
   ephemeral port (port 0 → OS-assigned), poll `/api/health` until up, yield base
   URL, tear down thread + temp jobs/output dirs. Reused by all L1 (and L2) tests.
