@@ -4,7 +4,7 @@ RallyClip is an open-source tool for tennis video segmentation. It extracts rall
 
 This repo ships:
 - `rallyclip` CLI for local inference
-- `rallyclip-desktop` native desktop app (PySide6)
+- `rallyclip-desktop` native desktop app (pywebview: WKWebView on macOS, WebView2 on Windows)
 - `rallyclip gui` browser-based local UI for development
 - open training pipeline code
 
@@ -30,7 +30,7 @@ The `refactor/runtime-api-engine` branch is splitting the runtime into:
 - UI clients: native macOS, browser dev UI, and future mobile clients own their
   own video rendering and controls.
 
-See `ENVIRONMENT.md` and `docs/runtime-api-engine-refactor.md` for the current
+See `docs/ENVIRONMENT.md` and `docs/runtime-api-engine-refactor.md` for the current
 branch handoff and test commands.
 
 
@@ -180,16 +180,12 @@ notarization, stapling, DMG creation, and release upload.
 To cut a release locally:
 ```bash
 pip install ".[desktop,pack]"
-python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt')"
-pyinstaller --noconfirm --onedir --name RallyClip src/gui/desktop.py \
-  --hidden-import=gui.app \
-  --hidden-import=cli.main \
-  --add-data "src/gui/frontend:gui/frontend" \
-  --add-data "models/rallyclip_v0.3.1:models/rallyclip_v0.3.1" \
-  --add-data "src/preprocessing/default_court_mask.png:preprocessing"
+pyinstaller --noconfirm RallyClip.spec
 ```
 
-Release artifacts include bundled RallyClip ONNX assets and download/cache YOLO weights during the build step.
+The runtime is torch-free: pose inference runs on the ONNX bundled in
+`models/rallyclip_v0.3.1/` via onnxruntime (`extraction/yolo_onnx_runner.py`).
+Training and the legacy .pt path need `pip install ".[train]"`.
 
 ### Headless mode
 The shipped binary can run the full pipeline without launching the GUI. Pass

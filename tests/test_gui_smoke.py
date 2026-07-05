@@ -20,14 +20,6 @@ def test_resolve_frontend_dir_finds_repo_assets():
     assert (frontend / "index.html").exists()
 
 
-def test_desktop_logo_asset_resolves():
-    from gui.desktop import _resource_path
-
-    logo = _resource_path("docs", "rallyclip_logo_cropped.png")
-    assert logo is not None
-    assert logo.is_file()
-
-
 def test_gui_health_and_defaults(tmp_path, monkeypatch):
     model_dir = write_manifest_model_dir(tmp_path / "models" / "rallyclip_v0.3.1")
     monkeypatch.chdir(tmp_path)

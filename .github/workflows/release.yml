@@ -75,10 +75,14 @@ jobs:
             --hidden-import=runtime.device \
             --hidden-import=runtime.defaults \
             --hidden-import=runtime.paths \
+            --hidden-import=gui.analysis_worker \
+            --hidden-import=webview \
             --collect-submodules=flask \
             --exclude-module=PyQt5 \
             --exclude-module=PyQt6 \
             --exclude-module=PySide2 \
+            --exclude-module=PySide6 \
+            --exclude-module=shiboken6 \
             --exclude-module=openvino \
             --add-data "src/gui/frontend${SEP}gui/frontend" \
             --add-data "models/rallyclip_v0.3.1${SEP}models/rallyclip_v0.3.1" \
@@ -143,10 +147,8 @@ jobs:
           BIN="$(pwd)/dist/RallyClip/RallyClip"
           if [ "${{ runner.os }}" = "Windows" ]; then BIN="$BIN.exe"; fi
 
-          # Boot the GUI personality headlessly and prove Flask + Qt +
-          # WebEngine all come up in the frozen bundle (catches missing
-          # QtWebEngine helpers/resources per-OS).
-          export QT_QPA_PLATFORM=offscreen
+          # Boot the GUI personality and prove Flask + the system webview
+          # (WKWebView / WebView2) come up in the frozen bundle.
           export RALLYCLIP_GUI_PORT=8765
           "$BIN" > gui_probe.log 2>&1 &
           GUI_PID=$!
