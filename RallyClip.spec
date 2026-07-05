@@ -21,7 +21,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['PyQt5', 'PyQt6', 'PySide2', 'openvino', 'torch', 'torchvision', 'ultralytics', 'PySide6', 'shiboken6'],
+    excludes=['PyQt5', 'PyQt6', 'PySide2', 'openvino', 'torch', 'torchvision', 'ultralytics', 'PySide6', 'shiboken6', 'tensorflow', 'keras', 'tf_keras', 'tensorflow_hub', 'tensorboard'],
     noarchive=False,
     optimize=0,
 )
