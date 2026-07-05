@@ -157,7 +157,7 @@
     "area": "runtime_performance",
     "title": "MLX backend so models run fast on Apple hardware",
     "user_visible_behavior": "On Apple-silicon Macs, pose + LSTM inference runs on the GPU/ANE via MLX (or an equivalent CoreML execution path), cutting analysis time versus the current CPU-only onnxruntime path, with identical (or tolerance-documented) segment output.",
-    "status": "not_started",
+    "status": "in_progress",
     "evidence_plan": [
       "YOLOv8n-pose and LSTM weights converted to MLX (or CoreML EP) with a documented conversion script.",
       "Golden-clip segments match the onnxruntime CPU path byte-equal or within the documented 0.25s tolerance.",
@@ -165,8 +165,8 @@
       "Runtime selects the accelerated path on Apple silicon and falls back to CPU onnxruntime elsewhere.",
       "Bundle-size impact measured (MLX deps vs onnxruntime)."
     ],
-    "evidence": "",
-    "notes": "Requested 2026-07-05. Consider coremltools/onnxruntime-coreml EP as a lower-risk alternative to full MLX rewrite; decide in a spike first."
+    "evidence": "Spike complete 2026-07-05 (docs/perf/coreml-spike/ on RallyClip-perf + DECISIONS.md entry): CoreML EP in stock onnxruntime 1.24.4 with a STATIC 544x960 re-export (MLProgram, MLComputeUnits=ALL) runs pose at 120.4 fps vs 15.6 fps shipping CPU path (8.05x); confident-detection divergence 1.2e-4. Dynamic-axes model blocks ANE (only 1.2x). LSTM measured slower on CoreML \u2014 stays CPU. Decision: no MLX rewrite; productionize static export + opt-in CoreML provider (CPU stays parity default). Remaining: bundle static export, provider flag + fallback, sweep benchmark, golden tolerance policy.",
+    "notes": "Requested 2026-07-05. Consider coremltools/onnxruntime-coreml EP as a lower-risk alternative to full MLX rewrite; decide in a spike first. Spike verdict 2026-07-05: CoreML EP wins, MLX rejected."
   },
   {
     "id": "segment-edit-mode",
@@ -174,7 +174,7 @@
     "area": "gui",
     "title": "Edit mode: trim/add/delete points, non-destructive",
     "user_visible_behavior": "In the library, an Edit mode lets the user drag point boundaries (like trimming a video in iPhone Photos) to extend/shrink a point or shift its times, add a new point, and delete a point. Edits write to a duplicate CSV (segments_edited.csv); the original segments.csv is never modified. When an edited CSV exists, exports and playback use it. A 'Reset to original' button deletes the edited copy and restores original behavior.",
-    "status": "not_started",
+    "status": "in_review",
     "evidence_plan": [
       "Entering edit mode creates segments_edited.csv as a copy of segments.csv (original untouched, verified byte-equal after edits).",
       "Drag handles adjust a point's start/end; changes persist to the edited CSV via /api/*.",
@@ -183,7 +183,7 @@
       "Reset-to-original removes the edited CSV and the UI reflects original segments.",
       "Playwright e2e covers the full edit->export->reset loop."
     ],
-    "evidence": "",
+    "evidence": "Implemented 2026-07-05 on branch feat/segment-edit-mode (stacked on fix/viewer-direct-playback). Backend: segments_edited.csv precedence in playback manifest//segments//csv//export, PUT /api/library/<id>/segments, DELETE .../segments/edits (reset), export.mp4 invalidated on edit/reset; original segments.csv never written. Frontend: Edit points mode in viewer \u2014 drag trim handles on timeline, add/delete point, Reset to original, autosave per edit. Tests: 3 backend unit tests (roundtrip/validation/export-invalidation) + Playwright e2e (trim-drag, add, delete, reset) \u2014 30/30 smoke, 7/7 playwright module green.",
     "notes": "Requested 2026-07-05. All behavior through /api/* per architecture invariant; timeline drag UI in the existing frontend player."
   },
   {
