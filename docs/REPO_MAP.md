@@ -1,7 +1,7 @@
 # REPO_MAP — RallyClip (worktree: RallyClip-perf; branch: see docs/PROGRESS.md)
 
-Built at commit `33eb13d` (2026-07-04). Staleness check:
-`git diff --stat 33eb13d.. -- src tests scripts configs .github pyproject.toml`
+Built at commit `42da683` (2026-07-05). Staleness check:
+`git diff --stat 42da683.. -- src tests scripts configs .github pyproject.toml`
 If that shows changes not reflected here, update this map in the same commit as your work.
 
 ## Container context (one level up)
@@ -37,7 +37,8 @@ dir is not a git repo; this table is the authoritative summary):
 - **Analysis pipeline behavior / segments wrong** → `src/rallyclip_engine/models.py` (AnalysisModel ABC + pipeline impls), `src/rallyclip_core/pipelines.py`, `models/rallyclip_v0.3.1/manifest.json`, then `src/rallyclip_core/intervals.py`.
 - **CLI** → `src/cli/main.py` (single file; `main()` at :337), `tests/test_cli_config_contract.py`, `tests/test_cli_json_output.py`.
 - **GUI/backend HTTP API** → `src/gui/app.py` (Flask, module-global config — see seams), `src/rallyclip_api/services.py`, `tests/test_api_route_contracts.py`, `tests/test_api_job_lifecycle.py`.
-- **Desktop shell / playback** → `src/gui/desktop.py` (pywebview shell), `src/rallyclip_core/playback.py`, `tests/test_native_playback.py` (server-side proxy/descriptor only; the Qt native player was deleted 2026-07-04).
+- **Desktop shell / playback** → `src/gui/desktop.py` (pywebview shell), `src/rallyclip_core/playback.py`, `tests/test_native_playback.py` (server-side proxy/descriptor only; the Qt native player was deleted 2026-07-04). Viewer streams `/api/library/<id>/source` directly (Range/206); WebM preview windows are the codec fallback.
+- **Segment edit mode** → `src/gui/app.py` (`PUT .../segments`, `DELETE .../segments/edits`), `src/rallyclip_core/library.py` (`resolve_segments`: `segments_edited.csv` wins, original never written), `src/rallyclip_core/intervals.py` (`write_point_intervals`), frontend `src/gui/frontend/script.js` (edit-mode section), e2e `tests/test_gui_playwright.py::test_ui_segment_edit_mode_*`.
 - **Pose extraction (ONNX runtime)** → `src/extraction/yolo_onnx_runner.py` + `src/extraction/pose_extractor.py` (dispatch on weights extension), `tests/test_yolo_onnx_runner.py`, `docs/onnx-pose-parity-plan.md`, `../YOLO-ONNX/scripts/parity_v8n_960.py`.
 - **Court detection** → `src/preprocessing/court_detector_impl.py`, `tests/test_court_detection_deterministic.py`, `tests/helpers/court_fixtures.py`; regen fixtures with `scripts/court_fixtures_gen.py`.
 - **Features/preprocessing (runtime)** → `src/features/feature_engineer.py`, `src/preprocessing/data_preprocessor.py`, contract tests `tests/test_runtime_*_contract.py`.
