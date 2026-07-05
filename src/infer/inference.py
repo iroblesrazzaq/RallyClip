@@ -424,7 +424,7 @@ def extract_segments_from_binary(pred: np.ndarray) -> List[Tuple[int, int]]:
 
 def write_segments_csv(segments: List[Tuple[int, int]], output_csv_path: str, fps: float, overwrite: bool = False) -> None:
     if os.path.exists(output_csv_path) and not overwrite:
-        print(f"✓ Output exists, skipping write (set --overwrite to replace): {output_csv_path}")
+        print(f"Output exists, skipping write (set --overwrite to replace): {output_csv_path}")
         return
     os.makedirs(os.path.dirname(output_csv_path) or ".", exist_ok=True)
     with open(output_csv_path, mode="w", newline="") as f:
