@@ -54,7 +54,10 @@ class RallyClipApp {
         this.directProbeSeq = 0;
         this.directStandby = null;
         this.directWatcherActive = false;
-        this.directStandbyLeadSeconds = 5;
+        // Pre-seek the standby well before the boundary: extra lead is cheap
+        // (the element just buffers ahead) and buys headroom on slow disks so
+        // the swap never has to fall back to a cold seek mid-play.
+        this.directStandbyLeadSeconds = 8;
         this.editMode = false;
         this.editSelectedIndex = -1;
         this.editDrag = null;
