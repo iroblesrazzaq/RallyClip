@@ -753,3 +753,25 @@ def test_frozen_data_root_migrates_legacy_home_dir(tmp_path, monkeypatch):
     (tmp_path / "RallyClip").mkdir()
     assert gui_app._frozen_data_root() == root
     assert (tmp_path / "RallyClip").is_dir()
+def test_library_source_streams_with_range_support(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    item_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"0123456789abcdef")
+    (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    client = gui_app.app.test_client()
+
+    full = client.get("/api/library/match-1/source")
+    assert full.status_code == 200
+    assert full.data == b"0123456789abcdef"
+    assert full.mimetype == "video/mp4"
+
+    partial = client.get("/api/library/match-1/source", headers={"Range": "bytes=4-7"})
+    assert partial.status_code == 206
+    assert partial.data == b"4567"
+    assert partial.headers.get("Content-Range") == "bytes 4-7/16"
+
+    assert client.get("/api/library/no-such-item/source").status_code == 404
