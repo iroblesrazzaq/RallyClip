@@ -1,35 +1,37 @@
 # PROGRESS — overwrite me at every session end
 
-_Last updated: 2026-07-03 (session: harness creation)._
+_Last updated: 2026-07-04 (session: torch-free runtime + system-webview shell)._
 
-## Repo state as found
+## Repo state
 
-- Branch `refactor/runtime-api-engine` at `bb72dd6`, clean tree. Content-equal to
-  `main`/`feat/first-release` per the container CLAUDE.md snapshot (verify with git).
-- Default gate: 212 passed / 44 deselected (27.5s). Golden CLI parity: 1 passed (14s).
-  compileall clean. 23 pre-existing ruff errors, no lint config (see docs/testing.md).
-- CI green (first time in repo history) as of the 2026-07-04 snapshot; not yet a
-  required status check on protected `main`.
+- Branch `feat/pywebview-shell` (stacked on `feat/onnx-pose-runner`), clean, pushed.
+- Open PRs, both CI-green (3 OS × test/e2e): **#26** torch-free ONNX runtime,
+  **#27** pywebview shell. Merge #26 first, then #27; the user merges.
+- Gates: fast suite 202 passed / 1 skipped; e2e 15 passed local; golden CLI parity
+  byte-equal (incl. from the frozen bundle and a torch-free venv).
 
-## What this session did
+## What shipped this session
 
-Created the doc harness: AGENTS.md, features.json, docs/{REPO_MAP,PROGRESS,DECISIONS,
-ENVIRONMENT,testing}.md, docs/archive/. Replaced the old generic root AGENTS.md and
-moved root ENVIRONMENT.md content into docs/ENVIRONMENT.md. No source code changed.
+1. **Torch-free runtime (PR #26)**: pose + court-detection person inference run on
+   `models/rallyclip_v0.3.1/yolov8n-pose-960-dynamic.onnx` via
+   `src/extraction/yolo_onnx_runner.py` (onnxruntime+numpy+cv2). 17/17 sweep samples
+   byte-equal vs torch; torch/ultralytics demoted to `[train]`; typed
+   UnsupportedOnnxOutputShapeError on non-pose heads. Results:
+   docs/onnx-pose-parity-plan.md.
+2. **System-webview shell (PR #27)**: pywebview (WKWebView/WebView2) replaces
+   QtWebEngine/PySide6; `gui/native_player.py` + QWebChannel bridge deleted (the
+   system webview plays H.264/HEVC natively; the frontend's HTML5 fallback was
+   already complete). Bundle 765MB → 266MB .app / 113MB zipped (v0.1.0 dmg: 558MB).
+   PyAV is now the only bundled FFmpeg.
 
 ## Next steps (in order)
 
-1. **ONNX pose swap** (`onnx-pose-swap` in features.json — the active feature).
-   Follow `docs/onnx-pose-parity-plan.md`; currently at Stage 0/1 boundary:
-   contract audited, plan committed, parity numbers exist in `../YOLO-ONNX` at 960.
-   Next concrete step: Stage 1 — export `yolov8n-pose.pt` → ONNX at imgsz 960
-   (rect/dynamic axes, nms=False and nms=True variants) and run test 1a/1b.
-2. **Frozen-app rebuild + smoke test** from current code (v0.1.0 shipped from
-   pre-refactor code) — `docs/e2e_test_plan.md`, `docs/cli-in-release-binary-plan.md`.
-3. Housekeeping candidates: make CI a required status check on `main`; config-object
-   refactor for `gui/app.py` module globals (`docs/runtime-config-refactor-plan.md`).
-
-## Blockers / open questions
-
-- None hard. E2e suite not verified locally this session (needs playwright install;
-  quality/court e2e need local footage).
+1. User merges #26 then #27; tag a release so release.yml (already updated) produces
+   the torch-free, Qt-free dmg. Release QA: WebView2 presence on older Win10;
+   confirm HTML5 playback suffices → then delete the gui/app.py playback-proxy
+   endpoints.
+2. Optional size follow-up: videoio-less OpenCV wheel (core+imgproc+calib3d+features2d)
+   kills cv2's 75MB direct-linked FFmpeg → app ~190MB. Build-infra chore, zero
+   algorithm risk.
+3. Backlog: training-quality-harness, macos-native-app-storage (see
+   ../RallyClip/feature_list.json), perf streaming loop (docs/perf/).

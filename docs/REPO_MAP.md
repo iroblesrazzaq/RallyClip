@@ -1,7 +1,7 @@
-# REPO_MAP — RallyClip (worktree: RallyClip-perf, branch `refactor/runtime-api-engine`)
+# REPO_MAP — RallyClip (worktree: RallyClip-perf; branch: see docs/PROGRESS.md)
 
-Built at commit `bb72dd6` (2026-07-03). Staleness check:
-`git diff --stat bb72dd6.. -- src tests scripts configs .github pyproject.toml`
+Built at commit `33eb13d` (2026-07-04). Staleness check:
+`git diff --stat 33eb13d.. -- src tests scripts configs .github pyproject.toml`
 If that shows changes not reflected here, update this map in the same commit as your work.
 
 ## Container context (one level up)
@@ -37,8 +37,8 @@ This checkout lives in `rallyclip_container/` beside three siblings — see the 
 - **Analysis pipeline behavior / segments wrong** → `src/rallyclip_engine/models.py` (AnalysisModel ABC + pipeline impls), `src/rallyclip_core/pipelines.py`, `models/rallyclip_v0.3.1/manifest.json`, then `src/rallyclip_core/intervals.py`.
 - **CLI** → `src/cli/main.py` (single file; `main()` at :337), `tests/test_cli_config_contract.py`, `tests/test_cli_json_output.py`.
 - **GUI/backend HTTP API** → `src/gui/app.py` (Flask, module-global config — see seams), `src/rallyclip_api/services.py`, `tests/test_api_route_contracts.py`, `tests/test_api_job_lifecycle.py`.
-- **Desktop shell / playback** → `src/gui/desktop.py`, `src/gui/native_player.py`, `src/rallyclip_core/playback.py`, `tests/test_native_playback.py`.
-- **Pose extraction / the ONNX swap** → `src/extraction/pose_extractor.py`, `src/rallyclip_engine/runtime.py`, `docs/onnx-pose-parity-plan.md`, `../YOLO-ONNX/scripts/parity_v8n_960.py`.
+- **Desktop shell / playback** → `src/gui/desktop.py` (pywebview shell), `src/rallyclip_core/playback.py`, `tests/test_native_playback.py` (server-side proxy/descriptor only; the Qt native player was deleted 2026-07-04).
+- **Pose extraction (ONNX runtime)** → `src/extraction/yolo_onnx_runner.py` + `src/extraction/pose_extractor.py` (dispatch on weights extension), `tests/test_yolo_onnx_runner.py`, `docs/onnx-pose-parity-plan.md`, `../YOLO-ONNX/scripts/parity_v8n_960.py`.
 - **Court detection** → `src/preprocessing/court_detector_impl.py`, `tests/test_court_detection_deterministic.py`, `tests/helpers/court_fixtures.py`; regen fixtures with `scripts/court_fixtures_gen.py`.
 - **Features/preprocessing (runtime)** → `src/features/feature_engineer.py`, `src/preprocessing/data_preprocessor.py`, contract tests `tests/test_runtime_*_contract.py`.
 - **Training pipeline** → `docs/training.md`, `src/training/pipeline.py`, `configs/train/base.yaml`, `train.py`.
@@ -48,13 +48,13 @@ This checkout lives in `rallyclip_container/` beside three siblings — see the 
 ## Key seams & entry points
 
 - `src/rallyclip_core/` — pure contracts (`RunRequest`→`RunResult`, ProgressEvent, SavedMatchStore, playback scheduling). **Rule: no heavy imports here** (torch/ultralytics/av/cv2/numpy); `tests/test_gui_startup_imports.py` enforces it.
-- `src/rallyclip_engine/runtime.py:27` — `RuntimeDeps` default binds `PoseExtractor`; **this is the injection seam for the ONNX pose swap** (no engine changes needed).
+- `src/rallyclip_engine/runtime.py:27` — `RuntimeDeps` default binds `PoseExtractor`; the dependency-injection seam (the ONNX pose swap was validated through it before landing as the default).
 - `src/rallyclip_core/pipelines.py:14` — `pipeline_id_from_manifest_values`: the model artifact's manifest (not code) selects the pipeline. Shipped: `frame_probability_hysteresis`; `start_end_attention_voting` is a stub.
 - `models/rallyclip_v0.3.1/manifest.json` — the model contract: imgsz 960, conf 0.25, fps 5, seq_len 100. Don't hardcode these in code.
-- `src/rallyclip_api/services.py:10` — `RallyClipServices` facade; CLI and Flask GUI are both thin clients of it. Desktop app = QWebEngineView → local Flask; **all behavior is `/api/*` HTTP**, no private channel.
-- `src/extraction/pose_extractor.py:210-246` — the only Ultralytics surface consumed (4 arrays per result). The contract the ONNX runner must replicate.
+- `src/rallyclip_api/services.py:10` — `RallyClipServices` facade; CLI and Flask GUI are both thin clients of it. Desktop app = pywebview (WKWebView/WebView2) → local Flask; **all behavior is `/api/*` HTTP**, no private channel.
+- `src/extraction/pose_extractor.py` `_flush_batch` — the predict surface (4 arrays per result) that `yolo_onnx_runner.YOLO` replicates; `.pt` weights still route to lazily-imported ultralytics (`[train]` extra).
 - `src/gui/app.py:86-226` — config is module globals (`PREFERENCES_PATH`, `JOBS_DIR`, …). E2E harness `tests/helpers/e2e_backend.py` must redirect ALL of them; config-object refactor planned (`docs/runtime-config-refactor-plan.md`).
-- Video decode is **PyAV everywhere** in runtime; OpenCV is image-ops only (stays until the ONNX swap removes Ultralytics' cv2 dependency).
+- Video decode is **PyAV everywhere** in runtime; OpenCV is image-ops only (court detector classical CV + the parity-critical letterbox resize; its bundled FFmpeg is dead weight — removable only via a custom videoio-less wheel).
 
 ## Deliberately NOT worth reading
 

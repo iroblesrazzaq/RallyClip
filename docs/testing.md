@@ -7,7 +7,7 @@ PY=/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/RallyClip/.venv-
 ```
 
 (That venv lives in the sibling primary clone; it has the full stack + pytest 9.0.3,
-Python 3.11.14, cv2 4.13, torch 2.12. Container CLAUDE.md also mentions conda
+Python 3.11.14, cv2 4.13 (torch 2.12 present in this env but the runtime never imports it). Container CLAUDE.md also mentions conda
 `tennis_env`; `.venv-train` is what was verified 2026-07-03.)
 
 ## Default gate (run every session; the branch gate before any commit)
@@ -16,7 +16,7 @@ Python 3.11.14, cv2 4.13, torch 2.12. Container CLAUDE.md also mentions conda
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-07-03, bb72dd6): **212 passed, 44 deselected, 27.5s** (2 sklearn warnings, benign).
+Last known (2026-07-04, feat/pywebview-shell): **202 passed, 1 skipped, 38 deselected, ~24s** (2 sklearn warnings, benign). In a torch-free venv the torch-gated training units skip (213 passed on feat/onnx-pose-runner).
 
 ## Compile gate (cheap, run with the default gate)
 
