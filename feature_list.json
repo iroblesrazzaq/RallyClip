@@ -135,5 +135,20 @@
     ],
     "evidence": "2026-07-04: dist/RallyClip.app built from feat/onnx-pose-runner via RallyClip.spec (ultralytics collect + models/yolov8n-pose.pt removed; torch/torchvision/ultralytics excluded). 765MB .app, 284MB zipped vs 558MB v0.1.0 dmg. Bundle scan for *torch*/*ultralytics*: 0 files. Bundled --cli golden run exit-0, CSV byte-equal. Offscreen boot: /api/health 200, upload-and-start job completed, library item saved with segments exactly matching the golden (5.8-17.0, 18.6-24.0). release.yml/ci.yml updated to match (no weight fetch, ONNX asset verified).",
     "notes": "Not yet released: needs a tagged release build through release.yml on a runner + dmg packaging/signing as for v0.1.0."
+  },
+  {
+    "id": "system-webview-shell",
+    "priority": 10,
+    "area": "release",
+    "title": "Replace QtWebEngine/PySide6 shell with the system webview (pywebview)",
+    "user_visible_behavior": "Same app UI in a WKWebView/WebView2 window; video (incl. HEVC) plays via the OS media stack; app is 266MB (.app) / 113MB zipped vs 765MB / 284MB.",
+    "status": "passing",
+    "evidence_plan": [
+      "Driven-webview probe: SPA boots, library video plays, seek over HTTP ranges, upload input present.",
+      "Built bundle: no Qt/PySide files; golden --cli byte-equal; health 200; upload->analyze->library job with golden segments.",
+      "Fast + e2e suites pass; CI green on the PR."
+    ],
+    "evidence": "2026-07-04: feat/pywebview-shell (PR #27, stacked on #26). WKWebView probe: canplay 1280x720, seek 12.00s, playback advanced, canPlayType H.264 AND HEVC 'probably', #fileInput native. gui/native_player.py + QWebChannel bridge deleted (frontend already fell back to HTML5 when the bridge was absent); Flask playback endpoints unchanged. Bundle 266MB .app / 113MB zipped, zero Qt/torch files, bundled --cli golden byte-equal, headless job run produced exact golden segments. Fast suite 202 passed, e2e 15 passed.",
+    "notes": "Windows uses WebView2 (preinstalled Win11; needs presence check for older Win10 in release QA). Playback proxy endpoints in gui/app.py are now candidates for removal once the HTML5 path is confirmed sufficient in release QA."
   }
 ]
