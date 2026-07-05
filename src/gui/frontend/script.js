@@ -884,8 +884,10 @@ class RallyClipApp {
                 this.updateViewerTimeline(target);
                 this.hidePreviewLoading();
                 this.updateViewerControls();
-                if (autoplay) this.startViewerPlayback();
-                this.startDirectSegmentWatcher();
+                if (autoplay) {
+                    this.startViewerPlayback();
+                    this.startDirectSegmentWatcher();
+                }
                 settle(true);
             };
             const onError = () => {
@@ -959,8 +961,15 @@ class RallyClipApp {
             standby.pause();
             standby.currentTime = state.target;
         };
-        if (standby.dataset.previewUrl === sourceUrl && standby.readyState >= 1) {
-            seekStandby();
+        if (standby.dataset.previewUrl === sourceUrl) {
+            if (standby.readyState >= 1) {
+                seekStandby();
+                return;
+            }
+            // Same source still loading (re-entered during a rapid point
+            // change): wait on the in-flight load rather than resetting it
+            // with another src/load(), which restarts the HTTP fetch.
+            standby.addEventListener("loadedmetadata", seekStandby, { once: true });
             return;
         }
         standby.addEventListener("loadedmetadata", seekStandby, { once: true });

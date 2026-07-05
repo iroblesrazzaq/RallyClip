@@ -153,16 +153,22 @@ def _fabricate_direct_playback_item() -> str:
     H.264 in the shipped app. Small frame keeps the VP9 encode fast; the
     viewer has no resolution minimum (only the analysis pipeline does)."""
     import json
+    import shutil
     import time
     import uuid
 
+    import av
     from gui import app as gui_app
     from make_smoke_clip import make_clip
 
     item_id = f"20990101-000000-{uuid.uuid4().hex[:6]}"
     item_dir = Path(gui_app.LIBRARY_DIR) / item_id
     item_dir.mkdir(parents=True, exist_ok=True)
-    make_clip(item_dir / "source.mp4", duration_s=8.0, width=320, height=180, codec="libvpx-vp9")
+    try:
+        make_clip(item_dir / "source.mp4", duration_s=8.0, width=320, height=180, codec="libvpx-vp9")
+    except (av.FFmpegError, ValueError) as exc:  # older FFmpeg builds lack vp09-in-mp4 muxing
+        shutil.rmtree(item_dir, ignore_errors=True)
+        pytest.skip(f"PyAV build cannot encode VP9-in-MP4: {exc}")
     (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,2.0\n4.0,5.0\n", encoding="utf-8")
     (item_dir / "thumb.jpg").write_bytes(b"\xff\xd8\xff\xe0fake")
     (item_dir / "meta.json").write_text(
