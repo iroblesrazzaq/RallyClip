@@ -87,10 +87,25 @@ STATIC_DIR = resolve_frontend_dir()
 
 
 def _frozen_data_root() -> Optional[Path]:
-    """In packaged builds, keep user data out of the bundle and the CWD."""
-    if getattr(sys, "frozen", False):
-        return (Path.home() / "RallyClip").resolve()
-    return None
+    """In packaged builds, keep user data in the OS per-user app-data dir."""
+    if not getattr(sys, "frozen", False):
+        return None
+    if sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support" / "RallyClip"
+    elif os.name == "nt":
+        root = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming")) / "RallyClip"
+    else:
+        root = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "RallyClip"
+    root = root.resolve()
+    legacy = (Path.home() / "RallyClip").resolve()
+    if not root.exists() and legacy.is_dir():
+        # v0.1.0 stored data at ~/RallyClip; move it once instead of orphaning it.
+        try:
+            root.parent.mkdir(parents=True, exist_ok=True)
+            legacy.rename(root)
+        except OSError:
+            pass
+    return root
 
 
 def _default_jobs_dir() -> Path:
