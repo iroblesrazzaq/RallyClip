@@ -43,3 +43,26 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   HTML5 fallback. Bundle 765→266MB; ~1600 lines deleted; frontend unchanged.
 - **Rejected:** pruning unused Qt modules only (~60-100MB, keeps Chromium + native
   player complexity); Tauri/Electron-style rewrite (new stack for no extra benefit).
+
+## 2026-07-05 — CoreML EP + static-shape export wins the Apple-silicon spike (no MLX rewrite)
+
+- **What:** benchmarked the shipped pose ONNX on this M-series Mac via onnxruntime
+  execution providers (real frames from a saved match, 40-frame batches). Shipping
+  config (dynamic-axes ONNX, CPU EP, rect 544x960): 15.6 fps. CoreML EP on the
+  dynamic model: only ~1.2x — the Neural Engine rejects unbounded dims (E5RT
+  "unbounded dimension"), so 110/380 nodes stay on CPU with 8+ partition round-trips.
+  Re-exporting the same weights with static shapes flips it: static rect 544x960 +
+  CoreML EP (MLProgram, MLComputeUnits=ALL) = **120.4 fps, 8.05x over CPU**, max
+  abs divergence on confident detections 1.2e-4. LSTM head: CoreML is *slower*
+  (0.59s vs 0.48s/200 runs) — keep it on CPU. Scripts + JSON results committed in
+  docs/perf/coreml-spike/.
+- **Why it matters:** pose extraction is the pipeline bottleneck; 8x there without
+  new dependencies (CoreMLExecutionProvider ships in stock onnxruntime 1.24.4).
+  Productionizing needs: (a) a static 544x960 export added to the model bundle,
+  (b) an opt-in provider flag (CPU stays the parity default — 1e-4 divergence
+  breaks byte-equal goldens), (c) a fallback for non-16:9 sources (letterbox pads
+  to the static shape, as the spike did for square).
+- **Rejected:** MLX rewrite (whole new inference stack for less gain than a
+  re-export); NeuralNetwork-format CoreML (0.25 abs divergence — actually wrong);
+  CPUAndNeuralEngine-only compute units (2x — ANE alone loses to ANE+GPU "ALL");
+  accelerating the LSTM (measured slower on CoreML).
