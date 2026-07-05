@@ -762,7 +762,7 @@ def test_ui_direct_playback_swaps_to_preseeked_standby_between_points(page: Page
     assert after["direct"] is True
     assert after["paused"] is False
     assert after["windowStart"] == 0
-    assert 3.9 <= after["time"] <= 5.6
+    assert 3.9 <= after["time"] <= 5.1
 
 
 def test_ui_segment_edit_mode_trims_adds_deletes_and_resets(page: Page, ui_backend: BackendClient):
