@@ -232,8 +232,10 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
     page.locator(f'.lib-card[data-id="{item_id}"]').click()
     expect(page.locator("#viewerView")).to_be_visible()
     expect(page.locator("#viewerTimeline")).to_be_visible(timeout=30_000)
+    # Direct source playback engages when the engine can decode the clip;
+    # otherwise the viewer falls back to WebM preview windows.
     page.wait_for_function(
-        "() => { const src = window.rallyClipApp?.matchVideo?.src || ''; return src.includes('/preview/window'); }",
+        "() => { const src = window.rallyClipApp?.matchVideo?.src || ''; return src.includes('/preview/window') || src.includes('/source'); }",
         timeout=30_000,
     )
     page.wait_for_function(
@@ -425,6 +427,7 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
                 preserveSegment: Boolean(options?.preserveSegment),
             });
             app.viewingItemId = "match-ready";
+            app.directPlayback = false;
             app.sourceDuration = 120;
             app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }, { start: 10, end: 12 }];
             app.activePlaybackSegment = { kind: "gap", start: 2.5, end: 5, pointIndex: 1, nextPointIndex: 2 };

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import mimetypes
 import os
 import re
 import shutil
@@ -2448,6 +2449,22 @@ def library_video_preview_window(item_id: str):
     except Exception as exc:
         logging.exception("Could not prepare preview window %s", item_id)
         return jsonify({"error": f"Could not prepare preview window: {exc}"}), 500
+
+
+@app.route("/api/library/<item_id>/source", methods=["GET"])
+def library_source(item_id: str):
+    """Serve the saved match source with Range support for direct playback.
+
+    The system webview (WKWebView/WebView2) decodes H.264/HEVC natively, so
+    the viewer streams this instead of waiting on WebM preview-window
+    transcodes; the window pipeline stays as the fallback for engines that
+    cannot play the source codec.
+    """
+    path = _resolve_library_source(item_id)
+    if path is None:
+        return jsonify({"error": "Video not available"}), 404
+    mimetype = mimetypes.guess_type(path.name)[0] or "video/mp4"
+    return send_file(str(path), mimetype=mimetype, conditional=True)
 
 
 @app.route("/api/library/<item_id>/playback", methods=["GET"])
