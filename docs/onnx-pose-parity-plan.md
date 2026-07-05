@@ -165,7 +165,37 @@ torch 2.7.1, ORT 1.24.4, cv2 4.12, CPU.
 - **Stage 3 golden e2e: segments CSV BYTE-EQUAL to the torch-path golden**
   (OnnxPoseExtractor injected via RuntimeDeps; zero RallyClip changes).
 
-Remaining before production swap: widen the stage-2 frame set (multi-person,
-near-threshold, other resolutions), sweep more full videos (stage 4),
-perf/memory benchmark at 960, then integrate the runner into RallyClip and
-demote torch/ultralytics to a dev extra.
+## Stage 4/5 — sweep + production integration (2026-07-04)
+
+Stage 4 sweep (`../YOLO-ONNX/scripts/sweep_e2e_onnx.py` +
+`sweep_testing_app.py`, report `../YOLO-ONNX/parity_960/sweep_report.json`):
+60s samples through the complete pipeline, torch vs ONNX, **17/17
+byte-equal segments, zero count mismatches** — 11 raw_videos (one sample
+each) + 2 testing_app 1080p60 HEVC videos (3 offsets each; pre-cut with
+ffmpeg because abandoning a threaded HEVC PyAV decode mid-stream can
+deadlock in stream dealloc — a sampling-window artifact, production
+processes whole files). The ONNX leg is the *integrated* production path
+(manifest-driven, ONNX court detection included).
+
+Perf/memory over the 17 samples (CPU, 60s sample incl. court detection):
+
+| | wall mean | peak RSS mean | peak RSS max |
+|---|---|---|---|
+| torch  | 28.6s | 753 MB | 863 MB |
+| onnx   | 19.7s | 458 MB | 590 MB |
+
+Stage 5 shipped (branch `feat/onnx-pose-runner`, PR #26):
+
+- Runner lives at `src/extraction/yolo_onnx_runner.py`; pose asset
+  `models/rallyclip_v0.3.1/yolov8n-pose-960-dynamic.onnx` is
+  manifest-referenced (`feature_pipeline.yolo_model`, sha256 in `files`).
+  PoseExtractor *and* CourtDetector dispatch on the weights extension;
+  .pt still routes to ultralytics (lazy import). Non-pose ONNX heads raise
+  `UnsupportedOnnxOutputShapeError` (unit-tested).
+- torch/ultralytics demoted to the `[train]` extra. Golden CLI verified
+  **exit-0 + byte-equal CSV in a fresh venv with no torch installed**.
+- PyInstaller bundle rebuilt torch-free: 765 MB .app (284 MB zipped vs
+  558 MB for the v0.1.0 dmg — ~49% smaller compressed), zero
+  `*torch*`/`*ultralytics*` files, bundled `--cli` byte-equal on the golden
+  clip, headless GUI boot + upload→library job produced the exact golden
+  segments.
