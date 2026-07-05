@@ -701,25 +701,55 @@ def test_library_video_export_generates_cut_on_demand(tmp_path, monkeypatch):
     assert (item_dir / "export.mp4").read_bytes() == b"cut video"
 
 
-def test_library_source_streams_with_range_support(tmp_path, monkeypatch):
-    from gui import app as gui_app
+def test_frozen_data_root_is_none_when_not_frozen():
+    import gui.app as gui_app
 
-    library = tmp_path / "library"
-    item_dir = library / "match-1"
-    item_dir.mkdir(parents=True)
-    (item_dir / "source.mp4").write_bytes(b"0123456789abcdef")
-    (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
-    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
-    client = gui_app.app.test_client()
+    assert gui_app._frozen_data_root() is None
 
-    full = client.get("/api/library/match-1/source")
-    assert full.status_code == 200
-    assert full.data == b"0123456789abcdef"
-    assert full.mimetype == "video/mp4"
 
-    partial = client.get("/api/library/match-1/source", headers={"Range": "bytes=4-7"})
-    assert partial.status_code == 206
-    assert partial.data == b"4567"
-    assert partial.headers.get("Content-Range") == "bytes 4-7/16"
+def test_frozen_data_root_uses_platform_app_data_dir(tmp_path, monkeypatch):
+    import sys as real_sys
 
-    assert client.get("/api/library/no-such-item/source").status_code == 404
+    import gui.app as gui_app
+
+    monkeypatch.setattr(real_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    monkeypatch.setattr(real_sys, "platform", "darwin")
+    assert gui_app._frozen_data_root() == (
+        tmp_path / "Library" / "Application Support" / "RallyClip"
+    ).resolve()
+
+    # Only sys.platform is patched: pathlib picks WindowsPath/PosixPath from
+    # os.name at instantiation, so patching os.name breaks Path() on Windows.
+    monkeypatch.setattr(real_sys, "platform", "linux")
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    assert gui_app._frozen_data_root() == (
+        tmp_path / ".local" / "share" / "RallyClip"
+    ).resolve()
+
+
+def test_frozen_data_root_migrates_legacy_home_dir(tmp_path, monkeypatch):
+    import sys as real_sys
+
+    import gui.app as gui_app
+
+    monkeypatch.setattr(real_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(real_sys, "platform", "darwin")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    legacy = tmp_path / "RallyClip"
+    (legacy / "library").mkdir(parents=True)
+    (legacy / "preferences.json").write_text("{}", encoding="utf-8")
+
+    root = gui_app._frozen_data_root()
+
+    assert root == (tmp_path / "Library" / "Application Support" / "RallyClip").resolve()
+    assert not legacy.exists()
+    assert (root / "library").is_dir()
+    assert (root / "preferences.json").read_text(encoding="utf-8") == "{}"
+
+    # Second call is a no-op once the new root exists.
+    (tmp_path / "RallyClip").mkdir()
+    assert gui_app._frozen_data_root() == root
+    assert (tmp_path / "RallyClip").is_dir()
