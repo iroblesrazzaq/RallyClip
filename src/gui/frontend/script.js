@@ -51,6 +51,7 @@ class RallyClipApp {
         this.previewLoadInProgress = false;
         this.directPlayback = false;
         this.directProbeInProgress = false;
+        this.directProbeSeq = 0;
         this.previewSpinnerTimeout = null;
         this.viewerControlsHideTimeout = null;
         this.welcomeTypeTimers = [];
@@ -779,8 +780,12 @@ class RallyClipApp {
         this.showView("viewer");
         this.showViewerControls();
         await this.loadPlaybackManifest(item.id);
+        if (this.viewingItemId !== item.id) return;
         const start = this.pointIntervals.length ? this.pointIntervals[0].start : 0;
         if (await this.tryDirectSourcePlayback(start, true)) return;
+        // The probe can resolve false long after the user opened another match
+        // or left the viewer; don't drive the fallback for a stale item.
+        if (this.viewingItemId !== item.id) return;
         this.seekViewerToSourceTime(start, true);
     }
 
@@ -795,6 +800,11 @@ class RallyClipApp {
         const sourceUrl = `/api/library/${itemId}/source`;
         this.directPlayback = false;
         this.directProbeInProgress = true;
+        // Sequence number invalidates this probe's callbacks (canplay/error/10s
+        // timer) the moment a newer probe starts: a stale closure must not clear
+        // the shared in-progress flag, touch the video element another probe now
+        // owns, or trigger the fallback path for the wrong match.
+        const probeId = ++this.directProbeSeq;
         return new Promise((resolve) => {
             let settled = false;
             let timer = null;
@@ -804,11 +814,13 @@ class RallyClipApp {
                 clearTimeout(timer);
                 video.removeEventListener("canplay", onReady);
                 video.removeEventListener("error", onError);
-                this.directProbeInProgress = false;
+                if (this.directProbeSeq === probeId) this.directProbeInProgress = false;
                 resolve(ok);
             };
+            const probeIsStale = () =>
+                this.directProbeSeq !== probeId || this.viewingItemId !== itemId || video !== this.matchVideo;
             const onReady = () => {
-                if (this.viewingItemId !== itemId || video !== this.matchVideo) {
+                if (probeIsStale()) {
                     settle(false);
                     return;
                 }
@@ -829,6 +841,10 @@ class RallyClipApp {
                 settle(true);
             };
             const onError = () => {
+                if (probeIsStale()) {
+                    settle(false);
+                    return;
+                }
                 console.warn("Direct source playback unavailable; falling back to preview windows", video.error);
                 this.clearVideoElement(video);
                 settle(false);
