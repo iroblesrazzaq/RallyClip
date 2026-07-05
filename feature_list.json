@@ -93,7 +93,7 @@
     "area": "desktop_storage",
     "title": "Use standard macOS app storage locations",
     "user_visible_behavior": "Packaged Mac installs store saved matches, preferences, logs, caches, and scratch files in standard macOS locations instead of a top-level ~/RallyClip folder, while existing ~/RallyClip data migrates without data loss.",
-    "status": "in_review",
+    "status": "passing",
     "evidence_plan": [
       "Packaged app resolves saved match data under ~/Library/Application Support/RallyClip.",
       "Preview/cache/job scratch data resolves under ~/Library/Caches/RallyClip where appropriate.",
@@ -101,7 +101,7 @@
       "One-time migration preserves existing ~/RallyClip/library matches, preferences, and outputs.",
       "Tests or manual migration evidence prove old installs still open existing saved matches."
     ],
-    "evidence": "PR #28 (2026-07-05): gui.app._frozen_data_root() -> ~/Library/Application Support/RallyClip (APPDATA on Windows, XDG on Linux) with one-time rename migration from legacy ~/RallyClip; unit tests for platform paths + migration; fast suite 205 passed. Caches->~/Library/Caches and Logs->~/Library/Logs split not done (everything under App Support for now).",
+    "evidence": "PR #28 (2026-07-05): gui.app._frozen_data_root() -> ~/Library/Application Support/RallyClip (APPDATA on Windows, XDG on Linux) with one-time rename migration from legacy ~/RallyClip; unit tests for platform paths + migration; fast suite 205 passed. Caches->~/Library/Caches and Logs->~/Library/Logs split not done (everything under App Support for now). MERGED to main 2026-07-05 (PR #28; sys.platform Windows branch, shutil.move migration; CI green incl. Windows).",
     "notes": "Current v0.1.0 packaged app stores data under ~/RallyClip. This worked for first release but is not the normal macOS app-storage convention; migrate in a future release with a clear fallback/backup strategy. Core moved in PR #28; Caches/Logs subdivision remains optional follow-up."
   },
   {
@@ -165,7 +165,7 @@
       "Runtime selects the accelerated path on Apple silicon and falls back to CPU onnxruntime elsewhere.",
       "Bundle-size impact measured (MLX deps vs onnxruntime)."
     ],
-    "evidence": "Spike complete 2026-07-05 (docs/perf/coreml-spike/ on RallyClip-perf + DECISIONS.md entry): CoreML EP in stock onnxruntime 1.24.4 with a STATIC 544x960 re-export (MLProgram, MLComputeUnits=ALL) runs pose at 120.4 fps vs 15.6 fps shipping CPU path (8.05x); confident-detection divergence 1.2e-4. Dynamic-axes model blocks ANE (only 1.2x). LSTM measured slower on CoreML \u2014 stays CPU. Decision: no MLX rewrite; productionize static export + opt-in CoreML provider (CPU stays parity default). Remaining: bundle static export, provider flag + fallback, sweep benchmark, golden tolerance policy.",
+    "evidence": "Spike complete 2026-07-05 (docs/perf/coreml-spike/ on RallyClip-perf + DECISIONS.md entry): CoreML EP in stock onnxruntime 1.24.4 with a STATIC 544x960 re-export (MLProgram, MLComputeUnits=ALL) runs pose at 120.4 fps vs 15.6 fps shipping CPU path (8.05x); confident-detection divergence 1.2e-4. Dynamic-axes model blocks ANE (only 1.2x). LSTM measured slower on CoreML \u2014 stays CPU. Decision: no MLX rewrite; productionize static export + opt-in CoreML provider (CPU stays parity default). Remaining: bundle static export, provider flag + fallback, sweep benchmark, golden tolerance policy. Spike docs MERGED 2026-07-05 (PR #30). Runtime productionization not started.",
     "notes": "Requested 2026-07-05. Consider coremltools/onnxruntime-coreml EP as a lower-risk alternative to full MLX rewrite; decide in a spike first. Spike verdict 2026-07-05: CoreML EP wins, MLX rejected."
   },
   {
@@ -174,7 +174,7 @@
     "area": "gui",
     "title": "Edit mode: trim/add/delete points, non-destructive",
     "user_visible_behavior": "In the library, an Edit mode lets the user drag point boundaries (like trimming a video in iPhone Photos) to extend/shrink a point or shift its times, add a new point, and delete a point. Edits write to a duplicate CSV (segments_edited.csv); the original segments.csv is never modified. When an edited CSV exists, exports and playback use it. A 'Reset to original' button deletes the edited copy and restores original behavior.",
-    "status": "in_review",
+    "status": "passing",
     "evidence_plan": [
       "Entering edit mode creates segments_edited.csv as a copy of segments.csv (original untouched, verified byte-equal after edits).",
       "Drag handles adjust a point's start/end; changes persist to the edited CSV via /api/*.",
@@ -183,7 +183,7 @@
       "Reset-to-original removes the edited CSV and the UI reflects original segments.",
       "Playwright e2e covers the full edit->export->reset loop."
     ],
-    "evidence": "Implemented 2026-07-05 on branch feat/segment-edit-mode (stacked on fix/viewer-direct-playback). Backend: segments_edited.csv precedence in playback manifest//segments//csv//export, PUT /api/library/<id>/segments, DELETE .../segments/edits (reset), export.mp4 invalidated on edit/reset; original segments.csv never written. Frontend: Edit points mode in viewer \u2014 drag trim handles on timeline, add/delete point, Reset to original, autosave per edit. Tests: 3 backend unit tests (roundtrip/validation/export-invalidation) + Playwright e2e (trim-drag, add, delete, reset) \u2014 30/30 smoke, 7/7 playwright module green.",
+    "evidence": "Implemented 2026-07-05 on branch feat/segment-edit-mode (stacked on fix/viewer-direct-playback). Backend: segments_edited.csv precedence in playback manifest//segments//csv//export, PUT /api/library/<id>/segments, DELETE .../segments/edits (reset), export.mp4 invalidated on edit/reset; original segments.csv never written. Frontend: Edit points mode in viewer \u2014 drag trim handles on timeline, add/delete point, Reset to original, autosave per edit. Tests: 3 backend unit tests (roundtrip/validation/export-invalidation) + Playwright e2e (trim-drag, add, delete, reset) \u2014 30/30 smoke, 7/7 playwright module green. MERGED to main 2026-07-05 (PR #31, CI green 3 OS x test/e2e).",
     "notes": "Requested 2026-07-05. All behavior through /api/* per architecture invariant; timeline drag UI in the existing frontend player."
   },
   {
