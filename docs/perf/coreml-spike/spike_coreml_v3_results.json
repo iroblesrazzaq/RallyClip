@@ -1,0 +1,20 @@
+{
+  "cpu_static": {
+    "s": 4.575,
+    "fps": 8.7
+  },
+  "coreml_mlprogram_all": {
+    "s": 0.771,
+    "fps": 51.9,
+    "load_s": 0.6,
+    "speedup_vs_cpu": 5.94,
+    "confident_det_max_abs_diff": 0.000152587890625
+  },
+  "coreml_mlprogram_ane": {
+    "s": 2.287,
+    "fps": 17.5,
+    "load_s": 0.5,
+    "speedup_vs_cpu": 2.0,
+    "confident_det_max_abs_diff": 0.000244140625
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "cpu_rect": {
+    "s": 2.674,
+    "fps": 15.0
+  },
+  "coreml_rect_all": {
+    "s": 0.332,
+    "fps": 120.4,
+    "speedup_vs_cpu": 8.05,
+    "confident_det_max_abs_diff": 0.0001220703125
+  },
+  "coreml_rect_ane": {
+    "s": 1.265,
+    "fps": 31.6,
+    "speedup_vs_cpu": 2.11,
+    "confident_det_max_abs_diff": 0.000244140625
+  }
+}
