@@ -45,9 +45,10 @@ e2e-ui = [
   "playwright>=1.40",
   "pytest-playwright>=0.4",
 ]
+# System-webview shell (WKWebView on macOS, WebView2 on Windows): no bundled
+# browser engine. The old QtWebEngine/PySide6 shell shipped ~470MB of Qt.
 desktop = [
-  "PySide6>=6.6",
-  "PySide6-Addons>=6.6",
+  "pywebview>=5.0",
 ]
 pack = [
   "pyinstaller>=6.0",

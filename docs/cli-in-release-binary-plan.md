@@ -2,6 +2,10 @@
 
 Status: implemented (2026-06-10) · Effort: small (~1–2 hrs incl. CI) · Owner: TBD
 
+> 2026-07-04: code snippets below show the QtWebEngine-era desktop.py; the shell
+> is now pywebview and the runtime is torch-free, but the --cli dispatch contract
+> described here is unchanged.
+
 > Implementation note: the smoke step in §2 was hardened beyond this plan.
 > A bare `exit code == 1` check cannot distinguish the clean missing-video
 > path from a broken-asset-resolution traceback (uncaught exceptions also

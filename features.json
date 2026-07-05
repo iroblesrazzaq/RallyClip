@@ -1,0 +1,59 @@
+{
+  "_meta": {
+    "note": "Scope ledger. `passing` requires running the verification command in-session with evidence. Update in the same commit as the work.",
+    "py": "/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/RallyClip/.venv-train/bin/python3",
+    "run_from": "repo root, PYTHONPATH=src:tests"
+  },
+  "features": [
+    {
+      "id": "unit-suite",
+      "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
+      "status": "passing",
+      "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
+      "evidence": "2026-07-04: 202 passed, 1 skipped, 38 deselected (23.5s) on feat/pywebview-shell (tennis_env); 213 passed in a torch-free venv on feat/onnx-pose-runner."
+    },
+    {
+      "id": "golden-cli-parity",
+      "name": "CLI end-to-end golden parity on committed fixture clip (0.25s boundary tolerance)",
+      "status": "passing",
+      "verification": "PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_cli_golden_parity.py",
+      "evidence": "2026-07-04: 1 passed; byte-equal via cmp on this machine, including from the frozen bundle and a torch-free venv."
+    },
+    {
+      "id": "compileall",
+      "name": "src+tests byte-compile cleanly",
+      "status": "passing",
+      "verification": "$PY -m compileall -q src tests",
+      "evidence": "2026-07-03: exit 0, no output"
+    },
+    {
+      "id": "e2e-suite",
+      "name": "Full e2e set: L1 backend golden jobs, L2 playwright UI, quality harness, court e2e (44 tests)",
+      "status": "passing",
+      "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m e2e -p no:cacheprovider",
+      "evidence": "2026-07-04: 15 passed, 24 skipped locally (skips are footage/playwright-gated); CI e2e green on 3 OSes for PRs #26 and #27."
+    },
+    {
+      "id": "onnx-pose-swap",
+      "name": "Replace Ultralytics/torch pose extraction with torch-free ONNX Runtime runner via RuntimeDeps.PoseExtractor seam",
+      "status": "passing",
+      "verification": "Stage 3 of docs/onnx-pose-parity-plan.md: run CLI on golden clip with OnnxPoseExtractor injected; segments within existing 0.25s tolerance; then full unit + e2e gates",
+      "evidence": "2026-07-04 (PR #26): runner at src/extraction/yolo_onnx_runner.py; manifest-referenced yolov8n-pose-960-dynamic.onnx; PoseExtractor+CourtDetector dispatch on extension; sweep 17/17 byte-equal (11 raw + 6 testing_app samples); golden CLI byte-equal in a venv WITHOUT torch; torch/ultralytics -> [train] extra. Perf 60s sample: onnx 19.7s/458MB vs torch 28.6s/753MB. Report: ../YOLO-ONNX/parity_960/sweep_report.json."
+    },
+    {
+      "id": "frozen-app-e2e",
+      "name": "Frozen .app smoke/e2e (rebuild v0.1.0-class app from refactored code, run L1 suite against binary)",
+      "status": "passing",
+      "verification": "Planned: build dist/RallyClip.app, dispatch --backend-only, reuse L1 suite; see docs/e2e_test_plan.md + docs/cli-in-release-binary-plan.md",
+      "evidence": "2026-07-04: dist/RallyClip.app built from RallyClip.spec (torch-free, Qt-free after PR #27): 266MB .app / 113MB zipped (v0.1.0 dmg 558MB). Bundled --cli golden byte-equal; app boot -> /api/health 200 -> upload->analyze->library job with exact golden segments. --backend-only dispatch not built; smoke drives the real binary over HTTP."
+    },
+    {
+      "id": "webview-shell",
+      "name": "System-webview desktop shell (pywebview WKWebView/WebView2) replacing QtWebEngine/PySide6",
+      "status": "passing",
+      "verification": "pytest -q tests/test_desktop_dispatch.py tests/test_native_playback.py; build via RallyClip.spec; driven-webview probe (play/seek/upload)",
+      "evidence": "2026-07-04 (PR #27): gui/native_player.py + QWebChannel bridge deleted (frontend already fell back to HTML5 when the bridge was absent); WKWebView probe: canplay 1280x720, seek over ranges, playback advances, H.264+HEVC canPlayType 'probably', native file input. Bundle 765MB->266MB. CI 6/6 green."
+    }
+  ],
+  "active": null
+}
