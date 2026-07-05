@@ -753,6 +753,8 @@ def test_frozen_data_root_migrates_legacy_home_dir(tmp_path, monkeypatch):
     (tmp_path / "RallyClip").mkdir()
     assert gui_app._frozen_data_root() == root
     assert (tmp_path / "RallyClip").is_dir()
+
+
 def test_library_source_streams_with_range_support(tmp_path, monkeypatch):
     from gui import app as gui_app
 
@@ -775,3 +777,117 @@ def test_library_source_streams_with_range_support(tmp_path, monkeypatch):
     assert partial.headers.get("Content-Range") == "bytes 4-7/16"
 
     assert client.get("/api/library/no-such-item/source").status_code == 404
+
+
+def test_segment_edits_roundtrip_without_touching_original(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    item_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"full video")
+    original_csv = "start_time,end_time\n1.0,3.0\n4.0,5.0\n"
+    (item_dir / "segments.csv").write_text(original_csv, encoding="utf-8")
+    (item_dir / "meta.json").write_text('{"name": "Match 1", "duration_s": 60.0}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    client = gui_app.app.test_client()
+
+    before = client.get("/api/library/match-1/segments").get_json()
+    assert before["edited"] is False
+    assert before["segments"] == [{"start": 1.0, "end": 3.0}, {"start": 4.0, "end": 5.0}]
+
+    saved = client.put(
+        "/api/library/match-1/segments",
+        json={"segments": [{"start": 0.5, "end": 3.5}, {"start": 10.0, "end": 12.0}]},
+    )
+    assert saved.status_code == 200
+    payload = saved.get_json()
+    assert payload["edited"] is True
+    assert payload["segments"] == [{"start": 0.5, "end": 3.5}, {"start": 10.0, "end": 12.0}]
+
+    # Original is untouched; the edited copy holds the new times.
+    assert (item_dir / "segments.csv").read_text(encoding="utf-8") == original_csv
+    edited = (item_dir / "segments_edited.csv").read_text(encoding="utf-8")
+    assert edited == "start_time,end_time\n0.500,3.500\n10.000,12.000\n"
+
+    # Every consumer now sees the edited times.
+    assert client.get("/api/library/match-1/segments").get_json()["segments"] == payload["segments"]
+    manifest = client.get("/api/library/match-1/playback").get_json()
+    assert manifest["point_intervals"] == [{"start": 0.5, "end": 3.5}, {"start": 10.0, "end": 12.0}]
+    download = client.get("/api/library/match-1/csv")
+    assert download.data.decode("utf-8") == edited
+
+    # Reset restores the original and deletes the copy.
+    reset = client.delete("/api/library/match-1/segments/edits")
+    assert reset.status_code == 200
+    payload = reset.get_json()
+    assert payload["edited"] is False
+    assert payload["segments"] == [{"start": 1.0, "end": 3.0}, {"start": 4.0, "end": 5.0}]
+    assert not (item_dir / "segments_edited.csv").exists()
+    assert (item_dir / "segments.csv").read_text(encoding="utf-8") == original_csv
+
+
+def test_segment_edits_validation_and_missing_item(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    item_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"full video")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    client = gui_app.app.test_client()
+
+    bad_bodies = [
+        None,
+        {"segments": [{"start": 3.0, "end": 1.0}]},
+        {"segments": [{"start": -1.0, "end": 2.0}]},
+        {"segments": [{"start": "x", "end": 2.0}]},
+        {"segments": [{"start": 1.0, "end": 4.0}, {"start": 3.0, "end": 6.0}]},
+    ]
+    for body in bad_bodies:
+        resp = client.put("/api/library/match-1/segments", json=body)
+        assert resp.status_code == 400, body
+    assert not (item_dir / "segments_edited.csv").exists()
+
+    assert client.put(
+        "/api/library/no-such/segments", json={"segments": [{"start": 1.0, "end": 2.0}]}
+    ).status_code == 404
+    assert client.delete("/api/library/no-such/segments/edits").status_code == 404
+
+
+def test_segment_edits_invalidate_lazy_export(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    item_dir.mkdir(parents=True)
+    source = item_dir / "source.mp4"
+    source.write_bytes(b"full video")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
+    (item_dir / "meta.json").write_text('{"name": "Match 1"}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    calls = []
+
+    def fake_segment_video(input_video, intervals_sec, output_video):
+        calls.append(intervals_sec)
+        Path(output_video).write_bytes(b"cut video")
+
+    monkeypatch.setattr(gui_app, "segment_video", fake_segment_video)
+    client = gui_app.app.test_client()
+
+    assert client.get("/api/library/match-1/video").status_code == 200
+    assert calls == [[(1.0, 3.0)]]
+
+    assert client.put(
+        "/api/library/match-1/segments", json={"segments": [{"start": 2.0, "end": 6.0}]}
+    ).status_code == 200
+    assert not (item_dir / "export.mp4").exists()
+
+    assert client.get("/api/library/match-1/video").status_code == 200
+    assert calls == [[(1.0, 3.0)], [(2.0, 6.0)]]
+
+    assert client.delete("/api/library/match-1/segments/edits").status_code == 200
+    assert not (item_dir / "export.mp4").exists()
+    assert client.get("/api/library/match-1/video").status_code == 200
+    assert calls == [[(1.0, 3.0)], [(2.0, 6.0)], [(1.0, 3.0)]]

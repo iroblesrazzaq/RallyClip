@@ -52,6 +52,14 @@ class RallyClipApp {
         this.directPlayback = false;
         this.directProbeInProgress = false;
         this.directProbeSeq = 0;
+        this.editMode = false;
+        this.editSelectedIndex = -1;
+        this.editDrag = null;
+        this.editScrubPending = null;
+        this.editSaveChain = Promise.resolve();
+        this.segmentsEdited = false;
+        this.minPointSeconds = 0.5;
+        this.addPointSeconds = 8;
         this.previewSpinnerTimeout = null;
         this.viewerControlsHideTimeout = null;
         this.welcomeTypeTimers = [];
@@ -139,6 +147,14 @@ class RallyClipApp {
         this.viewerDuration = document.getElementById("viewerDuration");
         this.viewerExportBtn = document.getElementById("viewerExportBtn");
         this.viewerCsvBtn = document.getElementById("viewerCsvBtn");
+        this.viewerEditBtn = document.getElementById("viewerEditBtn");
+        this.viewerEditTrack = document.getElementById("viewerEditTrack");
+        this.viewerEditBar = document.getElementById("viewerEditBar");
+        this.viewerEditHint = document.getElementById("viewerEditHint");
+        this.editAddPointBtn = document.getElementById("editAddPointBtn");
+        this.editDeletePointBtn = document.getElementById("editDeletePointBtn");
+        this.editResetBtn = document.getElementById("editResetBtn");
+        this.editDoneBtn = document.getElementById("editDoneBtn");
 
         this.uploadView = document.getElementById("uploadView");
         this.backToLibrary = document.getElementById("backToLibrary");
@@ -193,6 +209,11 @@ class RallyClipApp {
         this.viewerCsvBtn.addEventListener("click", () => {
             if (this.viewingItemId) this.triggerDownload(`/api/library/${this.viewingItemId}/csv`);
         });
+        this.viewerEditBtn.addEventListener("click", () => this.enterEditMode());
+        this.editAddPointBtn.addEventListener("click", () => this.addPointAtCurrentTime());
+        this.editDeletePointBtn.addEventListener("click", () => this.deleteSelectedPoint());
+        this.editResetBtn.addEventListener("click", () => this.resetSegmentEdits());
+        this.editDoneBtn.addEventListener("click", () => this.exitEditMode());
         [this.primaryMatchVideo, this.secondaryMatchVideo].forEach((video) => this.bindViewerVideoEvents(video));
         this.viewerVideoWrap.addEventListener("pointermove", () => this.showViewerControls());
         this.viewerVideoWrap.addEventListener("pointerenter", () => this.showViewerControls());
@@ -495,6 +516,8 @@ class RallyClipApp {
         this.uploadView.hidden = viewName !== "upload";
         this.progressCard.hidden = viewName !== "processing";
         if (viewName !== "viewer" && this.matchVideo) {
+            this.exitEditMode({ silent: true });
+            this.segmentsEdited = false;
             this.clearPreviewPoll();
             this.resetMsePreview();
             this.resetViewerVideos();
@@ -559,6 +582,7 @@ class RallyClipApp {
             clearTimeout(this.viewerControlsHideTimeout);
             this.viewerControlsHideTimeout = null;
         }
+        if (this.editMode) return;
         if (!this.viewerVideoWrap) return;
         this.viewerVideoWrap.classList.remove("is-controls-visible");
         this.viewerVideoWrap.classList.add("is-controls-idle");
@@ -773,6 +797,9 @@ class RallyClipApp {
         this.viewerTitle.textContent = item.name || "Match";
         this.viewerMeta.textContent = item.metaText || this.cardMeta(item);
         this.viewerCsvBtn.hidden = !item.has_csv;
+        this.exitEditMode({ silent: true });
+        this.viewerEditBtn.hidden = !item.has_csv;
+        this.segmentsEdited = Boolean(item.has_edits);
         this.directPlayback = false;
         this.resetViewerVideos();
         this.updateViewerControls();
@@ -1480,6 +1507,8 @@ class RallyClipApp {
     }
 
     setPlaybackSegmentForSourceTime(sourceTime) {
+        // While editing, never auto-skip between points; play straight through.
+        if (this.editMode) return this.setManualPlaybackSegmentForSourceTime(sourceTime);
         this.activePlaybackSegment = this.playbackSegmentForSourceTime(sourceTime);
         return this.activePlaybackSegment;
     }
@@ -1925,6 +1954,7 @@ class RallyClipApp {
             const payload = await resp.json();
             if (this.viewingItemId !== itemId) return;
             this.pointIntervals = this.normalizePointIntervals(payload.segments);
+            this.segmentsEdited = Boolean(payload.edited);
             this.lastViewerTime = null;
             this.renderViewerPointRanges();
         } catch (err) {
@@ -1962,6 +1992,313 @@ class RallyClipApp {
             marker.style.width = `${Math.max(0.12, ((end - start) / duration) * 100)}%`;
             this.viewerPointTrack.appendChild(marker);
         });
+        if (this.editMode) this.renderEditTrack();
+    }
+
+    // ----- Segment edit mode ------------------------------------------------ //
+    // Edits live in segments_edited.csv on the server; segments.csv (the model
+    // output) is never modified, so "Reset to original" is always possible.
+
+    async enterEditMode() {
+        if (this.editMode || !this.viewingItemId) return;
+        const itemId = this.viewingItemId;
+        try {
+            const resp = await fetch(`/api/library/${itemId}/segments`);
+            if (resp.ok) {
+                const payload = await resp.json();
+                if (this.viewingItemId !== itemId) return;
+                this.pointIntervals = this.normalizePointIntervals(payload.segments);
+                this.segmentsEdited = Boolean(payload.edited);
+            }
+        } catch (err) {
+            console.warn("Could not refresh point times before editing", err);
+        }
+        if (this.viewingItemId !== itemId) return;
+        this.editMode = true;
+        this.editSelectedIndex = this.pointIntervals.length ? 0 : -1;
+        if (this.viewerHasVideo()) this.matchVideo.pause();
+        this.setManualPlaybackSegmentForSourceTime(this.getViewerSourceTime());
+        this.updateViewerControls();
+        this.showViewerControls();
+        this.renderViewerPointRanges();
+        this.renderEditTrack();
+        this.setEditHintForSegment(this.editSelectedIndex);
+    }
+
+    exitEditMode(options = {}) {
+        const wasEditing = this.editMode;
+        this.editMode = false;
+        this.editDrag = null;
+        this.editSelectedIndex = -1;
+        this.editScrubPending = null;
+        if (this.viewerEditTrack) {
+            this.viewerEditTrack.innerHTML = "";
+            this.viewerEditTrack.hidden = true;
+        }
+        if (this.viewerEditBar) this.viewerEditBar.hidden = true;
+        if (this.viewerVideoWrap) this.viewerVideoWrap.classList.remove("is-editing");
+        if (this.viewerEditBtn) {
+            this.viewerEditBtn.disabled = false;
+            this.viewerEditBtn.textContent = "Edit points";
+        }
+        if (!wasEditing) return;
+        if (this.viewingItemId) this.setPlaybackSegmentForSourceTime(this.getViewerSourceTime());
+        if (!options.silent && this.segmentsEdited) this.showToast("Point edits saved.", "success");
+    }
+
+    updateEditUi() {
+        if (!this.viewerEditBar) return;
+        this.viewerEditBar.hidden = !this.editMode;
+        this.viewerEditTrack.hidden = !this.editMode;
+        if (this.viewerVideoWrap) this.viewerVideoWrap.classList.toggle("is-editing", this.editMode);
+        if (this.viewerEditBtn) {
+            this.viewerEditBtn.disabled = this.editMode;
+            this.viewerEditBtn.textContent = this.editMode ? "Editing points" : "Edit points";
+        }
+        this.editDeletePointBtn.disabled = !this.editMode || this.editSelectedIndex < 0;
+        this.editResetBtn.disabled = !this.editMode || !this.segmentsEdited;
+    }
+
+    editTrackDuration() {
+        return Math.max(0, Number(this.sourceDuration) || 0);
+    }
+
+    editTimeFromClientX(clientX) {
+        const rect = this.viewerSeekWrap.getBoundingClientRect();
+        const duration = this.editTrackDuration();
+        if (!rect.width || duration <= 0) return 0;
+        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        return ratio * duration;
+    }
+
+    renderEditTrack() {
+        if (!this.viewerEditTrack || this.editDrag) return;
+        this.viewerEditTrack.innerHTML = "";
+        this.updateEditUi();
+        if (!this.editMode) return;
+        const duration = this.editTrackDuration();
+        if (duration <= 0) return;
+        if (this.editSelectedIndex >= this.pointIntervals.length) this.editSelectedIndex = -1;
+        this.pointIntervals.forEach((seg, index) => {
+            const el = document.createElement("div");
+            el.className = "viewer-edit-segment";
+            el.dataset.index = String(index);
+            if (index === this.editSelectedIndex) {
+                el.classList.add("is-selected");
+                ["start", "end"].forEach((edge) => {
+                    const handle = document.createElement("div");
+                    handle.className = "viewer-edit-handle";
+                    handle.dataset.edge = edge;
+                    handle.addEventListener("pointerdown", (e) => this.onEditHandlePointerDown(e, index, edge));
+                    handle.addEventListener("pointermove", (e) => this.onEditHandlePointerMove(e));
+                    handle.addEventListener("pointerup", (e) => this.onEditHandlePointerUp(e));
+                    handle.addEventListener("pointercancel", (e) => this.onEditHandlePointerUp(e));
+                    el.appendChild(handle);
+                });
+            }
+            el.addEventListener("pointerdown", (e) => this.onEditSegmentPointerDown(e, index));
+            this.positionEditSegment(index, el, duration);
+            this.viewerEditTrack.appendChild(el);
+        });
+    }
+
+    positionEditSegment(index, el = null, duration = this.editTrackDuration()) {
+        const seg = this.pointIntervals[index];
+        const element = el || this.viewerEditTrack?.querySelector(`[data-index="${index}"]`);
+        if (!seg || !element || duration <= 0) return;
+        const startPct = Math.max(0, Math.min(100, (seg.start / duration) * 100));
+        const endPct = Math.max(startPct, Math.min(100, (seg.end / duration) * 100));
+        element.style.left = `${startPct}%`;
+        element.style.width = `${Math.max(0.4, endPct - startPct)}%`;
+    }
+
+    setEditHintForSegment(index) {
+        if (!this.viewerEditHint) return;
+        const seg = this.pointIntervals[index];
+        if (!seg) {
+            this.viewerEditHint.textContent = "Tap a point, then drag its ends to trim.";
+            return;
+        }
+        this.viewerEditHint.textContent =
+            `Point ${index + 1} of ${this.pointIntervals.length}: ` +
+            `${this.formatClock(seg.start)} - ${this.formatClock(seg.end)}`;
+    }
+
+    onEditSegmentPointerDown(event, index) {
+        event.stopPropagation();
+        if (event.target.classList.contains("viewer-edit-handle")) return;
+        const seg = this.pointIntervals[index];
+        if (!seg) return;
+        if (this.editSelectedIndex !== index) {
+            this.editSelectedIndex = index;
+            this.renderEditTrack();
+        }
+        if (this.viewerHasVideo()) this.matchVideo.pause();
+        this.seekViewerToSourceTime(seg.start, false);
+        this.setEditHintForSegment(index);
+        this.updateEditUi();
+    }
+
+    onEditHandlePointerDown(event, index, edge) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        this.editDrag = { index, edge, pointerId: event.pointerId, moved: false };
+        this.editSelectedIndex = index;
+        if (this.viewerHasVideo()) this.matchVideo.pause();
+        this.updateEditUi();
+    }
+
+    onEditHandlePointerMove(event) {
+        const drag = this.editDrag;
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        const seg = this.pointIntervals[drag.index];
+        if (!seg) return;
+        event.preventDefault();
+        const t = this.editTimeFromClientX(event.clientX);
+        let clamped;
+        if (drag.edge === "start") {
+            const min = this.pointIntervals[drag.index - 1]?.end ?? 0;
+            const max = seg.end - this.minPointSeconds;
+            clamped = Math.min(max, Math.max(min, t));
+            seg.start = Number(clamped.toFixed(3));
+        } else {
+            const min = seg.start + this.minPointSeconds;
+            const max = this.pointIntervals[drag.index + 1]?.start ?? this.editTrackDuration();
+            clamped = Math.min(max, Math.max(min, t));
+            seg.end = Number(clamped.toFixed(3));
+        }
+        drag.moved = true;
+        this.positionEditSegment(drag.index);
+        this.setEditHintForSegment(drag.index);
+        this.scrubEditPreview(clamped);
+    }
+
+    onEditHandlePointerUp(event) {
+        const drag = this.editDrag;
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        this.editDrag = null;
+        this.renderViewerPointRanges();
+        this.renderEditTrack();
+        if (drag.moved) this.queueSegmentsSave();
+    }
+
+    scrubEditPreview(sourceTime) {
+        // Live-scrub the frame under the dragged handle (Photos-style). Only in
+        // direct playback: the fallback window pipeline would kick off a WebM
+        // transcode per pointermove.
+        if (!this.directPlayback || !this.matchVideo.src) return;
+        const alreadyQueued = this.editScrubPending !== null;
+        this.editScrubPending = sourceTime;
+        if (alreadyQueued) return;
+        requestAnimationFrame(() => {
+            const t = this.editScrubPending;
+            this.editScrubPending = null;
+            if (!this.editMode || !Number.isFinite(t)) return;
+            const target = this.clampViewerSourceTime(t);
+            this.matchVideo.currentTime = target;
+            this.lastViewerTime = target;
+            this.updateViewerTimeline(target);
+        });
+    }
+
+    addPointAtCurrentTime() {
+        if (!this.editMode) return;
+        const duration = this.editTrackDuration();
+        if (duration <= 0) return;
+        const t = this.clampViewerSourceTime(this.getViewerSourceTime());
+        const existing = this.pointIndexAtSourceTime(t);
+        if (existing >= 0) {
+            this.editSelectedIndex = existing;
+            this.renderEditTrack();
+            this.setEditHintForSegment(existing);
+            this.showToast("There is already a point here.", "error");
+            return;
+        }
+        const prevEnd = this.pointIntervals.reduce((acc, seg) => (seg.end <= t ? Math.max(acc, seg.end) : acc), 0);
+        const nextIndex = this.nextPointIndexAfterSourceTime(t);
+        const nextStart = nextIndex >= 0 ? this.pointIntervals[nextIndex].start : duration;
+        let start = Math.max(t, prevEnd);
+        const end = Math.min(start + this.addPointSeconds, nextStart, duration);
+        start = Math.max(prevEnd, Math.min(start, end - this.addPointSeconds));
+        start = Math.max(prevEnd, Math.min(start, end - this.minPointSeconds));
+        if (!(end - start >= this.minPointSeconds)) {
+            this.showToast("Not enough room for a new point here.", "error");
+            return;
+        }
+        const seg = { start: Number(start.toFixed(3)), end: Number(end.toFixed(3)) };
+        this.pointIntervals.push(seg);
+        this.pointIntervals.sort((a, b) => a.start - b.start || a.end - b.end);
+        this.editSelectedIndex = this.pointIntervals.indexOf(seg);
+        this.renderViewerPointRanges();
+        this.renderEditTrack();
+        this.setEditHintForSegment(this.editSelectedIndex);
+        this.queueSegmentsSave();
+    }
+
+    deleteSelectedPoint() {
+        if (!this.editMode) return;
+        let index = this.editSelectedIndex;
+        if (index < 0) index = this.pointIndexAtSourceTime(this.getViewerSourceTime());
+        if (index < 0 || !this.pointIntervals[index]) {
+            this.showToast("Select a point to delete.", "error");
+            return;
+        }
+        this.pointIntervals.splice(index, 1);
+        this.editSelectedIndex = -1;
+        this.renderViewerPointRanges();
+        this.renderEditTrack();
+        this.setEditHintForSegment(-1);
+        this.queueSegmentsSave();
+    }
+
+    async resetSegmentEdits() {
+        if (!this.viewingItemId || !this.segmentsEdited) return;
+        if (!window.confirm("Discard your edits and go back to the original point times?")) return;
+        const itemId = this.viewingItemId;
+        try {
+            const resp = await fetch(`/api/library/${itemId}/segments/edits`, { method: "DELETE" });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const payload = await resp.json();
+            if (this.viewingItemId !== itemId) return;
+            this.pointIntervals = this.normalizePointIntervals(payload.segments);
+            this.segmentsEdited = Boolean(payload.edited);
+            this.editSelectedIndex = -1;
+            this.renderViewerPointRanges();
+            this.renderEditTrack();
+            this.setEditHintForSegment(-1);
+            this.showToast("Points reset to the original.", "success");
+        } catch (err) {
+            console.error(err);
+            this.showToast("Could not reset points.", "error");
+        }
+    }
+
+    queueSegmentsSave() {
+        if (!this.viewingItemId) return;
+        const itemId = this.viewingItemId;
+        const segments = this.pointIntervals.map((seg) => ({ start: seg.start, end: seg.end }));
+        // Serialize PUTs so rapid edits can't land on the server out of order.
+        this.editSaveChain = this.editSaveChain
+            .then(() => fetch(`/api/library/${itemId}/segments`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ segments }),
+            }))
+            .then(async (resp) => {
+                if (!resp.ok) {
+                    const payload = await resp.json().catch(() => ({}));
+                    throw new Error(payload.error || `HTTP ${resp.status}`);
+                }
+                const payload = await resp.json();
+                if (this.viewingItemId !== itemId) return;
+                this.segmentsEdited = Boolean(payload.edited);
+                this.updateEditUi();
+            })
+            .catch((err) => {
+                console.error(err);
+                if (this.viewingItemId === itemId) this.showToast("Could not save point edits.", "error");
+            });
     }
 
     formatClock(seconds) {
@@ -2111,6 +2448,7 @@ class RallyClipApp {
     }
 
     advanceAfterActivePlaybackSegment() {
+        if (this.editMode) return;
         if (!this.activePlaybackSegment || this.previewLoadInProgress) return;
         const nextPointIndex = this.activePlaybackSegment.nextPointIndex;
         if (Number.isInteger(nextPointIndex) && this.pointIntervals[nextPointIndex]) {

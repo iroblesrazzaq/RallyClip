@@ -677,6 +677,89 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
     assert timeline_config_preserves_time == {"value": 42.5, "current": "0:42", "duration": "2:00"}
 
 
+def test_ui_segment_edit_mode_trims_adds_deletes_and_resets(page: Page, ui_backend: BackendClient):
+    """Edit mode: drag-trim a point, add and delete points, then reset. Edits
+    land in segments_edited.csv; segments.csv is never touched."""
+    from gui import app as gui_app
+
+    item_id = _fabricate_viewer_item()
+    item_dir = Path(gui_app.LIBRARY_DIR) / item_id
+    original_csv = (item_dir / "segments.csv").read_text(encoding="utf-8")
+    _open_to_library(page, ui_backend.base_url)
+
+    page.locator(f'.lib-card[data-id="{item_id}"]').click()
+    expect(page.locator("#viewerView")).to_be_visible()
+    expect(page.locator("#viewerTimeline")).to_be_visible(timeout=30_000)
+    page.wait_for_function(
+        "() => Boolean(window.rallyClipApp?.viewerHasVideo?.())",
+        timeout=30_000,
+    )
+
+    page.locator("#viewerEditBtn").click()
+    expect(page.locator("#viewerEditBar")).to_be_visible()
+    expect(page.locator(".viewer-edit-segment")).to_have_count(2)
+    # First point is auto-selected with trim handles.
+    selected = page.locator(".viewer-edit-segment.is-selected")
+    expect(selected).to_have_count(1)
+    expect(selected.locator(".viewer-edit-handle")).to_have_count(2)
+
+    # Drag the end handle right: point 1 (1.0-2.0 of a 12s clip) stretches
+    # toward 3s. The track spans the seek wrap, so 1s = 1/12 of its width.
+    wrap_box = page.locator(".viewer-seek-wrap").bounding_box()
+    handle_box = selected.locator('.viewer-edit-handle[data-edge="end"]').bounding_box()
+    start_x = handle_box["x"] + handle_box["width"] / 2
+    start_y = handle_box["y"] + handle_box["height"] / 2
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x + wrap_box["width"] / 12, start_y, steps=8)
+    page.mouse.up()
+
+    page.wait_for_function(
+        f"""() => fetch('/api/library/{item_id}/segments')
+            .then((r) => r.json())
+            .then((p) => p.edited && p.segments[0].end > 2.4 && p.segments[0].end < 3.6)"""
+    )
+    assert (item_dir / "segments_edited.csv").exists()
+    assert (item_dir / "segments.csv").read_text(encoding="utf-8") == original_csv
+
+    # Add a point at ~8s (a gap), then delete it again. In preview-window
+    # fallback mode the seek lands asynchronously, so wait for it to settle
+    # before adding (add uses the current playback time).
+    page.evaluate("() => window.rallyClipApp.seekViewerToSourceTime(8, false)")
+    page.wait_for_function(
+        "() => Math.abs(window.rallyClipApp.getViewerSourceTime() - 8) < 0.5",
+        timeout=30_000,
+    )
+    page.locator("#editAddPointBtn").click()
+    expect(page.locator(".viewer-edit-segment")).to_have_count(3)
+    page.wait_for_function(
+        f"""() => fetch('/api/library/{item_id}/segments')
+            .then((r) => r.json())
+            .then((p) => p.segments.length === 3)"""
+    )
+    page.locator("#editDeletePointBtn").click()
+    expect(page.locator(".viewer-edit-segment")).to_have_count(2)
+
+    # Reset discards the edited copy and restores the original times.
+    page.on("dialog", lambda dialog: dialog.accept())
+    expect(page.locator("#editResetBtn")).to_be_enabled()
+    page.locator("#editResetBtn").click()
+    page.wait_for_function(
+        f"""() => fetch('/api/library/{item_id}/segments')
+            .then((r) => r.json())
+            .then((p) => !p.edited && p.segments.length === 2 && p.segments[0].end === 2)"""
+    )
+    assert not (item_dir / "segments_edited.csv").exists()
+    edit_state = page.evaluate(
+        "() => ({ points: window.rallyClipApp.pointIntervals, edited: window.rallyClipApp.segmentsEdited })"
+    )
+    assert edit_state["points"] == [{"start": 1, "end": 2}, {"start": 4, "end": 5}]
+    assert edit_state["edited"] is False
+
+    page.locator("#editDoneBtn").click()
+    expect(page.locator("#viewerEditBar")).to_be_hidden()
+
+
 def test_ui_new_match_runs_to_library(page: Page, ui_backend: BackendClient, ui_clip: Path):
     """Full UI journey: library -> New match -> pick file -> Start -> progress ->
     back to the library on completion. The synthetic clip finds no points, so no

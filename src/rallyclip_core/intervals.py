@@ -30,6 +30,20 @@ def read_point_intervals(csv_path: Optional[Path]) -> List[Interval]:
     return sorted(intervals, key=lambda item: (item[0], item[1]))
 
 
+def write_point_intervals(csv_path: Path, intervals: Iterable[Interval]) -> None:
+    """Write point intervals in the segments.csv contract (3-decimal seconds).
+
+    Writes via a temp file + replace so readers never observe a partial CSV.
+    """
+    tmp_path = csv_path.with_name(csv_path.name + ".tmp")
+    with tmp_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle, lineterminator="\n")
+        writer.writerow(["start_time", "end_time"])
+        for start, end in intervals:
+            writer.writerow([f"{start:.3f}", f"{end:.3f}"])
+    tmp_path.replace(csv_path)
+
+
 def point_duration(intervals: Iterable[Interval]) -> float:
     return sum(end - start for start, end in intervals)
 

@@ -44,6 +44,7 @@
                         <p id="viewerMeta"></p>
                     </div>
                     <div class="viewer-actions">
+                        <button type="button" class="btn btn-secondary" id="viewerEditBtn" hidden>Edit points</button>
                         <button type="button" class="btn btn-secondary" id="viewerCsvBtn" hidden>CSV</button>
                         <button type="button" class="btn btn-primary" id="viewerExportBtn">Export video</button>
                     </div>
@@ -58,6 +59,7 @@
                                 <div class="viewer-buffer-track" id="viewerBufferTrack" aria-hidden="true"></div>
                                 <div class="viewer-point-track" id="viewerPointTrack" aria-hidden="true"></div>
                                 <input type="range" id="viewerSeek" min="0" max="0" step="0.1" value="0" aria-label="Match timeline">
+                                <div class="viewer-edit-track" id="viewerEditTrack" hidden></div>
                             </div>
                             <div class="viewer-control-row">
                                 <div class="viewer-left-controls">
@@ -69,6 +71,15 @@
                                     </div>
                                 </div>
                                 <button type="button" class="viewer-control-btn viewer-fullscreen-btn" id="viewerFullscreenBtn" aria-label="Enter fullscreen">⛶</button>
+                            </div>
+                            <div class="viewer-edit-bar" id="viewerEditBar" hidden>
+                                <span class="viewer-edit-hint" id="viewerEditHint">Tap a point, then drag its ends to trim.</span>
+                                <div class="viewer-edit-actions">
+                                    <button type="button" class="btn btn-secondary btn-small" id="editAddPointBtn">Add point</button>
+                                    <button type="button" class="btn btn-secondary btn-small" id="editDeletePointBtn" disabled>Delete point</button>
+                                    <button type="button" class="btn btn-ghost btn-small" id="editResetBtn" disabled>Reset to original</button>
+                                    <button type="button" class="btn btn-primary btn-small" id="editDoneBtn">Done</button>
+                                </div>
                             </div>
                         </div>
                     </div>
