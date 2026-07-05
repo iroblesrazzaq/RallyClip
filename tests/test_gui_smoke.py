@@ -721,6 +721,7 @@ def test_frozen_data_root_uses_platform_app_data_dir(tmp_path, monkeypatch):
     ).resolve()
 
     monkeypatch.setattr(real_sys, "platform", "linux")
+    monkeypatch.setattr(os, "name", "posix")
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     assert gui_app._frozen_data_root() == (
         tmp_path / ".local" / "share" / "RallyClip"

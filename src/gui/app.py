@@ -102,7 +102,9 @@ def _frozen_data_root() -> Optional[Path]:
         # v0.1.0 stored data at ~/RallyClip; move it once instead of orphaning it.
         try:
             root.parent.mkdir(parents=True, exist_ok=True)
-            legacy.rename(root)
+            # shutil.move falls back to copy+delete when the app-data dir
+            # lives on a different filesystem (rename would raise EXDEV).
+            shutil.move(str(legacy), str(root))
         except OSError:
             pass
     return root
