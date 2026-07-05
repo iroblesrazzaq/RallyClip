@@ -92,7 +92,7 @@ def _frozen_data_root() -> Optional[Path]:
         return None
     if sys.platform == "darwin":
         root = Path.home() / "Library" / "Application Support" / "RallyClip"
-    elif os.name == "nt":
+    elif sys.platform == "win32":
         root = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming")) / "RallyClip"
     else:
         root = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share")) / "RallyClip"
