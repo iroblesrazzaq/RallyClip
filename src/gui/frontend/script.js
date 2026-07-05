@@ -49,6 +49,8 @@ class RallyClipApp {
         this.sourceDuration = 0;
         this.previewRequestSeq = 0;
         this.previewLoadInProgress = false;
+        this.directPlayback = false;
+        this.directProbeInProgress = false;
         this.previewSpinnerTimeout = null;
         this.viewerControlsHideTimeout = null;
         this.welcomeTypeTimers = [];
@@ -495,6 +497,7 @@ class RallyClipApp {
             this.clearPreviewPoll();
             this.resetMsePreview();
             this.resetViewerVideos();
+            this.directPlayback = false;
             this.viewingItemId = null;
             this.pointIntervals = [];
             this.lastViewerTime = null;
@@ -769,6 +772,7 @@ class RallyClipApp {
         this.viewerTitle.textContent = item.name || "Match";
         this.viewerMeta.textContent = item.metaText || this.cardMeta(item);
         this.viewerCsvBtn.hidden = !item.has_csv;
+        this.directPlayback = false;
         this.resetViewerVideos();
         this.updateViewerControls();
         this.showPreviewLoading();
@@ -776,7 +780,66 @@ class RallyClipApp {
         this.showViewerControls();
         await this.loadPlaybackManifest(item.id);
         const start = this.pointIntervals.length ? this.pointIntervals[0].start : 0;
+        if (await this.tryDirectSourcePlayback(start, true)) return;
         this.seekViewerToSourceTime(start, true);
+    }
+
+    tryDirectSourcePlayback(sourceTime, autoplay = true) {
+        // Stream the original file (Range requests, native codec decode) and
+        // model it as one full-length window so the existing source-time math
+        // (seeks, point skips, timeline) applies unchanged. Resolves false when
+        // the engine cannot play the codec; callers then use preview windows.
+        if (!this.viewingItemId) return Promise.resolve(false);
+        const itemId = this.viewingItemId;
+        const video = this.matchVideo;
+        const sourceUrl = `/api/library/${itemId}/source`;
+        this.directPlayback = false;
+        this.directProbeInProgress = true;
+        return new Promise((resolve) => {
+            let settled = false;
+            let timer = null;
+            const settle = (ok) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                video.removeEventListener("canplay", onReady);
+                video.removeEventListener("error", onError);
+                this.directProbeInProgress = false;
+                resolve(ok);
+            };
+            const onReady = () => {
+                if (this.viewingItemId !== itemId || video !== this.matchVideo) {
+                    settle(false);
+                    return;
+                }
+                if (!(this.sourceDuration > 0) && Number.isFinite(video.duration) && video.duration > 0) {
+                    this.sourceDuration = video.duration;
+                    this.configureViewerTimeline(this.sourceDuration);
+                }
+                video.dataset.windowStart = "0";
+                video.dataset.windowDuration = String(this.sourceDuration > 0 ? this.sourceDuration : video.duration || 0);
+                this.directPlayback = true;
+                const target = this.clampViewerSourceTime(sourceTime);
+                video.currentTime = target;
+                this.lastViewerTime = target;
+                this.updateViewerTimeline(target);
+                this.hidePreviewLoading();
+                this.updateViewerControls();
+                if (autoplay) this.startViewerPlayback();
+                settle(true);
+            };
+            const onError = () => {
+                console.warn("Direct source playback unavailable; falling back to preview windows", video.error);
+                this.clearVideoElement(video);
+                settle(false);
+            };
+            timer = setTimeout(onError, 10000);
+            video.addEventListener("canplay", onReady);
+            video.addEventListener("error", onError);
+            video.src = sourceUrl;
+            video.dataset.previewUrl = sourceUrl;
+            video.load();
+        });
     }
 
     clearPreviewPoll() {
@@ -1569,7 +1632,7 @@ class RallyClipApp {
     }
 
     prefetchForPlaybackSchedule(sourceTime) {
-        if (!this.viewingItemId) return;
+        if (!this.viewingItemId || this.directPlayback) return;
         this.trimPrefetchedWindowKeys(sourceTime);
         this.getSchedulerPrefetchStarts(sourceTime).forEach((start) => this.prefetchPreviewWindow(start));
     }
@@ -1925,6 +1988,13 @@ class RallyClipApp {
             this.seekMseViewerToSourceTime(target, autoplay);
             return;
         }
+        if (this.directPlayback && this.matchVideo.src) {
+            this.matchVideo.currentTime = target;
+            this.lastViewerTime = target;
+            this.updateViewerTimeline(target);
+            if (autoplay) this.startViewerPlayback();
+            return;
+        }
         const windowStart = this.videoWindowStart(this.matchVideo);
         const windowEnd = this.videoWindowEnd(this.matchVideo);
         if (this.matchVideo.src && target >= windowStart && target < windowEnd - 0.15) {
@@ -1962,9 +2032,19 @@ class RallyClipApp {
     }
 
     handleViewerVideoError() {
+        if (this.directProbeInProgress) return;
         if (!this.matchVideo.src || !this.matchVideo.error) return;
         if (this.mseActive) {
             this.fallbackFromMse(this.getViewerSourceTime(), !this.matchVideo.paused, this.matchVideo.error);
+            return;
+        }
+        if (this.directPlayback) {
+            console.warn("Direct source playback failed mid-stream; falling back to preview windows", this.matchVideo.error);
+            const target = this.lastViewerTime ?? this.getViewerSourceTime();
+            const wasPlaying = !this.matchVideo.paused;
+            this.directPlayback = false;
+            this.clearVideoElement(this.matchVideo);
+            this.loadPreviewWindowAt(target, wasPlaying);
             return;
         }
         this.showToast("Could not play this video in the viewer.", "error");
@@ -2033,7 +2113,7 @@ class RallyClipApp {
     }
 
     continueToNextPreviewWindow(options = {}) {
-        if (!this.viewingItemId || this.pendingPreviewTransition) return;
+        if (!this.viewingItemId || this.pendingPreviewTransition || this.directPlayback) return;
         const sourceTime = this.videoWindowEnd(this.matchVideo);
         if (!this.activePlaybackSegment) this.setPlaybackSegmentForSourceTime(sourceTime);
         const segmentEnd = Number(this.activePlaybackSegment?.end);
