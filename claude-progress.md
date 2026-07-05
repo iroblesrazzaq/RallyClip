@@ -130,7 +130,7 @@ ONNX pose swap (YOLO-ONNX repo + docs/onnx-pose-parity-plan.md in the perf workt
 - PoseExtractor imgsz fallback corrected 1920 -> 960 (bb72dd6).
 - In flight: 11-video 60s-sample torch-vs-onnx segment sweep (scripts/sweep_e2e_onnx.py in YOLO-ONNX).
 
-Also: container-level CLAUDE.md written at rallyclip_container/ covering all four sibling checkouts, GH state, and house rules.
+Also: container-level CLAUDE.md written at rallyclip_container/ covering all four sibling checkouts, GH state, and house rules. (Removed in Session 10 at user request; the sibling table now lives in RallyClip-perf/docs/REPO_MAP.md.)
 
 ## Session 10 - 2026-07-04
 
