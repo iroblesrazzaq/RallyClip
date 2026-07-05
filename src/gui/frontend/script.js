@@ -997,8 +997,8 @@ class RallyClipApp {
         this.directStandby = null;
         standby.muted = previous.muted;
         standby.volume = previous.volume;
-        const playPromise = standby.play();
         previous.pause();
+        const playPromise = standby.play();
         this.matchVideo = standby;
         this.matchVideoBuffer = previous;
         standby.classList.add("is-active");
