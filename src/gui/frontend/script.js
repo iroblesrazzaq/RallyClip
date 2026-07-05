@@ -57,6 +57,8 @@ class RallyClipApp {
         this.editDrag = null;
         this.editScrubPending = null;
         this.editSaveChain = Promise.resolve();
+        this.editSaveGen = 0;
+        this.editSessionDirty = false;
         this.segmentsEdited = false;
         this.minPointSeconds = 0.5;
         this.addPointSeconds = 8;
@@ -518,6 +520,11 @@ class RallyClipApp {
         if (viewName !== "viewer" && this.matchVideo) {
             this.exitEditMode({ silent: true });
             this.segmentsEdited = false;
+            // Orphan the old item's autosave queue so the next item's saves
+            // don't wait behind it (queued ones no-op via the generation bump).
+            this.editSaveGen += 1;
+            this.editSaveChain = Promise.resolve();
+            this.editSessionDirty = false;
             this.clearPreviewPoll();
             this.resetMsePreview();
             this.resetViewerVideos();
@@ -800,6 +807,9 @@ class RallyClipApp {
         this.exitEditMode({ silent: true });
         this.viewerEditBtn.hidden = !item.has_csv;
         this.segmentsEdited = Boolean(item.has_edits);
+        this.editSaveGen += 1;
+        this.editSaveChain = Promise.resolve();
+        this.editSessionDirty = false;
         this.directPlayback = false;
         this.resetViewerVideos();
         this.updateViewerControls();
@@ -2043,7 +2053,8 @@ class RallyClipApp {
         }
         if (!wasEditing) return;
         if (this.viewingItemId) this.setPlaybackSegmentForSourceTime(this.getViewerSourceTime());
-        if (!options.silent && this.segmentsEdited) this.showToast("Point edits saved.", "success");
+        if (!options.silent && this.editSessionDirty) this.showToast("Point edits saved.", "success");
+        this.editSessionDirty = false;
     }
 
     updateEditUi() {
@@ -2056,7 +2067,9 @@ class RallyClipApp {
             this.viewerEditBtn.textContent = this.editMode ? "Editing points" : "Edit points";
         }
         this.editDeletePointBtn.disabled = !this.editMode || this.editSelectedIndex < 0;
-        this.editResetBtn.disabled = !this.editMode || !this.segmentsEdited;
+        // Local unsaved changes count too: a failed autosave must not lock the
+        // user out of Reset.
+        this.editResetBtn.disabled = !this.editMode || (!this.segmentsEdited && !this.editSessionDirty);
     }
 
     editTrackDuration() {
@@ -2253,16 +2266,23 @@ class RallyClipApp {
     }
 
     async resetSegmentEdits() {
-        if (!this.viewingItemId || !this.segmentsEdited) return;
+        if (!this.viewingItemId || (!this.segmentsEdited && !this.editSessionDirty)) return;
         if (!window.confirm("Discard your edits and go back to the original point times?")) return;
         const itemId = this.viewingItemId;
+        // Invalidate queued autosaves so a stale PUT can't recreate the edited
+        // CSV after the DELETE, then wait out any PUT already on the wire.
+        this.editSaveGen += 1;
+        const inFlight = this.editSaveChain;
+        this.editSaveChain = Promise.resolve();
         try {
+            await inFlight.catch(() => {});
             const resp = await fetch(`/api/library/${itemId}/segments/edits`, { method: "DELETE" });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const payload = await resp.json();
             if (this.viewingItemId !== itemId) return;
             this.pointIntervals = this.normalizePointIntervals(payload.segments);
             this.segmentsEdited = Boolean(payload.edited);
+            this.editSessionDirty = false;
             this.editSelectedIndex = -1;
             this.renderViewerPointRanges();
             this.renderEditTrack();
@@ -2277,27 +2297,37 @@ class RallyClipApp {
     queueSegmentsSave() {
         if (!this.viewingItemId) return;
         const itemId = this.viewingItemId;
+        const gen = this.editSaveGen;
+        this.editSessionDirty = true;
+        this.updateEditUi();
         const segments = this.pointIntervals.map((seg) => ({ start: seg.start, end: seg.end }));
-        // Serialize PUTs so rapid edits can't land on the server out of order.
+        // Serialize PUTs so rapid edits can't land on the server out of order;
+        // a generation bump (reset / item switch) turns queued saves into no-ops.
         this.editSaveChain = this.editSaveChain
-            .then(() => fetch(`/api/library/${itemId}/segments`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ segments }),
-            }))
+            .then(() => {
+                if (this.editSaveGen !== gen || this.viewingItemId !== itemId) return null;
+                return fetch(`/api/library/${itemId}/segments`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ segments }),
+                });
+            })
             .then(async (resp) => {
+                if (!resp) return;
                 if (!resp.ok) {
                     const payload = await resp.json().catch(() => ({}));
                     throw new Error(payload.error || `HTTP ${resp.status}`);
                 }
                 const payload = await resp.json();
-                if (this.viewingItemId !== itemId) return;
+                if (this.editSaveGen !== gen || this.viewingItemId !== itemId) return;
                 this.segmentsEdited = Boolean(payload.edited);
                 this.updateEditUi();
             })
             .catch((err) => {
                 console.error(err);
-                if (this.viewingItemId === itemId) this.showToast("Could not save point edits.", "error");
+                if (this.editSaveGen === gen && this.viewingItemId === itemId) {
+                    this.showToast("Could not save point edits.", "error");
+                }
             });
     }
 
