@@ -6,7 +6,7 @@ runtime; torch/ultralytics only in the `[train]` extra) → LSTM (ONNX) → hyst
 postprocessing; PyAV decode; CLI + Flask GUI + pywebview desktop shell (WKWebView on
 macOS, WebView2 on Windows); PyInstaller Mac packaging. This checkout is a git
 worktree (active topic branch — see docs/PROGRESS.md); sibling checkouts are
-described in `../CLAUDE.md` (container) and docs/REPO_MAP.md.
+described in docs/REPO_MAP.md.
 
 ## Tier 1 — read every session, in this order
 

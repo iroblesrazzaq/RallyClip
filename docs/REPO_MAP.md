@@ -6,8 +6,8 @@ If that shows changes not reflected here, update this map in the same commit as 
 
 ## Container context (one level up)
 
-This checkout lives in `rallyclip_container/` beside three siblings — see the container
-`CLAUDE.md` for the full story:
+This checkout lives in `rallyclip_container/` beside three siblings (the container
+dir is not a git repo; this table is the authoritative summary):
 
 | Sibling | What | Touch it? |
 |---|---|---|
