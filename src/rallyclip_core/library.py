@@ -120,8 +120,11 @@ class SavedMatchStore:
             except Exception:
                 continue
             meta["id"] = child.name  # trust the folder name, not the file contents
-            meta["has_csv"] = (child / SEGMENTS_FILENAME).exists()
-            meta["has_edits"] = (child / EDITED_SEGMENTS_FILENAME).exists()
+            has_edits = (child / EDITED_SEGMENTS_FILENAME).exists()
+            # has_csv means "point times are available" — the edited copy
+            # counts, matching what resolve_segments serves downstream.
+            meta["has_csv"] = (child / SEGMENTS_FILENAME).exists() or has_edits
+            meta["has_edits"] = has_edits
             meta["has_thumbnail"] = (child / THUMBNAIL_FILENAME).exists()
             meta["has_export"] = (child / EXPORT_FILENAME).exists()
             items.append(meta)

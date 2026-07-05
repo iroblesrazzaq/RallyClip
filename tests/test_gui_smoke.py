@@ -816,6 +816,9 @@ def test_segment_edits_roundtrip_without_touching_original(tmp_path, monkeypatch
     assert manifest["point_intervals"] == [{"start": 0.5, "end": 3.5}, {"start": 10.0, "end": 12.0}]
     download = client.get("/api/library/match-1/csv")
     assert download.data.decode("utf-8") == edited
+    # send_file keeps the CSV open until the response is closed; Windows would
+    # refuse the reset's unlink below with the handle still held.
+    download.close()
 
     # Reset restores the original and deletes the copy.
     reset = client.delete("/api/library/match-1/segments/edits")
@@ -854,6 +857,13 @@ def test_segment_edits_validation_and_missing_item(tmp_path, monkeypatch):
         "/api/library/no-such/segments", json={"segments": [{"start": 1.0, "end": 2.0}]}
     ).status_code == 404
     assert client.delete("/api/library/no-such/segments/edits").status_code == 404
+
+    # Reset must not delete the edited copy when the original is missing
+    # (legacy items): it may be the only point data left.
+    (item_dir / "segments_edited.csv").write_text("start_time,end_time\n1.0,2.0\n", encoding="utf-8")
+    (item_dir / "segments.csv").unlink()
+    assert client.delete("/api/library/match-1/segments/edits").status_code == 404
+    assert (item_dir / "segments_edited.csv").exists()
 
 
 def test_segment_edits_invalidate_lazy_export(tmp_path, monkeypatch):

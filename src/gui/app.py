@@ -2566,7 +2566,13 @@ def library_segments_update(item_id: str):
         intervals = _parse_segments_request(request.get_json(silent=True))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    write_point_intervals(_library_item_dir(item_id) / EDITED_SEGMENTS_FILENAME, intervals)
+    try:
+        write_point_intervals(_library_item_dir(item_id) / EDITED_SEGMENTS_FILENAME, intervals)
+    except OSError as exc:
+        # Windows refuses to replace a CSV that is open elsewhere (e.g. a
+        # download still streaming it).
+        logging.warning("Could not save edited segments for %s", item_id, exc_info=True)
+        return jsonify({"error": f"Could not save edited points: {exc}"}), 503
     _invalidate_library_export(item_id)
     return jsonify(_segments_payload(item_id, intervals)), 200
 
@@ -2574,21 +2580,24 @@ def library_segments_update(item_id: str):
 @app.route("/api/library/<item_id>/segments/edits", methods=["DELETE"])
 def library_segments_reset(item_id: str):
     """Reset to the original model output by discarding segments_edited.csv."""
-    try:
-        item_dir = _library_item_dir(item_id)
-    except ValueError:
-        return jsonify({"error": "Invalid id"}), 400
-    edited = item_dir / EDITED_SEGMENTS_FILENAME
-    if edited.exists():
-        edited.unlink(missing_ok=True)
-        _invalidate_library_export(item_id)
     original = _resolve_library_file(item_id, "segments.csv")
     if original is None:
+        # Never delete the edited copy unless the original is there to fall
+        # back to; for legacy items it may be the only point data left.
         return jsonify({"error": "CSV not available"}), 404
     try:
         intervals = _sorted_point_intervals(original)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    edited = _library_item_dir(item_id) / EDITED_SEGMENTS_FILENAME
+    if edited.exists():
+        try:
+            edited.unlink()
+        except OSError as exc:
+            # Windows refuses to delete a CSV that is open elsewhere.
+            logging.warning("Could not delete edited segments for %s", item_id, exc_info=True)
+            return jsonify({"error": f"Could not reset points: {exc}"}), 503
+        _invalidate_library_export(item_id)
     return jsonify(_segments_payload(item_id, intervals)), 200
 
 
