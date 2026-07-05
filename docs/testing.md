@@ -7,8 +7,8 @@ PY=/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/RallyClip/.venv-
 ```
 
 (That venv lives in the sibling primary clone; it has the full stack + pytest 9.0.3,
-Python 3.11.14, cv2 4.13 (torch 2.12 present in this env but the runtime never imports it). Container CLAUDE.md also mentions conda
-`tennis_env`; `.venv-train` is what was verified 2026-07-03.)
+Python 3.11.14, cv2 4.13 (torch 2.12 present in this env but the runtime never imports it). Conda `tennis_env` is an
+equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 
 ## Default gate (run every session; the branch gate before any commit)
 

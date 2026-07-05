@@ -8,8 +8,8 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   live at the root of this repo, committed on `refactor/runtime-api-engine`.
 - **Why:** RallyClip-perf is where active work happens (latest commits, clean tree);
   the container dir (`rallyclip_container/`) is not a git repo, so the harness must
-  live inside a repo to be versioned. Container-level context stays in the container
-  `CLAUDE.md`; REPO_MAP links to it.
+  live inside a repo to be versioned. Container-level context lives in
+  docs/REPO_MAP.md's sibling table (no container-level doc file).
 - **Rejected:** harness at container level (unversionable without a new git repo
   wrapping four checkouts — nested-repo mess); harness in `RallyClip/` (parked on
   `docs`, not where work happens; shares `.git` anyway).
@@ -21,8 +21,7 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   (23 legacy ruff errors recorded in testing.md) instead of adding a lint config
   (that would be a behavior change beyond a docs harness).
 - Test interpreter standardized on `../RallyClip/.venv-train/bin/python3` because it
-  was verified in-session (212 passed); container CLAUDE.md's `tennis_env` note kept
-  as an unverified alternative.
+  was verified in-session (212 passed); conda `tennis_env` kept as an alternative.
 
 ## 2026-07-04 — ONNX pose runner is the production path (PR #26)
 
