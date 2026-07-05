@@ -42,18 +42,31 @@ _Last updated: 2026-07-05 (session: storage fix + direct playback + segment edit
    slower on CoreML — stays CPU. Verdict: no MLX rewrite. Scripts + results:
    `docs/perf/coreml-spike/` (reproducible via `RALLYCLIP_SPIKE_SOURCE`).
 
+## QA feedback (2026-07-05, user ran the DMG)
+
+- **Gaps between plays**: point-to-point playback pauses (audible audio
+  dropout) instead of being continuous → new feature
+  `continuous-playback-no-gaps` (direct-playback seek path).
+- **Edit mode**: short points are hard to grab on the full-match timeline;
+  wants timeline zoom → feature `edit-mode-timeline-zoom`, explicitly
+  DEFERRED by the user ("skip that for now, editing is lower priority").
+- Re-confirmed priorities: model retrain on all data + inference speedup
+  (CoreML productionization); "we eventually want to make the app soon".
+
 ## Next steps (in order)
 
-1. **CoreML productionization** (feature `mlx-apple-silicon-backend`,
+1. **Continuous playback** (feature `continuous-playback-no-gaps`): eliminate
+   the inter-point gap/audio dropout in the viewer's point-only playback.
+2. **CoreML productionization** (feature `mlx-apple-silicon-backend`,
    in_progress): static 544×960 export into the model bundle; opt-in provider
    flag (CPU stays the byte-parity default); letterbox-pad fallback for
    non-16:9; golden-verify static export vs bundled dynamic ONNX.
-2. After the user's manual QA: tag a release from main so release.yml ships
-   the storage-fix + direct-playback + edit-mode build.
-3. Distribution: Developer ID signing + notarization (user has an Apple dev
-   account — feature `macos-app-distribution`), then iOS/subscription track.
-4. Cleanup candidates: WebM preview-window pipeline + Qt-era proxy endpoints
+3. **Model retrain on all data** (feature `model-retrain-full-data`) — user
+   re-confirmed 2026-07-05.
+4. Tag a release from main once QA issues are addressed; then Developer ID
+   signing + notarization (`macos-app-distribution`), then iOS/subscription.
+5. Cleanup candidates: WebM preview-window pipeline + Qt-era proxy endpoints
    once direct playback is QA-confirmed; welcome-screen quirk (frontend trusts
    stale WebKit localStorage over server `welcome_seen: false`, script.js:311).
-5. Backlog: training-quality-harness, model retrain on all data, perf
-   streaming loop (docs/perf/).
+6. Deferred by user: `edit-mode-timeline-zoom`. Backlog:
+   training-quality-harness, perf streaming loop (docs/perf/).
