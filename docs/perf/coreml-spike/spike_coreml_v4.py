@@ -1,5 +1,6 @@
 """Spike v4: static rect (544x960) export — same shape the runtime feeds today."""
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -7,16 +8,24 @@ from pathlib import Path
 import numpy as np
 
 SCRATCH = Path(__file__).parent
-REPO = Path("/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/RallyClip-perf")
+REPO = Path(__file__).resolve().parents[3]  # docs/perf/coreml-spike -> repo root
 sys.path.insert(0, str(REPO / "src"))
 
 N_FRAMES = 40
-SOURCE = Path.home() / "Library/Application Support/RallyClip/library/20260705-012328-b3235b/source.mp4"
+# Any real match video works; results in this directory came from a saved
+# 145MB h264 1280x720 24fps library item on the dev machine.
+SOURCE = Path(os.environ["RALLYCLIP_SPIKE_SOURCE"]) if "RALLYCLIP_SPIKE_SOURCE" in os.environ else None
+if SOURCE is None or not SOURCE.exists():
+    raise SystemExit("Set RALLYCLIP_SPIKE_SOURCE to a match video (mp4) to run this spike.")
 
 rect_onnx = SCRATCH / "yolov8n-pose-544x960-static.onnx"
 if not rect_onnx.exists():
     from ultralytics import YOLO
 
+    # models/yolov8n-pose.pt is the official Ultralytics checkpoint the bundled
+    # dynamic ONNX was exported from (gitignored; auto-downloaded by YOLO() if
+    # absent). Production must still golden-verify the static export against
+    # the bundled models/rallyclip_v0.3.1/yolov8n-pose-960-dynamic.onnx.
     model = YOLO(str(REPO / "models" / "yolov8n-pose.pt"))
     exported = model.export(format="onnx", imgsz=[544, 960], dynamic=False, simplify=True)
     Path(exported).rename(rect_onnx)

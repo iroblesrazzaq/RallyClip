@@ -51,12 +51,16 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   config (dynamic-axes ONNX, CPU EP, rect 544x960): 15.6 fps. CoreML EP on the
   dynamic model: only ~1.2x — the Neural Engine rejects unbounded dims (E5RT
   "unbounded dimension"), so 110/380 nodes stay on CPU with 8+ partition round-trips.
-  Re-exporting the same weights with static shapes flips it: static rect 544x960 +
-  CoreML EP (MLProgram, MLComputeUnits=ALL) = **120.4 fps, 8.05x over CPU**, max
-  abs divergence on confident detections 1.2e-4. LSTM head: CoreML is *slower*
+  Re-exporting the same checkpoint with static shapes flips it: static rect
+  544x960 + CoreML EP (MLProgram, MLComputeUnits=ALL) = **120.4 fps — ~7.7x the
+  15.6 fps shipping path** (8.05x vs the same static model on CPU, 15.0 fps);
+  max abs divergence on confident detections 1.2e-4. Static exports were made
+  from models/yolov8n-pose.pt, the checkpoint the bundled dynamic ONNX came
+  from; production must golden-verify the static export against the bundled
+  ONNX before swapping. LSTM head: CoreML is *slower*
   (0.59s vs 0.48s/200 runs) — keep it on CPU. Scripts + JSON results committed in
   docs/perf/coreml-spike/.
-- **Why it matters:** pose extraction is the pipeline bottleneck; 8x there without
+- **Why it matters:** pose extraction is the pipeline bottleneck; ~7.7x there without
   new dependencies (CoreMLExecutionProvider ships in stock onnxruntime 1.24.4).
   Productionizing needs: (a) a static 544x960 export added to the model bundle,
   (b) an opt-in provider flag (CPU stays the parity default — 1e-4 divergence

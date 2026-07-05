@@ -5,13 +5,14 @@ Divergence matters because golden parity is byte-exact on CPU; any accelerated
 path must either match or ship with a documented tolerance.
 """
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
 
-REPO = Path("/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/RallyClip-perf")
+REPO = Path(__file__).resolve().parents[3]  # docs/perf/coreml-spike -> repo root
 sys.path.insert(0, str(REPO / "src"))
 
 import onnxruntime as ort  # noqa: E402
@@ -20,7 +21,11 @@ from extraction.yolo_onnx_runner import letterbox  # noqa: E402
 
 POSE_ONNX = REPO / "models/rallyclip_v0.3.1/yolov8n-pose-960-dynamic.onnx"
 LSTM_ONNX = REPO / "models/rallyclip_v0.3.1/model.onnx"
-SOURCE = Path.home() / "Library/Application Support/RallyClip/library/20260705-012328-b3235b/source.mp4"
+# Any real match video works; results in this directory came from a saved
+# 145MB h264 1280x720 24fps library item on the dev machine.
+SOURCE = Path(os.environ["RALLYCLIP_SPIKE_SOURCE"]) if "RALLYCLIP_SPIKE_SOURCE" in os.environ else None
+if SOURCE is None or not SOURCE.exists():
+    raise SystemExit("Set RALLYCLIP_SPIKE_SOURCE to a match video (mp4) to run this spike.")
 N_FRAMES = 40
 IMGSZ = 960
 
