@@ -41,8 +41,8 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
 from runtime.assets import candidate_roots, resolve_asset
 from runtime.defaults import build_gui_defaults
 from runtime.paths import resolve_frontend_dir
-from rallyclip_core.intervals import read_point_intervals
-from rallyclip_core.library import SavedMatchStore, new_item_id
+from rallyclip_core.intervals import read_point_intervals, write_point_intervals
+from rallyclip_core.library import EDITED_SEGMENTS_FILENAME, SavedMatchStore, new_item_id
 from rallyclip_core.playback import build_playback_manifest, playback_manifest_payload
 
 JobDict = Dict[str, Any]
@@ -2117,6 +2117,11 @@ def _resolve_library_source(item_id: str) -> Optional[Path]:
     return _library_store().resolve_source(item_id)
 
 
+def _resolve_library_segments(item_id: str) -> Optional[Path]:
+    """Effective point-times CSV: user edits win over the model output."""
+    return _library_store().resolve_segments(item_id)
+
+
 def _read_library_meta(item_dir: Path) -> Dict[str, Any]:
     return _library_store().read_meta(item_dir)
 
@@ -2157,9 +2162,9 @@ def native_playback_descriptor(item_id: str) -> Dict[str, Any]:
     source_path = _resolve_library_source(item_id)
     if source_path is None:
         raise FileNotFoundError("Video not available")
-    csv_path = item_dir / "segments.csv"
+    csv_path = _resolve_library_segments(item_id)
     meta = _read_library_meta(item_dir)
-    intervals = _sorted_point_intervals(csv_path if csv_path.exists() else None)
+    intervals = _sorted_point_intervals(csv_path)
     try:
         source_duration = float(meta.get("duration_s") or 0.0)
     except (TypeError, ValueError):
@@ -2182,9 +2187,9 @@ def native_playback_descriptor(item_id: str) -> Dict[str, Any]:
         "source_duration_s": manifest_payload["source_duration_s"],
         "point_intervals": manifest_payload["point_intervals"],
         "point_duration_s": manifest_payload["point_duration_s"],
-        "has_csv": csv_path.exists(),
+        "has_csv": csv_path is not None,
         "has_export": (item_dir / "export.mp4").exists(),
-        "csv_url": f"/api/library/{item_id}/csv" if csv_path.exists() else None,
+        "csv_url": f"/api/library/{item_id}/csv" if csv_path is not None else None,
         "export_url": f"/api/library/{item_id}/video",
         "proxy": _native_playback_proxy_state(source_path, proxy_path),
     }
@@ -2264,7 +2269,7 @@ def ensure_native_playback_proxy(item_id: str) -> Dict[str, Any]:
 
 def _library_playback_manifest_payload(item_id: str) -> Dict[str, Any]:
     source_path = _resolve_library_source(item_id)
-    csv_path = _resolve_library_file(item_id, "segments.csv")
+    csv_path = _resolve_library_segments(item_id)
     if source_path is None:
         raise FileNotFoundError("Video not available")
     if csv_path is None:
@@ -2311,7 +2316,7 @@ def _export_library_video(item_id: str) -> Path:
     source_path = _resolve_library_source(item_id)
     if source_path is None:
         raise FileNotFoundError("Video not available")
-    csv_path = _resolve_library_file(item_id, "segments.csv")
+    csv_path = _resolve_library_segments(item_id)
     if csv_path is None:
         # Legacy items may only have an already-cut video.mp4.
         if source_path.name == "video.mp4":
@@ -2495,26 +2500,101 @@ def library_playback(item_id: str):
     return jsonify(payload), 200
 
 
+def _segments_payload(item_id: str, intervals: list[tuple[float, float]]) -> Dict[str, Any]:
+    return {
+        "segments": [{"start": start, "end": end} for start, end in intervals],
+        "point_duration_s": round(sum(end - start for start, end in intervals), 3),
+        "edited": _library_store().has_edited_segments(item_id),
+    }
+
+
+def _parse_segments_request(payload: Any) -> list[tuple[float, float]]:
+    """Validate an edited-segments body into sorted, non-overlapping intervals."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("segments"), list):
+        raise ValueError("Body must be a JSON object with a 'segments' list")
+    raw = payload["segments"]
+    if len(raw) > 2000:
+        raise ValueError("Too many segments")
+    intervals: list[tuple[float, float]] = []
+    for entry in raw:
+        try:
+            start = float(entry["start"])
+            end = float(entry["end"])
+        except (TypeError, KeyError, ValueError) as exc:
+            raise ValueError("Each segment needs numeric 'start' and 'end'") from exc
+        if not (math.isfinite(start) and math.isfinite(end)):
+            raise ValueError("Segment times must be finite")
+        if start < 0 or end <= start:
+            raise ValueError("Each segment needs 0 <= start < end")
+        intervals.append((round(start, 3), round(end, 3)))
+    intervals.sort()
+    for (_, prev_end), (next_start, _) in zip(intervals, intervals[1:]):
+        if next_start < prev_end:
+            raise ValueError("Segments must not overlap")
+    return intervals
+
+
+def _invalidate_library_export(item_id: str) -> None:
+    # export.mp4 was cut from the previous point times; drop it so the next
+    # download re-exports from the effective CSV.
+    with _export_lock(item_id):
+        (_library_item_dir(item_id) / "export.mp4").unlink(missing_ok=True)
+
+
 @app.route("/api/library/<item_id>/segments", methods=["GET"])
 def library_segments(item_id: str):
-    path = _resolve_library_file(item_id, "segments.csv")
+    path = _resolve_library_segments(item_id)
     if path is None:
         return jsonify({"error": "CSV not available"}), 404
     try:
         intervals = _sorted_point_intervals(path)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify(
-        {
-            "segments": [{"start": start, "end": end} for start, end in intervals],
-            "point_duration_s": round(sum(end - start for start, end in intervals), 3),
-        }
-    ), 200
+    return jsonify(_segments_payload(item_id, intervals)), 200
+
+
+@app.route("/api/library/<item_id>/segments", methods=["PUT"])
+def library_segments_update(item_id: str):
+    """Save user-edited point times to segments_edited.csv.
+
+    The model-produced segments.csv is never touched, so edits are always
+    reversible via the reset endpoint.
+    """
+    if _resolve_library_segments(item_id) is None:
+        return jsonify({"error": "CSV not available"}), 404
+    try:
+        intervals = _parse_segments_request(request.get_json(silent=True))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    write_point_intervals(_library_item_dir(item_id) / EDITED_SEGMENTS_FILENAME, intervals)
+    _invalidate_library_export(item_id)
+    return jsonify(_segments_payload(item_id, intervals)), 200
+
+
+@app.route("/api/library/<item_id>/segments/edits", methods=["DELETE"])
+def library_segments_reset(item_id: str):
+    """Reset to the original model output by discarding segments_edited.csv."""
+    try:
+        item_dir = _library_item_dir(item_id)
+    except ValueError:
+        return jsonify({"error": "Invalid id"}), 400
+    edited = item_dir / EDITED_SEGMENTS_FILENAME
+    if edited.exists():
+        edited.unlink(missing_ok=True)
+        _invalidate_library_export(item_id)
+    original = _resolve_library_file(item_id, "segments.csv")
+    if original is None:
+        return jsonify({"error": "CSV not available"}), 404
+    try:
+        intervals = _sorted_point_intervals(original)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(_segments_payload(item_id, intervals)), 200
 
 
 @app.route("/api/library/<item_id>/csv", methods=["GET"])
 def library_csv(item_id: str):
-    path = _resolve_library_file(item_id, "segments.csv")
+    path = _resolve_library_segments(item_id)
     if path is None:
         return jsonify({"error": "CSV not available"}), 404
     return send_file(str(path), as_attachment=True, download_name=f"{item_id}_segments.csv")

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 SOURCE_FILENAME = "source.mp4"
 LEGACY_SOURCE_FILENAME = "video.mp4"
 SEGMENTS_FILENAME = "segments.csv"
+EDITED_SEGMENTS_FILENAME = "segments_edited.csv"
 META_FILENAME = "meta.json"
 THUMBNAIL_FILENAME = "thumb.jpg"
 EXPORT_FILENAME = "export.mp4"
@@ -67,6 +68,30 @@ class SavedMatchStore:
                 return path
         return None
 
+    def resolve_segments(self, item_id: str) -> Optional[Path]:
+        """Resolve the effective point-times CSV for a library item.
+
+        ``segments_edited.csv`` (user edits) wins over the model-produced
+        ``segments.csv``; the original is never modified so edits can always
+        be reset.
+        """
+        try:
+            item_dir = self.item_dir(item_id)
+        except ValueError:
+            return None
+        for filename in (EDITED_SEGMENTS_FILENAME, SEGMENTS_FILENAME):
+            path = item_dir / filename
+            if path.exists():
+                return path
+        return None
+
+    def has_edited_segments(self, item_id: str) -> bool:
+        try:
+            item_dir = self.item_dir(item_id)
+        except ValueError:
+            return False
+        return (item_dir / EDITED_SEGMENTS_FILENAME).exists()
+
     def read_meta(self, item_dir: Path) -> Dict[str, Any]:
         meta_path = item_dir / META_FILENAME
         if not meta_path.exists():
@@ -96,6 +121,7 @@ class SavedMatchStore:
                 continue
             meta["id"] = child.name  # trust the folder name, not the file contents
             meta["has_csv"] = (child / SEGMENTS_FILENAME).exists()
+            meta["has_edits"] = (child / EDITED_SEGMENTS_FILENAME).exists()
             meta["has_thumbnail"] = (child / THUMBNAIL_FILENAME).exists()
             meta["has_export"] = (child / EXPORT_FILENAME).exists()
             items.append(meta)
