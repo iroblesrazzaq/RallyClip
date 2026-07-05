@@ -93,7 +93,7 @@
     "area": "desktop_storage",
     "title": "Use standard macOS app storage locations",
     "user_visible_behavior": "Packaged Mac installs store saved matches, preferences, logs, caches, and scratch files in standard macOS locations instead of a top-level ~/RallyClip folder, while existing ~/RallyClip data migrates without data loss.",
-    "status": "not_started",
+    "status": "in_review",
     "evidence_plan": [
       "Packaged app resolves saved match data under ~/Library/Application Support/RallyClip.",
       "Preview/cache/job scratch data resolves under ~/Library/Caches/RallyClip where appropriate.",
@@ -101,8 +101,8 @@
       "One-time migration preserves existing ~/RallyClip/library matches, preferences, and outputs.",
       "Tests or manual migration evidence prove old installs still open existing saved matches."
     ],
-    "evidence": "",
-    "notes": "Current v0.1.0 packaged app stores data under ~/RallyClip. This worked for first release but is not the normal macOS app-storage convention; migrate in a future release with a clear fallback/backup strategy."
+    "evidence": "PR #28 (2026-07-05): gui.app._frozen_data_root() -> ~/Library/Application Support/RallyClip (APPDATA on Windows, XDG on Linux) with one-time rename migration from legacy ~/RallyClip; unit tests for platform paths + migration; fast suite 205 passed. Caches->~/Library/Caches and Logs->~/Library/Logs split not done (everything under App Support for now).",
+    "notes": "Current v0.1.0 packaged app stores data under ~/RallyClip. This worked for first release but is not the normal macOS app-storage convention; migrate in a future release with a clear fallback/backup strategy. Core moved in PR #28; Caches/Logs subdivision remains optional follow-up."
   },
   {
     "id": "onnx-pose-runner-swap",
@@ -150,5 +150,91 @@
     ],
     "evidence": "2026-07-04: feat/pywebview-shell (PR #27, stacked on #26). WKWebView probe: canplay 1280x720, seek 12.00s, playback advanced, canPlayType H.264 AND HEVC 'probably', #fileInput native. gui/native_player.py + QWebChannel bridge deleted (frontend already fell back to HTML5 when the bridge was absent); Flask playback endpoints unchanged. Bundle 266MB .app / 113MB zipped, zero Qt/torch files, bundled --cli golden byte-equal, headless job run produced exact golden segments. Fast suite 202 passed, e2e 15 passed.",
     "notes": "Windows uses WebView2 (preinstalled Win11; needs presence check for older Win10 in release QA). Playback proxy endpoints in gui/app.py are now candidates for removal once the HTML5 path is confirmed sufficient in release QA."
+  },
+  {
+    "id": "mlx-apple-silicon-backend",
+    "priority": 8,
+    "area": "runtime_performance",
+    "title": "MLX backend so models run fast on Apple hardware",
+    "user_visible_behavior": "On Apple-silicon Macs, pose + LSTM inference runs on the GPU/ANE via MLX (or an equivalent CoreML execution path), cutting analysis time versus the current CPU-only onnxruntime path, with identical (or tolerance-documented) segment output.",
+    "status": "not_started",
+    "evidence_plan": [
+      "YOLOv8n-pose and LSTM weights converted to MLX (or CoreML EP) with a documented conversion script.",
+      "Golden-clip segments match the onnxruntime CPU path byte-equal or within the documented 0.25s tolerance.",
+      "Benchmark on the 17-sample sweep: wall-clock and peak RSS vs onnxruntime CPU recorded.",
+      "Runtime selects the accelerated path on Apple silicon and falls back to CPU onnxruntime elsewhere.",
+      "Bundle-size impact measured (MLX deps vs onnxruntime)."
+    ],
+    "evidence": "",
+    "notes": "Requested 2026-07-05. Consider coremltools/onnxruntime-coreml EP as a lower-risk alternative to full MLX rewrite; decide in a spike first."
+  },
+  {
+    "id": "segment-edit-mode",
+    "priority": 9,
+    "area": "gui",
+    "title": "Edit mode: trim/add/delete points, non-destructive",
+    "user_visible_behavior": "In the library, an Edit mode lets the user drag point boundaries (like trimming a video in iPhone Photos) to extend/shrink a point or shift its times, add a new point, and delete a point. Edits write to a duplicate CSV (segments_edited.csv); the original segments.csv is never modified. When an edited CSV exists, exports and playback use it. A 'Reset to original' button deletes the edited copy and restores original behavior.",
+    "status": "not_started",
+    "evidence_plan": [
+      "Entering edit mode creates segments_edited.csv as a copy of segments.csv (original untouched, verified byte-equal after edits).",
+      "Drag handles adjust a point's start/end; changes persist to the edited CSV via /api/*.",
+      "Add-point and delete-point buttons work and persist.",
+      "Export video / CSV download use the edited CSV when present, original otherwise.",
+      "Reset-to-original removes the edited CSV and the UI reflects original segments.",
+      "Playwright e2e covers the full edit->export->reset loop."
+    ],
+    "evidence": "",
+    "notes": "Requested 2026-07-05. All behavior through /api/* per architecture invariant; timeline drag UI in the existing frontend player."
+  },
+  {
+    "id": "ios-app-subscription",
+    "priority": 10,
+    "area": "mobile",
+    "title": "iPhone app with paid subscription",
+    "user_visible_behavior": "RallyClip runs as an iOS app: user picks a match video from Photos, analysis runs (on-device or via a backend), and they get the point-only video + editable segments. Access is a paid subscription at $2 or $4 per month via StoreKit.",
+    "status": "not_started",
+    "evidence_plan": [
+      "Architecture decision recorded: on-device inference (CoreML/MLX -- shares work with mlx-apple-silicon-backend) vs server-side processing, and what the subscription gates.",
+      "Price point decided ($2/mo vs $4/mo) with rationale.",
+      "TestFlight build performs a full analyze on a real match video.",
+      "StoreKit subscription purchase + restore flows work in sandbox.",
+      "App Store listing/review requirements checklist done."
+    ],
+    "evidence": "",
+    "notes": "Requested 2026-07-05. Depends on the MLX/CoreML work if on-device. Pricing leaning $2-4/mo per user."
+  },
+  {
+    "id": "model-retrain-full-data",
+    "priority": 11,
+    "area": "training",
+    "title": "Train a new model on all collected data",
+    "user_visible_behavior": "A new LSTM (or successor e2e-seg) model trained on the full labeled dataset ships in the manifest, measurably beating the current rallyclip_v0.3.1 model on held-out matches.",
+    "status": "not_started",
+    "evidence_plan": [
+      "Dataset inventory: all labeled matches enumerated with counts (train/val/test split documented).",
+      "Training run reproducible from configs/train with recorded metrics.",
+      "Held-out segment metrics beat v0.3.1 baseline (6-bin metric / segment F1).",
+      "New ONNX artifacts + manifest version bump; golden fixtures regenerated deliberately and documented.",
+      "17-sample sweep re-run with the new model for sanity."
+    ],
+    "evidence": "",
+    "notes": "Requested 2026-07-05. Blocks on/pairs with training-quality-harness so improvement is measurable. See also e2e-seg model memory (per-frame segment head)."
+  },
+  {
+    "id": "macos-app-distribution",
+    "priority": 12,
+    "area": "packaging",
+    "title": "Real Mac app distribution: signed, notarized, installable",
+    "user_visible_behavior": "A user who is not the developer can download the DMG and open the app without Gatekeeper blocks: Developer ID signed, notarized, stapled; app has a proper bundle identifier and version; optionally distributed via the Mac App Store.",
+    "status": "not_started",
+    "evidence_plan": [
+      "Developer ID certificate obtained; codesign with hardened runtime + entitlements.",
+      "notarytool submission passes and the ticket is stapled to the DMG.",
+      "Fresh Mac (or new user account) opens the downloaded DMG with no right-click-Open workaround.",
+      "release.yml performs sign+notarize in CI with secrets.",
+      "Decision recorded: direct DMG vs Mac App Store (sandboxing implications for file access)."
+    ],
+    "evidence": "",
+    "notes": "Requested 2026-07-05 ('making it an app'). Spec already has entitlements file; bundle_identifier currently None in RallyClip.spec."
   }
 ]
