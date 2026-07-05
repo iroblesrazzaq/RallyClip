@@ -699,3 +699,57 @@ def test_library_video_export_generates_cut_on_demand(tmp_path, monkeypatch):
     assert response.data == b"cut video"
     assert calls == [(str(source), [(1.0, 3.0), (4.0, 5.0)], str(item_dir / "export.mp4"))]
     assert (item_dir / "export.mp4").read_bytes() == b"cut video"
+
+
+def test_frozen_data_root_is_none_when_not_frozen():
+    import gui.app as gui_app
+
+    assert gui_app._frozen_data_root() is None
+
+
+def test_frozen_data_root_uses_platform_app_data_dir(tmp_path, monkeypatch):
+    import sys as real_sys
+
+    import gui.app as gui_app
+
+    monkeypatch.setattr(real_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    monkeypatch.setattr(real_sys, "platform", "darwin")
+    assert gui_app._frozen_data_root() == (
+        tmp_path / "Library" / "Application Support" / "RallyClip"
+    ).resolve()
+
+    # Only sys.platform is patched: pathlib picks WindowsPath/PosixPath from
+    # os.name at instantiation, so patching os.name breaks Path() on Windows.
+    monkeypatch.setattr(real_sys, "platform", "linux")
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    assert gui_app._frozen_data_root() == (
+        tmp_path / ".local" / "share" / "RallyClip"
+    ).resolve()
+
+
+def test_frozen_data_root_migrates_legacy_home_dir(tmp_path, monkeypatch):
+    import sys as real_sys
+
+    import gui.app as gui_app
+
+    monkeypatch.setattr(real_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(real_sys, "platform", "darwin")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    legacy = tmp_path / "RallyClip"
+    (legacy / "library").mkdir(parents=True)
+    (legacy / "preferences.json").write_text("{}", encoding="utf-8")
+
+    root = gui_app._frozen_data_root()
+
+    assert root == (tmp_path / "Library" / "Application Support" / "RallyClip").resolve()
+    assert not legacy.exists()
+    assert (root / "library").is_dir()
+    assert (root / "preferences.json").read_text(encoding="utf-8") == "{}"
+
+    # Second call is a no-op once the new root exists.
+    (tmp_path / "RallyClip").mkdir()
+    assert gui_app._frozen_data_root() == root
+    assert (tmp_path / "RallyClip").is_dir()
