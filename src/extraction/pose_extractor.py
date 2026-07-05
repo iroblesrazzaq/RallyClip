@@ -5,10 +5,7 @@ from typing import Callable, Optional
 import av
 import logging
 import numpy as np
-import torch
 from tqdm import tqdm
-from ultralytics import YOLO
-from ultralytics.utils import SETTINGS
 
 
 def _pipeline_profile() -> str:
@@ -31,7 +28,10 @@ class PoseExtractor:
         self,
         model_dir: Optional[str] = None,
         model_path: str = "yolov8s-pose.pt",
-        imgsz: int = 1920,
+        # Fallback only: production callers pass imgsz per call from the model
+        # manifest (v0.3.1 contract: 960). Keep this aligned with the shipped
+        # contract so a missing per-call value cannot silently change scale.
+        imgsz: int = 960,
         device: Optional[str] = None,
     ) -> None:
         # When device is set, use it as-is. Auto-selected devices should be
@@ -76,19 +76,31 @@ class PoseExtractor:
         yolo_arg = self.model_path
         if model_dir:
             os.makedirs(model_dir, exist_ok=True)
-            # Direct ultralytics downloads into the provided models directory
-            try:
-                SETTINGS["weights_dir"] = os.path.abspath(model_dir)
-            except Exception:
-                pass
             candidate = os.path.join(model_dir, self.model_path)
             if os.path.exists(candidate):
                 yolo_arg = candidate
-        self.model = YOLO(yolo_arg)
-        try:
-            self.model.to(self.device)
-        except Exception:
-            pass
+
+        if str(yolo_arg).lower().endswith(".onnx"):
+            # Torch-free path: onnxruntime runner with the same predict surface.
+            from extraction.yolo_onnx_runner import YOLO as OnnxYOLO
+
+            self.device = "cpu"  # CPU execution provider only for now
+            self.model = OnnxYOLO(yolo_arg)
+        else:
+            from ultralytics import YOLO
+            from ultralytics.utils import SETTINGS
+
+            if model_dir:
+                # Direct ultralytics downloads into the provided models directory
+                try:
+                    SETTINGS["weights_dir"] = os.path.abspath(model_dir)
+                except Exception:
+                    pass
+            self.model = YOLO(yolo_arg)
+            try:
+                self.model.to(self.device)
+            except Exception:
+                pass
 
     def frame_iterator_pyav(self, video_path: str):
         # Yields the decoded ``av.VideoFrame`` (NOT a BGR ndarray) so the caller can defer the

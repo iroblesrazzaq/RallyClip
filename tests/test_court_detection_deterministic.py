@@ -24,7 +24,7 @@ FIXTURE_IDS = fixture_ids()
 
 def _detector(monkeypatch, frame):
     import preprocessing.court_detector_impl as cdi
-    monkeypatch.setattr(cdi, "YOLO_AVAILABLE", False)  # no YOLO load; we feed the frame
+    monkeypatch.setattr(cdi, "_load_yolo", lambda _path: None)  # no YOLO load; we feed the frame
     det = cdi.CourtDetector(yolo_model_path="unused", conf=0.25)  # YOLO bypassed; conf unused here
     monkeypatch.setattr(det, "extract_clean_frame", lambda video_path, target_time=60: frame.copy())
     return det

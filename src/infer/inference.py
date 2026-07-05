@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 import os
 import csv
 import json
 from typing import Optional, List, Tuple, Callable
 
 import numpy as np
-import torch
 import joblib
 
-from .model import TennisPointLSTM
+# torch and .model (which imports torch) are imported lazily inside the
+# torch-path functions below: the shipped runtime is ONNX-only and must work
+# without torch installed.
 
 try:
     import onnxruntime as ort
@@ -115,6 +118,10 @@ def load_model_from_checkpoint(
     bidirectional: bool = True,
     return_logits: bool = False,
 ):
+    import torch
+
+    from .model import TennisPointLSTM
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     ckpt = torch.load(checkpoint_path, map_location=device)
     if isinstance(ckpt, dict) and 'model_state_dict' in ckpt:
@@ -214,6 +221,8 @@ def run_windowed_inference_average(
     overlap: int,
     progress_callback: Optional[Callable[[float], None]] = None,
 ) -> np.ndarray:
+    import torch
+
     num_frames = features.shape[0]
     start_indices = generate_start_indices(num_frames, sequence_length, overlap)
     summed_probs = np.zeros(num_frames, dtype=np.float32)
@@ -380,6 +389,8 @@ def run_windowed_inference_average_torch_stream(
     The per-window forward pass matches the batch path exactly, so the averaged output is
     identical while peak feature memory is O(seq_len) instead of O(num_frames).
     """
+    import torch
+
     def run_window(window: np.ndarray) -> np.ndarray:
         seq_tensor = torch.from_numpy(window).unsqueeze(0).to(device)
         with torch.no_grad():
@@ -413,7 +424,7 @@ def extract_segments_from_binary(pred: np.ndarray) -> List[Tuple[int, int]]:
 
 def write_segments_csv(segments: List[Tuple[int, int]], output_csv_path: str, fps: float, overwrite: bool = False) -> None:
     if os.path.exists(output_csv_path) and not overwrite:
-        print(f"✓ Output exists, skipping write (set --overwrite to replace): {output_csv_path}")
+        print(f"Output exists, skipping write (set --overwrite to replace): {output_csv_path}")
         return
     os.makedirs(os.path.dirname(output_csv_path) or ".", exist_ok=True)
     with open(output_csv_path, mode="w", newline="") as f:

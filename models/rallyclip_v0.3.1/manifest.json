@@ -87,12 +87,14 @@
     "screen_height": 720,
     "screen_width": 1280,
     "target_fps": 5.0,
-    "yolo_model": "yolov8n-pose.pt"
+    "yolo_model": "yolov8n-pose-960-dynamic.onnx"
   },
   "files": {
     "manifest_file": "manifest.json",
     "model_file": "model.onnx",
     "model_sha256": "071cfef82c7549c0a773b308e45e0d79bb8e9bf742bb71209d60b2ccf8e4ee0c",
+    "pose_model_file": "yolov8n-pose-960-dynamic.onnx",
+    "pose_model_sha256": "4a3fe0de63042b3a48a458d4f4358615417b58c56471a6e1da53b249f5ec0011",
     "scaler_file": "scaler.json",
     "scaler_sha256": "3b265e8aba6d4040e3cb9da0e18116166f87d3ca046a008b4e33755e82fb4b85"
   },

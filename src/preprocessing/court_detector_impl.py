@@ -6,13 +6,24 @@ import os
 import logging
 from typing import List, Tuple, Optional, Union
 
-# Import YOLO directly
-try:
-    from ultralytics import YOLO
-    YOLO_AVAILABLE = True
-except ImportError:
-    YOLO_AVAILABLE = False
-    logging.warning("YOLO not available. Install ultralytics and ensure yolov8n.pt exists.")
+def _load_yolo(model_path: str):
+    """Load the person detector used for clean-frame extraction.
+
+    .onnx weights use the torch-free onnxruntime runner (same predict surface);
+    anything else goes through ultralytics, which is optional at runtime.
+    Returns None when no backend is available so court detection degrades to
+    its single-frame fallback, as before.
+    """
+    if str(model_path).lower().endswith(".onnx"):
+        from extraction.yolo_onnx_runner import YOLO as OnnxYOLO
+
+        return OnnxYOLO(model_path)
+    try:
+        from ultralytics import YOLO
+    except ImportError:
+        logging.warning("YOLO not available. Install ultralytics and ensure yolov8n.pt exists.")
+        return None
+    return YOLO(model_path)
 
 
 class CourtDetector:
@@ -37,16 +48,15 @@ class CourtDetector:
         self.device = device
         self.yolo_model = None
         
-        # Initialize YOLO model if available
-        if YOLO_AVAILABLE:
-            try:
-                self.yolo_model = YOLO(yolo_model_path)
+        try:
+            self.yolo_model = _load_yolo(yolo_model_path)
+            if self.yolo_model is not None:
                 if self.device:
                     self.yolo_model.to(self.device)
                 logging.info("YOLO model loaded successfully")
-            except Exception as e:
-                logging.warning("YOLO model failed to load: %s", e)
-                self.yolo_model = None
+        except Exception as e:
+            logging.warning("YOLO model failed to load: %s", e)
+            self.yolo_model = None
     
     def extract_clean_frame(self, video_path: str, target_time: int = 60) -> np.ndarray:
         """

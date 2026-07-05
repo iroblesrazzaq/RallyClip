@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import h5py
 import numpy as np
+import pytest
+
+pytest.importorskip("torch")  # training-side; runtime install has no torch
 
 from training.dataset.hdf5_dataset import Hdf5SequenceDataset
 

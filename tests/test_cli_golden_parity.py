@@ -25,8 +25,8 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip("torch")
-pytest.importorskip("ultralytics")
+# No torch/ultralytics gate: the shipped pipeline is torch-free (pose runs on
+# the bundled ONNX via extraction.yolo_onnx_runner).
 pytest.importorskip("onnxruntime")
 pytest.importorskip("av")
 
