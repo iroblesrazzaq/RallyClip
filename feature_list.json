@@ -110,14 +110,30 @@
     "area": "runtime",
     "title": "Replace Ultralytics/torch pose inference with a torch-free ONNX runner",
     "user_visible_behavior": "Analysis produces identical segments without importing torch or ultralytics at runtime, cutting inference memory (~530MB -> ~155MB class) and enabling opencv-python removal.",
-    "status": "in_progress",
+    "status": "passing",
     "evidence_plan": [
       "Preprocessing bitwise-equal to Ultralytics rect letterbox at the production contract (imgsz=960, dynamic-axes export).",
       "Decoded contract parity (boxes/conf/keypoints, iou=0.7 NMS, max_det=300, conf-sorted) on a wide frame set.",
       "Full-pipeline segment parity vs torch on the golden clip and 60s samples from all 11 raw match videos.",
       "Memory/perf benchmark at 960; then integrate runner into RallyClip src and demote torch/ultralytics to a dev extra."
     ],
-    "evidence": "2026-07-04: yolo_onnx_runner (YOLO-ONNX repo, python/yolo_onnx_runner.py) validated: letterbox bitwise-equal to Ultralytics; decoded outputs on 40-frame set IoU >= 0.999997, kpt err <= 3.1e-4 px, count+order match 1.000; stage-3 golden clip e2e via RuntimeDeps injection produced a BYTE-EQUAL segments CSV vs the torch path. 11-video 60s-sample sweep running. Plan + results: RallyClip-perf/docs/onnx-pose-parity-plan.md.",
+    "evidence": "2026-07-04: shipped on feat/onnx-pose-runner (PR #26). Runner integrated at src/extraction/yolo_onnx_runner.py; manifest-referenced asset models/rallyclip_v0.3.1/yolov8n-pose-960-dynamic.onnx; PoseExtractor and CourtDetector dispatch on weights extension; non-pose ONNX heads raise UnsupportedOnnxOutputShapeError (unit-tested). Parity: preprocessing bitwise-equal; decoded contract IoU >= 0.999997 / kpt err <= 3.1e-4 px; stage-4 sweep 17/17 byte-equal segments (11 raw_videos + 6 testing_app 1080p60 samples), zero count mismatches. torch/ultralytics demoted to [train] extra; golden CLI exit-0 + byte-equal CSV in a fresh venv WITHOUT torch installed. Perf: onnx 19.7s/458MB mean vs torch 28.6s/753MB (60s sample). Report: YOLO-ONNX/parity_960/sweep_report.json; results: RallyClip-perf/docs/onnx-pose-parity-plan.md.",
     "notes": "Model export must be at imgsz=960 with dynamic axes (rect letterbox 960x544 for 16:9); Ultralytics NMS defaults iou=0.7/max_det=300. YOLO26 e2e export (NMS in graph) is the strategic alternative."
+  },
+  {
+    "id": "mac-app-torchfree-rebuild",
+    "priority": 9,
+    "area": "release",
+    "title": "Rebuild the macOS app without torch/ultralytics",
+    "user_visible_behavior": "The desktop app installs and analyzes identically but the bundle is ~49% smaller compressed and contains no torch/ultralytics.",
+    "status": "passing",
+    "evidence_plan": [
+      "PyInstaller build from the integrated branch succeeds with ultralytics/.pt removed from the spec.",
+      "find dist/RallyClip.app -iname '*torch*' -o -iname '*ultralytics*' returns nothing.",
+      "Bundled --cli on the golden clip produces a byte-equal segments CSV.",
+      "Headless app boot: /api/health 200 and one upload->analyze->library job completes."
+    ],
+    "evidence": "2026-07-04: dist/RallyClip.app built from feat/onnx-pose-runner via RallyClip.spec (ultralytics collect + models/yolov8n-pose.pt removed; torch/torchvision/ultralytics excluded). 765MB .app, 284MB zipped vs 558MB v0.1.0 dmg. Bundle scan for *torch*/*ultralytics*: 0 files. Bundled --cli golden run exit-0, CSV byte-equal. Offscreen boot: /api/health 200, upload-and-start job completed, library item saved with segments exactly matching the golden (5.8-17.0, 18.6-24.0). release.yml/ci.yml updated to match (no weight fetch, ONNX asset verified).",
+    "notes": "Not yet released: needs a tagged release build through release.yml on a runner + dmg packaging/signing as for v0.1.0."
   }
 ]

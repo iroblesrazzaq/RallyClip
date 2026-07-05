@@ -131,3 +131,14 @@ ONNX pose swap (YOLO-ONNX repo + docs/onnx-pose-parity-plan.md in the perf workt
 - In flight: 11-video 60s-sample torch-vs-onnx segment sweep (scripts/sweep_e2e_onnx.py in YOLO-ONNX).
 
 Also: container-level CLAUDE.md written at rallyclip_container/ covering all four sibling checkouts, GH state, and house rules.
+
+## Session 10 - 2026-07-04
+
+Executed the torch-free goal loop end to end: validated, integrated, de-depped, and rebuilt the Mac app without torch/ultralytics. Branch `feat/onnx-pose-runner` (off feat/first-release), PR #26.
+
+- Stage-4 sweep: 17/17 byte-equal full-pipeline segments (11 raw_videos 60s samples + 2 testing_app 1080p60 HEVC videos x 3 offsets). testing_app samples are pre-cut with ffmpeg: abandoning a threaded HEVC PyAV decode mid-stream (sampling window early-break) deadlocks in stream dealloc — a sweep artifact, production processes whole files. Report: YOLO-ONNX/parity_960/sweep_report.json.
+- Integration: runner at src/extraction/yolo_onnx_runner.py; manifest-referenced asset models/rallyclip_v0.3.1/yolov8n-pose-960-dynamic.onnx (sha256 in manifest); PoseExtractor AND CourtDetector dispatch on the weights extension (.pt -> lazy ultralytics); engine resolves bare manifest weight names against models/ and the manifest dir; CLI carries the implicit sibling manifest path; typed UnsupportedOnnxOutputShapeError on non-pose heads (unit-tested).
+- De-dep: torch/ultralytics -> [train] extra; infer imports torch lazily. Golden CLI exit-0 + byte-equal CSV in a fresh venv with NO torch installed. Full-run probe test asserts torch/ultralytics never enter sys.modules.
+- Perf (17 samples, 60s, CPU): onnx 19.7s / 458MB peak-RSS mean vs torch 28.6s / 753MB.
+- Mac app: RallyClip.spec torch-free (no ultralytics collect, no .pt, torch excluded); 765MB .app (284MB zipped vs 558MB v0.1.0 dmg); bundle scan for *torch*/*ultralytics* = 0 files; bundled --cli golden byte-equal; offscreen boot /api/health 200; upload->analyze->library job saved segments exactly matching the golden. release.yml/ci.yml updated (no weight fetch; ONNX asset verified).
+- Suites: fast 218 passed (tennis_env) and 213 passed in the torch-free venv; e2e 15 passed locally.

@@ -1,6 +1,6 @@
 # Session Handoff
 
-Updated: 2026-07-04 (Session 9)
+Updated: 2026-07-04 (Session 10)
 
 ## Repo/worktree layout — read this first
 
@@ -10,8 +10,8 @@ Updated: 2026-07-04 (Session 9)
 - `RallyClip/` — parked on the **`docs` branch**. Harness files (this file,
   feature_list.json, claude-progress.md) and training data live here. Do not do
   feature work here.
-- `RallyClip-perf/` — the **code worktree**, on `refactor/runtime-api-engine`.
-  All recent engine/API/CI work happened here. Run tests from here.
+- `RallyClip-perf/` — the **code worktree**, on `feat/onnx-pose-runner`
+  (torch-free runtime, PR #26). Run tests from here.
 
 Sibling independent repos: `YOLO-ONNX/` (torch-free ONNX pose runner + parity
 harness) and `rallyclip-prod/` (Modal cloud experiments). Cross-repo context:
@@ -37,14 +37,17 @@ path. Key contract facts: imgsz=960 from `models/rallyclip_v0.3.1/manifest.json`
 (`YOLO-ONNX/parity_960/`, gitignored, regenerate via
 `scripts/parity_v8n_960.py export`); NMS iou=0.7/max_det=300/conf-sorted.
 
+Torch-free swap is DONE (Session 10, branch `feat/onnx-pose-runner`, PR #26):
+17/17 sweep byte-equal, torch/ultralytics -> [train] extra, golden CLI
+byte-equal in a venv without torch, Mac app rebuilt torch-free (765MB .app /
+284MB zipped vs 558MB v0.1.0 dmg) with bundled-CLI golden byte-equal and a
+full upload->library job verified headlessly.
+
 Next steps, in order:
-1. Finish/inspect the 11-video 60s-sample sweep (`YOLO-ONNX/scripts/sweep_e2e_onnx.py`
-   -> `parity_960/sweep_report.json`). Decision rule: all byte-equal or <=0.2s
-   boundary hops with equal counts => swap; any count mismatch => localize first.
-2. Memory/perf benchmark at 960 (expect ~155MB vs ~530MB RSS class).
-3. Integrate runner into RallyClip `src/` behind the RuntimeDeps.PoseExtractor
-   seam; manifest gains the pose ONNX; demote torch/ultralytics to a dev extra;
-   then opencv-python can go too.
+1. Merge PR #26 once CI is green on all 6 jobs.
+2. Tag a release so release.yml produces the torch-free dmg; smoke it like v0.1.0.
+3. opencv-python removal is now unblocked (cv2 only does image ops); see
+   perf-streaming-pipeline thread for the decode/IO work that pairs with it.
 
 ## Other queued work (not started)
 
