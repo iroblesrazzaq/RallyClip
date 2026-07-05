@@ -6,7 +6,7 @@ picker, Start button enablement, progress polling, the results view, and the
 download buttons. A bug in script.js (stuck poller, disabled download, welcome
 not dismissing) passes L1 but fails here.
 
-The shipped desktop app is a QWebEngineView (Chromium) pointed at the same
+The shipped desktop app is a system webview (WKWebView/WebView2) over the same
 localhost Flask, so headless Chromium against the same URL is a faithful proxy
 for the desktop UI — only the native window chrome differs.
 

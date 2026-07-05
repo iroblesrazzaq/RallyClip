@@ -1,69 +1,31 @@
+"""RallyClip desktop shell: a system webview over the local Flask backend.
+
+The window is a pywebview WKWebView (macOS) / WebView2 (Windows) pointed at
+the same localhost Flask app the browser e2e suite exercises — every behavior
+is an /api/* HTTP call. The system webview plays H.264/HEVC natively via the
+OS media stack, so the frontend's plain HTML5 <video> path is used (the old
+QtWebEngine shell needed a separate Qt-Multimedia native player because
+Chromium ships without proprietary codecs).
+
+The frozen binary also dispatches two headless personalities:
+    RallyClip --cli ...              # full analysis CLI (cli.main)
+    RallyClip --analysis-worker ...  # GUI job subprocess
+"""
+
 from __future__ import annotations
 
-import os
 import sys
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 
-def _resource_path(*parts: str) -> Path | None:
-    rel = Path(*parts)
-    roots: list[Path] = []
-    if getattr(sys, "frozen", False):
-        meipass = getattr(sys, "_MEIPASS", None)
-        if meipass:
-            roots.append(Path(meipass).resolve())
-        if sys.platform == "darwin":
-            roots.append(Path(sys.executable).resolve().parent.parent / "Resources")
-
-    here = Path(__file__).resolve()
-    roots.append(Path.cwd())
-    for depth in (2, 3, 4):
-        try:
-            roots.append(here.parents[depth])
-        except IndexError:
-            continue
-
-    seen: list[Path] = []
-    for root in roots:
-        if root in seen:
-            continue
-        seen.append(root)
-        candidate = root / rel
-        if candidate.exists():
-            return candidate.resolve()
-    return None
-
-
-def _fix_frozen_webengine_paths() -> None:
-    """Point Qt at the relocated QtWebEngineCore.framework in macOS bundles.
-
-    PyInstaller moves the framework to the bundle root (codesign rules) but
-    Qt 6.11 still searches the PySide6/Qt/lib copy, which only carries the
-    main binary — without these overrides the app aborts at QWebEngineView.
-    """
-    if not getattr(sys, "frozen", False) or sys.platform != "darwin":
-        return
-    framework = Path(getattr(sys, "_MEIPASS", "")) / "QtWebEngineCore.framework" / "Versions" / "A"
-    helper = framework / "Helpers" / "QtWebEngineProcess.app" / "Contents" / "MacOS" / "QtWebEngineProcess"
-    resources = framework / "Resources"
-    if helper.exists():
-        os.environ.setdefault("QTWEBENGINEPROCESS_PATH", str(helper))
-    if resources.is_dir():
-        os.environ.setdefault("QTWEBENGINE_RESOURCES_PATH", str(resources))
-
-
-def _wait_for_backend(port: int, timeout_sec: float = 30.0, pump=None) -> bool:
+def _wait_for_backend(port: int, timeout_sec: float = 30.0) -> bool:
     deadline = time.time() + timeout_sec
     url = f"http://127.0.0.1:{port}/api/health"
     while time.time() < deadline:
-        if pump is not None:
-            pump()
         try:
-            # Short timeout so the Qt event pump isn't starved.
-            with urllib.request.urlopen(url, timeout=0.3) as resp:
+            with urllib.request.urlopen(url, timeout=0.5) as resp:
                 if resp.status == 200:
                     return True
         except (urllib.error.URLError, TimeoutError):
@@ -78,120 +40,43 @@ def main() -> int:
         return analysis_worker_main(sys.argv[2:])
 
     if len(sys.argv) > 1 and sys.argv[1] == "--cli":
-        # Lazy import is deliberate: cli.main pulls torch/ultralytics, and
-        # importing it at module top would delay GUI startup.
+        # Lazy import keeps GUI startup free of the analysis import chain.
         from cli.main import main as cli_main
 
         sys.argv = [sys.argv[0], *sys.argv[2:]]
         return cli_main()
 
-    _fix_frozen_webengine_paths()
     try:
-        from PySide6.QtCore import Qt, QUrl
-        from PySide6.QtGui import QIcon
-        from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QStackedWidget
-        from PySide6.QtWebChannel import QWebChannel
-        from PySide6.QtWebEngineCore import QWebEngineSettings
-        from PySide6.QtWebEngineWidgets import QWebEngineView
+        import webview
     except ImportError as exc:
         print(
-            "rallyclip-desktop requires PySide6. Install with: pip install '.[desktop]'",
+            "rallyclip-desktop requires pywebview. Install with: pip install '.[desktop]'",
             file=sys.stderr,
         )
         print(f"Details: {exc}", file=sys.stderr)
         return 1
 
     from gui.app import start_backend_thread
-    from gui.native_player import NativeViewerBridge, NativeViewerWidget
-
-    qt_app = QApplication(sys.argv)
-    qt_app.setApplicationName("RallyClip")
-    icon_path = _resource_path("docs", "rallyclip.icns") or _resource_path(
-        "docs", "rallyclip_favicon_transparent2.png"
-    )
-    app_icon = QIcon(str(icon_path)) if icon_path else QIcon()
-    if not app_icon.isNull():
-        qt_app.setWindowIcon(app_icon)
 
     port, _thread = start_backend_thread()
-    if not _wait_for_backend(port, pump=qt_app.processEvents):
+    if not _wait_for_backend(port):
         print("RallyClip backend failed to start.", file=sys.stderr)
         return 1
 
-    window = QMainWindow()
-    window.setWindowTitle("RallyClip")
-    if not app_icon.isNull():
-        window.setWindowIcon(app_icon)
-    window.resize(1280, 840)
+    # "Export video" / "Download CSV" navigate to Content-Disposition
+    # responses; this makes the webview surface a native Save dialog for them
+    # (the QtWebEngine shell needed an explicit downloadRequested handler).
+    webview.settings["ALLOW_DOWNLOADS"] = True
 
-    view = QWebEngineView()
-    try:
-        view.settings().setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
-    except Exception:
-        pass
-
-    def _on_download_requested(download) -> None:
-        # QWebEngineView silently drops downloads unless one is accepted here.
-        # This is what makes "Export video" / "Download CSV" actually save a file
-        # in the desktop app (in a browser the page's download just works).
-        suggested = download.suggestedFileName() or "rallyclip_export"
-        downloads_dir = Path.home() / "Downloads"
-        base_dir = downloads_dir if downloads_dir.is_dir() else Path.home()
-        target, _ = QFileDialog.getSaveFileName(window, "Save", str(base_dir / suggested))
-        if not target:
-            download.cancel()
-            return
-        target_path = Path(target)
-        download.setDownloadDirectory(str(target_path.parent))
-        download.setDownloadFileName(target_path.name)
-        download.accept()
-
-    def _on_fullscreen_requested(request) -> None:
-        request.accept()
-        if request.toggleOn():
-            window.showFullScreen()
-        else:
-            window.showNormal()
-
-    stack = QStackedWidget()
-    native_viewer = NativeViewerWidget(port)
-
-    def _open_native_match(item_id: str) -> bool:
-        try:
-            native_viewer.open_match(item_id)
-            stack.setCurrentWidget(native_viewer)
-            return True
-        except Exception as exc:
-            print(f"Could not open native viewer: {exc}", file=sys.stderr)
-            return False
-
-    def _return_to_library() -> None:
-        native_viewer.stop()
-        window.showNormal()
-        stack.setCurrentWidget(view)
-
-    def _set_native_fullscreen(enabled: bool) -> None:
-        if enabled:
-            window.showFullScreen()
-        else:
-            window.showNormal()
-
-    channel = QWebChannel(view.page())
-    bridge = NativeViewerBridge(_open_native_match)
-    channel.registerObject("nativeViewer", bridge)
-    view.page().setWebChannel(channel)
-
-    native_viewer.backRequested.connect(_return_to_library)
-    native_viewer.fullscreenRequested.connect(_set_native_fullscreen)
-    view.page().profile().downloadRequested.connect(_on_download_requested)
-    view.page().fullScreenRequested.connect(_on_fullscreen_requested)
-    view.load(QUrl(f"http://127.0.0.1:{port}/"))
-    stack.addWidget(view)
-    stack.addWidget(native_viewer)
-    window.setCentralWidget(stack)
-    window.show()
-
-    return qt_app.exec()
+    webview.create_window(
+        "RallyClip",
+        f"http://127.0.0.1:{port}/",
+        width=1280,
+        height=840,
+        min_size=(960, 600),
+    )
+    webview.start()
+    return 0
 
 
 if __name__ == "__main__":
