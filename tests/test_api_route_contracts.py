@@ -109,6 +109,7 @@ def test_library_response_contract(client, monkeypatch, tmp_path):
             "point_duration_s": 21.6,
             "n_segments": 2,
             "has_csv": True,
+            "has_edits": False,
             "has_thumbnail": False,
             "has_export": False,
         }
