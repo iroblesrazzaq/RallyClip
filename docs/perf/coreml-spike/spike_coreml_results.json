@@ -1,0 +1,25 @@
+{
+  "pose": {
+    "cpu_s": 2.594,
+    "coreml_s": 2.124,
+    "speedup": 1.22,
+    "coreml_providers_used": [
+      "CoreMLExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "max_abs_diff": 0.25006103515625,
+    "n_frames": 40,
+    "imgsz": 960
+  },
+  "lstm": {
+    "cpu_s": 0.478,
+    "coreml_s": 0.594,
+    "speedup": 0.8,
+    "coreml_providers_used": [
+      "CoreMLExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "max_abs_diff": 0.010224580764770508,
+    "n_runs": 200
+  }
+}

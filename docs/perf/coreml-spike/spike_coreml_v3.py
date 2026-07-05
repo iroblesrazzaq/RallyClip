@@ -1,0 +1,112 @@
+"""Spike v3: static-shape ONNX export -> CoreML EP with ANE.
+
+v2 showed the dynamic-axes export blocks ANE (E5RT rejects unbounded dims).
+Export yolov8n-pose at fixed 960x960, then rebench MLProgram/ALL vs CPU.
+"""
+import json
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+SCRATCH = Path(__file__).parent
+REPO = Path("/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/RallyClip-perf")
+sys.path.insert(0, str(REPO / "src"))
+
+IMGSZ = 960
+N_FRAMES = 40
+SOURCE = Path.home() / "Library/Application Support/RallyClip/library/20260705-012328-b3235b/source.mp4"
+
+static_onnx = SCRATCH / "yolov8n-pose-960-static.onnx"
+if not static_onnx.exists():
+    from ultralytics import YOLO
+
+    model = YOLO(str(REPO / "models" / "yolov8n-pose.pt"))
+    exported = model.export(format="onnx", imgsz=IMGSZ, dynamic=False, simplify=True)
+    Path(exported).rename(static_onnx)
+print(f"static onnx: {static_onnx}", flush=True)
+
+import onnxruntime as ort  # noqa: E402
+from extraction.yolo_onnx_runner import letterbox  # noqa: E402
+
+
+def decode_frames(n):
+    import av
+
+    frames = []
+    with av.open(str(SOURCE)) as container:
+        stream = container.streams.video[0]
+        step = max(1, int(stream.frames / n) if stream.frames else 24)
+        for i, frame in enumerate(container.decode(stream)):
+            if i % step == 0:
+                frames.append(frame.to_ndarray(format="bgr24"))
+            if len(frames) >= n:
+                break
+    return frames
+
+
+def pad_square(tensor):
+    # letterbox gives rect (e.g. 544x960); static export needs 960x960
+    _, _, h, w = tensor.shape
+    out = np.full((1, 3, IMGSZ, IMGSZ), 114 / 255.0, dtype=np.float32)
+    top = (IMGSZ - h) // 2
+    left = (IMGSZ - w) // 2
+    out[:, :, top : top + h, left : left + w] = tensor
+    return out
+
+
+print("decoding frames...", flush=True)
+inputs = [{"images": pad_square(letterbox(f, new_shape=IMGSZ)[0])} for f in decode_frames(N_FRAMES)]
+print(f"{len(inputs)} frames prepared (square {IMGSZ})", flush=True)
+
+
+def bench(providers, warmup=3):
+    t_load = time.perf_counter()
+    sess = ort.InferenceSession(str(static_onnx), providers=providers)
+    load_s = time.perf_counter() - t_load
+    for feeds in inputs[:warmup]:
+        sess.run(None, feeds)
+    t0 = time.perf_counter()
+    outs = [sess.run(None, feeds) for feeds in inputs]
+    dt = time.perf_counter() - t0
+    return outs, dt, load_s
+
+
+results = {}
+cpu_out, cpu_dt, _ = bench([("CPUExecutionProvider", {})])
+print(f"static CPU: {cpu_dt:.2f}s ({len(inputs)/cpu_dt:.1f} fps)", flush=True)
+results["cpu_static"] = {"s": round(cpu_dt, 3), "fps": round(len(inputs) / cpu_dt, 1)}
+
+for name, opts in {
+    "coreml_mlprogram_all": {"ModelFormat": "MLProgram", "MLComputeUnits": "ALL"},
+    "coreml_mlprogram_ane": {"ModelFormat": "MLProgram", "MLComputeUnits": "CPUAndNeuralEngine"},
+}.items():
+    try:
+        outs, dt, load_s = bench([("CoreMLExecutionProvider", opts), ("CPUExecutionProvider", {})])
+    except Exception as exc:
+        print(f"{name}: FAILED {exc}", flush=True)
+        results[name] = {"error": str(exc)}
+        continue
+    conf_diffs = []
+    for a, b in zip(cpu_out, outs):
+        pa, pb = a[0][0], b[0][0]
+        mask = pa[4] > 0.25
+        if mask.any():
+            conf_diffs.append(float(np.max(np.abs(pa[:, mask] - pb[:, mask]))))
+    conf_diff = max(conf_diffs) if conf_diffs else 0.0
+    print(
+        f"{name}: {dt:.2f}s ({len(inputs)/dt:.1f} fps) load {load_s:.1f}s "
+        f"speedup {cpu_dt/dt:.2f}x confident-det diff {conf_diff:.4g}",
+        flush=True,
+    )
+    results[name] = {
+        "s": round(dt, 3),
+        "fps": round(len(inputs) / dt, 1),
+        "load_s": round(load_s, 1),
+        "speedup_vs_cpu": round(cpu_dt / dt, 2),
+        "confident_det_max_abs_diff": conf_diff,
+    }
+
+(SCRATCH / "spike_coreml_v3_results.json").write_text(json.dumps(results, indent=2))
+print("done", flush=True)
