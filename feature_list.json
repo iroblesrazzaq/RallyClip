@@ -226,7 +226,7 @@
     "area": "packaging",
     "title": "Real Mac app distribution: signed, notarized, installable",
     "user_visible_behavior": "A user who is not the developer can download the DMG and open the app without Gatekeeper blocks: Developer ID signed, notarized, stapled; app has a proper bundle identifier and version; optionally distributed via the Mac App Store.",
-    "status": "not_started",
+    "status": "in_progress",
     "evidence_plan": [
       "Developer ID certificate obtained; codesign with hardened runtime + entitlements.",
       "notarytool submission passes and the ticket is stapled to the DMG.",
@@ -234,7 +234,7 @@
       "release.yml performs sign+notarize in CI with secrets.",
       "Decision recorded: direct DMG vs Mac App Store (sandboxing implications for file access)."
     ],
-    "evidence": "",
+    "evidence": "2026-07-06: v0.2.0 released UNSIGNED (manual DMG, gh release create). Developer ID Application cert (L9W8X6N9B9) verified in login keychain. Blockers: notarytool store-credentials not run (user-interactive); release.yml tag build was broken by --yolo-size nano (ultralytics import in torch-free bundle) - fix on PR #35.",
     "notes": "Requested 2026-07-05 ('making it an app'). Spec already has entitlements file; bundle_identifier currently None in RallyClip.spec."
   },
   {
@@ -243,7 +243,7 @@
     "area": "gui",
     "title": "Continuous point playback with no gaps between plays",
     "user_visible_behavior": "When watching a match in the viewer, playback jumps from the end of one point directly to the start of the next with no pause: audio and video are continuous. Today there is a noticeable gap between plays (audio stops, then restarts), which the user can hear; that gap must be eliminated.",
-    "status": "not_started",
+    "status": "passing",
     "evidence_plan": [
       "Reproduce and measure the current inter-point gap (audio dropout duration) in the direct-playback path.",
       "Identify the cause (seek latency on the <video> element vs scheduling logic in playback.py/script.js).",
@@ -251,7 +251,7 @@
       "Automated check where feasible (e.g. playwright asserting currentTime jumps without a paused state, or bounded transition time).",
       "Manual QA sign-off from the user on a real match."
     ],
-    "evidence": "",
+    "evidence": "MERGED to main 2026-07-05 (PR #33, CI green 3 OS, 6 greptile CLI rounds). rAF watcher + pre-seeked standby <video> swap at each boundary + muted warm-start 0.5s early (WKWebView cold-play audio startup was the residual blip). Playwright e2e proves element swap (not cold seek) on a VP9-in-MP4 fixture. User QA on real match 2026-07-06: 'very smooth... 80% of the way, good enough - keep'. Shipped in v0.2.0.",
     "notes": "Requested 2026-07-05 after manual QA of the v0.2 DMG. Applies to the point-only viewing experience (direct playback via /api/library/<id>/source with client-side seeks). Likely fixes: preload/seek-ahead before the current point ends, or crossfade/buffered double-video approach."
   },
   {
@@ -275,13 +275,13 @@
     "area": "gui",
     "title": "White seek thumb rendered above the point bars",
     "user_visible_behavior": "The position indicator (the little ball on the viewer seek bar) is white instead of neon, and it renders on top of everything on the timeline \u2014 including the neon point bars, which currently cover it (the bars sit at a higher z-index than the range input's thumb).",
-    "status": "not_started",
+    "status": "in_progress",
     "evidence_plan": [
       "Thumb is white in both webkit and moz pseudo-element styles.",
       "Thumb visibly renders above the neon point-segment bars when the playhead is inside a point (z-order fix; the point track currently sits at z-index 3 above the range input at z-index 2).",
       "Scrubbing/drag still works across the whole bar (pointer-events unchanged)."
     ],
-    "evidence": "",
+    "evidence": "Implemented 2026-07-06 on PR #35 (open): track visuals moved to an underlay div, input track transparent, white black-ringed thumb at z4 above bars z3; edit track bumped to z5 (edit e2e caught the pointer-event regression). Playwright 8/8.",
     "notes": "Requested 2026-07-05 after the v0.2.0 release ('the white little ball ... I need the ball indicator to be on top of everything'). Explicitly NOT to be implemented yet - queue it. Likely approach: render a custom thumb element inside the point track layer, or split tracks so bars sit between the range track and the thumb."
   }
 ]
