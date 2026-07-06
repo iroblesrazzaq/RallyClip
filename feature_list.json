@@ -268,5 +268,20 @@
     ],
     "evidence": "",
     "notes": "Requested 2026-07-05 during DMG QA but explicitly DEFERRED by the user ('that feature is a little harder to do, so skip that for now; editing is lower priority'). Do not start until continuous playback and inference speedup are done."
+  },
+  {
+    "id": "seek-thumb-white-on-top",
+    "priority": 13,
+    "area": "gui",
+    "title": "White seek thumb rendered above the point bars",
+    "user_visible_behavior": "The position indicator (the little ball on the viewer seek bar) is white instead of neon, and it renders on top of everything on the timeline \u2014 including the neon point bars, which currently cover it (the bars sit at a higher z-index than the range input's thumb).",
+    "status": "not_started",
+    "evidence_plan": [
+      "Thumb is white in both webkit and moz pseudo-element styles.",
+      "Thumb visibly renders above the neon point-segment bars when the playhead is inside a point (z-order fix; the point track currently sits at z-index 3 above the range input at z-index 2).",
+      "Scrubbing/drag still works across the whole bar (pointer-events unchanged)."
+    ],
+    "evidence": "",
+    "notes": "Requested 2026-07-05 after the v0.2.0 release ('the white little ball ... I need the ball indicator to be on top of everything'). Explicitly NOT to be implemented yet - queue it. Likely approach: render a custom thumb element inside the point track layer, or split tracks so bars sit between the range track and the thumb."
   }
 ]
