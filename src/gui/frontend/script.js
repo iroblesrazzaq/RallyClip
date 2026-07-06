@@ -1057,14 +1057,17 @@ class RallyClipApp {
         const previous = this.matchVideo;
         this.directStandby = null;
         standby.volume = previous.volume;
-        previous.pause();
         standby.muted = previous.muted;
+        // Reassign before pausing: pause events dispatch synchronously, and
+        // the pause handler ignores non-current videos — so the outgoing
+        // element's pause can't flash a paused state in the controls mid-swap.
+        this.matchVideo = standby;
+        this.matchVideoBuffer = previous;
+        previous.pause();
         // On a warm (already-rolling) standby play() resolves immediately;
         // on a cold one it starts playback — either way the catch below
         // falls back to a seek if the engine refuses.
         const playPromise = standby.play();
-        this.matchVideo = standby;
-        this.matchVideoBuffer = previous;
         standby.classList.add("is-active");
         standby.classList.remove("is-outgoing");
         standby.tabIndex = 0;
@@ -2534,7 +2537,10 @@ class RallyClipApp {
         this.viewerCurrentTime.textContent = this.formatClock(safeTime);
         const max = Number(this.viewerSeek.max) || 0;
         const progress = max > 0 ? Math.max(0, Math.min(100, (safeTime / max) * 100)) : 0;
-        this.viewerSeek.style.setProperty("--viewer-progress", `${progress}%`);
+        // Set on the wrap: the white track/progress renders in the underlay
+        // div (the input's own track is transparent so its thumb can sit
+        // above the point bars).
+        this.viewerSeekWrap.style.setProperty("--viewer-progress", `${progress}%`);
         if (!this.viewerSeekDragging) {
             this.viewerSeek.value = String(Math.min(safeTime, max || safeTime));
         }
