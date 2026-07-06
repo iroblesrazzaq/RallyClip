@@ -70,3 +70,52 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   re-export); NeuralNetwork-format CoreML (0.25 abs divergence — actually wrong);
   CPUAndNeuralEngine-only compute units (2x — ANE alone loses to ANE+GPU "ALL");
   accelerating the LSTM (measured slower on CoreML).
+
+## 2026-07-05 — Frozen-app data lives in the OS app-data dir (PR #28)
+
+- **What:** `gui.app._frozen_data_root()` puts packaged-build user data in
+  `~/Library/Application Support/RallyClip` (macOS) / `%APPDATA%` (Windows) /
+  XDG data home (Linux), with a one-time `shutil.move` migration from the
+  v0.1.0 `~/RallyClip` location. Windows is selected via `sys.platform`.
+- **Why:** dumping a data dir in `$HOME` violates platform conventions; the
+  migration keeps v0.1.0 users' libraries. `sys.platform` (not `os.name`)
+  because pathlib picks WindowsPath/PosixPath from `os.name` at instantiation —
+  monkeypatching it breaks every `Path()` in tests on Windows.
+- **Rejected:** `Path.rename` (EXDEV across filesystems — shutil.move falls
+  back to copy+delete); zero-arg lru_cache memoization (leaks state across
+  platform-monkeypatching tests for a handful of one-time stats).
+
+## 2026-07-05 — Viewer streams the source file directly (PR #29)
+
+- **What:** `/api/library/<id>/source` serves the saved match with
+  `send_file(conditional=True)` (Range/206); the frontend models it as one
+  full-length window so the existing source-time scheduler (seeks, point
+  skips, timeline) is unchanged. WebM preview windows remain the automatic
+  fallback (probe error or 10s timeout; probes are sequence-ticketed so stale
+  callbacks are inert).
+- **Why:** the stuck-at-first-8s bug: 8s VP8/WebM windows transcode at ~2.5×
+  real time (17–22s per window, file-mtime evidence + live WebKit repro), so
+  playback stalled at every boundary. The WebM pipeline only ever existed
+  because QtWebEngine's Chromium lacked H.264 — the system webview (PR #27)
+  decodes it natively.
+- **Rejected:** speeding up the transcode (still a transcode; still burns CPU
+  and disk); MSE path (permanently dormant, `canUseMsePreview()` false);
+  deleting the window pipeline immediately (kept as codec-fallback until
+  direct playback is QA-confirmed in the wild).
+
+## 2026-07-05 — Segment edits are a shadow CSV, never the original (PR #31)
+
+- **What:** viewer edit mode writes user point edits to `segments_edited.csv`;
+  the model-produced `segments.csv` is never modified. The edited copy wins
+  everywhere (`resolve_segments`: playback manifest, /segments, CSV download,
+  lazy export — export.mp4 invalidated on edit/reset). Reset deletes the copy;
+  it refuses if the original is missing (legacy items). Frontend autosaves are
+  serialized and generation-guarded (a stale PUT can't resurrect a reset).
+- **Why:** "Reset to original" must always be possible, so the original is a
+  read-only contract; a shadow file with precedence is the smallest mechanism
+  that gives every consumer the edited times without touching the analysis
+  output. All behavior stays `/api/*` HTTP per the architecture invariant.
+- **Rejected:** editing segments.csv in place with a backup copy (reversed
+  precedence is easier to corrupt — an interrupted write loses the original);
+  edits in meta.json (two sources of truth for point times); save-on-Done only
+  (drag sessions lose work on crash; autosave matches the iPhone-Photos model).

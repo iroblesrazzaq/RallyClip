@@ -143,6 +143,47 @@ def _fabricate_viewer_item() -> str:
     return item_id
 
 
+def _fabricate_direct_playback_item() -> str:
+    """Library item whose source headless Chromium can decode natively.
+
+    The mpeg4 smoke fixture never passes the direct-playback probe in
+    Chromium, so the /source path only ever runs as a fallback-skipped branch
+    here. VP9 in an MP4 container is a legal combination Chromium plays,
+    letting this suite exercise direct playback the way WKWebView exercises
+    H.264 in the shipped app. Small frame keeps the VP9 encode fast; the
+    viewer has no resolution minimum (only the analysis pipeline does)."""
+    import json
+    import shutil
+    import time
+    import uuid
+
+    import av
+    from gui import app as gui_app
+    from make_smoke_clip import make_clip
+
+    item_id = f"20990101-000000-{uuid.uuid4().hex[:6]}"
+    item_dir = Path(gui_app.LIBRARY_DIR) / item_id
+    try:
+        item_dir.mkdir(parents=True, exist_ok=True)
+        make_clip(item_dir / "source.mp4", duration_s=8.0, width=320, height=180, codec="libvpx-vp9")
+        (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,2.0\n4.0,5.0\n", encoding="utf-8")
+        (item_dir / "thumb.jpg").write_bytes(b"\xff\xd8\xff\xe0fake")
+        (item_dir / "meta.json").write_text(
+            json.dumps({
+                "id": item_id, "name": "Direct Playback Match", "created": "2099-01-01T00:00:00",
+                "created_ts": time.time(), "duration_s": 8.0, "point_duration_s": 2.0, "n_segments": 2,
+            }),
+            encoding="utf-8",
+        )
+    except (av.FFmpegError, ValueError) as exc:  # older FFmpeg builds lack vp09-in-mp4 muxing
+        shutil.rmtree(item_dir, ignore_errors=True)
+        pytest.skip(f"PyAV build cannot encode VP9-in-MP4: {exc}")
+    except BaseException:  # never leave a half-built item in the shared library dir
+        shutil.rmtree(item_dir, ignore_errors=True)
+        raise
+    return item_id
+
+
 def _open_to_library(page: Page, base_url: str) -> None:
     """Land on the library view, dismissing the welcome screen if it shows.
 
@@ -269,6 +310,9 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
     assert startup["points"] == [{"start": 1, "end": 2}, {"start": 4, "end": 5}]
     assert startup["seekValue"] == pytest.approx(1.0, abs=0.2)
     assert startup["pointMarkers"] == 2
+    # The markers must actually render (they shipped display:none for a while
+    # after the Qt-native player, which drew its own, was deleted).
+    expect(page.locator(".viewer-point-segment").first).to_be_visible()
 
     scheduler = page.evaluate(
         """() => {
@@ -675,6 +719,56 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
         }"""
     )
     assert timeline_config_preserves_time == {"value": 42.5, "current": "0:42", "duration": "2:00"}
+
+
+def test_ui_direct_playback_swaps_to_preseeked_standby_between_points(page: Page, ui_backend: BackendClient):
+    """Continuous playback: crossing a point boundary in direct playback must
+    swap to the pre-seeked standby <video>, not cold-seek the playing element
+    (a cold seek stalls audio while the browser range-fetches + decodes)."""
+    item_id = _fabricate_direct_playback_item()
+    _open_to_library(page, ui_backend.base_url)
+
+    page.locator(f'.lib-card[data-id="{item_id}"]').click()
+    expect(page.locator("#viewerView")).to_be_visible()
+    try:
+        page.wait_for_function("() => window.rallyClipApp?.directPlayback === true", timeout=15_000)
+    except PlaywrightTimeoutError:
+        pytest.skip("browser cannot decode the VP9 source; direct playback unavailable")
+
+    initial_video_id = page.evaluate("() => window.rallyClipApp.matchVideo.id")
+    # Muted so headless Chromium's autoplay policy cannot block play(); the
+    # swap copies muted/volume to the standby element.
+    page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            app.matchVideo.muted = true;
+            app.matchVideoBuffer.muted = true;
+            app.seekViewerToSourceTime(1.0, true);
+        }"""
+    )
+    # Playback must roll out of point 1 (1-2s) and land in point 2 (4-5s) on
+    # its own — the watcher prepares the standby and swaps at the boundary.
+    page.wait_for_function(
+        "() => window.rallyClipApp.getViewerSourceTime() >= 4.0",
+        timeout=20_000,
+    )
+    after = page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            return {
+                videoId: app.matchVideo.id,
+                time: app.getViewerSourceTime(),
+                paused: app.matchVideo.paused,
+                direct: app.directPlayback,
+                windowStart: Number(app.matchVideo.dataset.windowStart),
+            };
+        }"""
+    )
+    assert after["videoId"] != initial_video_id, "boundary should swap video elements, not seek in place"
+    assert after["direct"] is True
+    assert after["paused"] is False
+    assert after["windowStart"] == 0
+    assert 4.0 <= after["time"] <= 5.1
 
 
 def test_ui_segment_edit_mode_trims_adds_deletes_and_resets(page: Page, ui_backend: BackendClient):
