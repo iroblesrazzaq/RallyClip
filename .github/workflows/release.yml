@@ -125,13 +125,15 @@ jobs:
           BIN="$(pwd)/dist/RallyClip/RallyClip"
           if [ "${{ runner.os }}" = "Windows" ]; then BIN="$BIN.exe"; fi
 
-          # Full frozen pipeline: PyAV decode -> court-mask fallback -> pose
-          # (downloads nano YOLO weights into $RUNNER_TEMP/models) -> features
-          # -> ONNX inference -> CSV. Zero detected segments is expected on a
+          # Full frozen pipeline: PyAV decode -> court detection -> pose ->
+          # features -> ONNX inference -> CSV, all on the bundled ONNX
+          # weights from the model manifest. No --yolo-size: that flag maps
+          # to a .pt checkpoint, which routes to ultralytics — excluded from
+          # the torch-free bundle. Zero detected segments is expected on a
           # synthetic clip; the assertion is exit 0 + a header CSV.
           python scripts/make_smoke_clip.py "$RUNNER_TEMP/smoke.mp4"
           cd "$RUNNER_TEMP"
-          "$BIN" --cli --video ./smoke.mp4 --yolo-size nano \
+          "$BIN" --cli --video ./smoke.mp4 \
             --write-csv --csv-output-dir ./csv_out --no-segment-video
           test -f csv_out/smoke_segments.csv
           head -1 csv_out/smoke_segments.csv | grep -q "start_time,end_time"
