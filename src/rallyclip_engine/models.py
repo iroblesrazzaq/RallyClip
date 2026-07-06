@@ -147,13 +147,16 @@ class FrameProbabilityHysteresisModel(AnalysisModel):
         elif deps.apply_pose_device is not None:
             pose_device = deps.apply_pose_device(None, model_path=yolo_weights, set_env=False)
 
+        # Court detection runs a handful of frames; CoreML only accelerates the
+        # pose loop, so keep the preprocessor's YOLO on CPU for that device.
+        court_device = "cpu" if pose_device == "coreml" else pose_device
         pre = deps.DataPreprocessor(
             screen_width=int(request.screen_width),
             screen_height=int(request.screen_height),
             save_court_masks=False,
             yolo_model_path=yolo_weights,
             conf=float(request.conf),
-            **({"yolo_device": pose_device} if pose_device is not None else {}),
+            **({"yolo_device": court_device} if court_device is not None else {}),
         )
         _check(cancel_check)
         _emit(progress_callback, "pose", 1)
