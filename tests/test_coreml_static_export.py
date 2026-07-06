@@ -39,7 +39,9 @@ STATIC_ONNX = ARTIFACT_DIR / "yolov8n-pose-544x960-static.onnx"
 # so this is generous headroom, not an expected error.
 TOLERANCE = 1.2e-4
 
-pytestmark = pytest.mark.skipif(
+# Only the tests that load the bundled exports need them; the letterbox math
+# and sibling-resolution tests are pure functions and must run everywhere.
+requires_bundled_exports = pytest.mark.skipif(
     not (DYNAMIC_ONNX.is_file() and STATIC_ONNX.is_file()),
     reason="bundled pose ONNX exports not present",
 )
@@ -79,6 +81,7 @@ def _fixture_frames(count: int = 6, step: int = 120) -> list[np.ndarray]:
     return frames
 
 
+@requires_bundled_exports
 def test_static_export_matches_dynamic_onnx_on_fixture_clip():
     """Golden: static 544x960 export == bundled dynamic ONNX on the CPU EP."""
     if not CLIP.is_file():
@@ -108,6 +111,7 @@ def test_static_export_matches_dynamic_onnx_on_fixture_clip():
     assert detections > 0, "fixture produced no confident detections; golden proves nothing"
 
 
+@requires_bundled_exports
 def test_pose_extractor_coreml_falls_back_to_cpu_without_static_sibling(tmp_path, monkeypatch):
     """device='coreml' with no *-static.onnx next to the model degrades to CPU,
     and a POSE_DEVICE=coreml env is corrected so later extractors in the same
@@ -132,6 +136,7 @@ def test_static_onnx_sibling_ignores_bare_filenames():
     assert PoseExtractor._static_onnx_sibling("x/y-static.onnx") == "x/y-static.onnx"
 
 
+@requires_bundled_exports
 def test_pose_extractor_coreml_uses_static_sibling_when_available():
     """On Apple silicon with the CoreML EP, device='coreml' loads the static export."""
     from runtime.device import coreml_pose_available
