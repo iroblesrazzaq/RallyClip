@@ -166,7 +166,7 @@
       "Measured end-to-end pose speedup on Apple silicon recorded (spike: 120.4 vs 15.6 fps, ~7.7-8x).",
       "Existing golden CLI parity stays byte-equal on the default CPU path."
     ],
-    "evidence": "Spike complete 2026-07-05 (docs/perf/coreml-spike/ on RallyClip-perf + DECISIONS.md entry): CoreML EP in stock onnxruntime 1.24.4 with a STATIC 544x960 re-export (MLProgram, MLComputeUnits=ALL) runs pose at 120.4 fps vs 15.6 fps shipping CPU path (8.05x); confident-detection divergence 1.2e-4. Dynamic-axes model blocks ANE (only 1.2x). LSTM measured slower on CoreML \u2014 stays CPU. Decision: no MLX rewrite; productionize static export + opt-in CoreML provider (CPU stays parity default). Remaining: bundle static export, provider flag + fallback, sweep benchmark, golden tolerance policy. Spike docs MERGED 2026-07-05 (PR #30). Runtime productionization not started.",
+    "evidence": "Spike complete 2026-07-05 (docs/perf/coreml-spike/ on RallyClip-perf + DECISIONS.md entry): CoreML EP in stock onnxruntime 1.24.4 with a STATIC 544x960 re-export (MLProgram, MLComputeUnits=ALL) runs pose at 120.4 fps vs 15.6 fps shipping CPU path (8.05x); confident-detection divergence 1.2e-4. Dynamic-axes model blocks ANE (only 1.2x). LSTM measured slower on CoreML \u2014 stays CPU. Decision: no MLX rewrite; productionize static export + opt-in CoreML provider (CPU stays parity default). Remaining: bundle static export, provider flag + fallback, sweep benchmark, golden tolerance policy. Spike docs MERGED 2026-07-05 (PR #30). Runtime productionization not started. PRODUCTIONIZED 2026-07-06 on feat/edit-mode-upgrades: static 544x960 export bundled in models/rallyclip_v0.3.1; new device 'coreml' (CLI --yolo-device + GUI dropdown, Apple silicon only); CPU dynamic stays byte-parity default, auto never picks coreml; graceful CPU fallback when EP/static file missing; court detection stays CPU. Golden: static==dynamic byte-exact on fixture (CPU EP); full CLI run with --yolo-device coreml reproduces golden_segments.csv byte-equal. Measured: 124.1 vs 18.9 fps end-to-end predict (6.6x) on dev machine. NEW tests tests/test_coreml_static_export.py (6) + device tests. Pending: greptile gate + PR + merge.",
     "notes": "Requested 2026-07-05. Consider coremltools/onnxruntime-coreml EP as a lower-risk alternative to full MLX rewrite; decide in a spike first. Spike verdict 2026-07-05: CoreML EP wins, MLX rejected. Re-confirmed 2026-07-05: user wants the inference speedup shipped ('speeding up the inference for sure')."
   },
   {
@@ -261,14 +261,14 @@
     "area": "gui",
     "title": "Zoom in/out on the edit-mode timeline",
     "user_visible_behavior": "In segment edit mode, the user can zoom the timeline in and out so that short points (a few seconds in a long match) become wide enough to grab and drag their trim handles precisely. Most points are small on the full-match timeline today, making timing adjustments hard.",
-    "status": "not_started",
+    "status": "in_progress",
     "evidence_plan": [
       "Zoom controls in the edit bar (+ / - / fit) scale the edit timeline around the playhead or selected point.",
       "Trim handles remain draggable and accurate at all zoom levels; scrubbing works within the zoomed window.",
       "Zoom resets when leaving edit mode; playback outside edit mode is unaffected.",
       "NEW Playwright e2e: zoom in on a short point, drag its trim handle, edited CSV persists with the new time."
     ],
-    "evidence": "",
+    "evidence": "Implemented 2026-07-06 on feat/edit-mode-upgrades: zoom -/+/Fit in the edit bar; visible window (8s min span, centered on selected point) carried by the seek input min/max so all seek/drag handlers stay in source seconds; point bars, edit segments, pointer mapping route through the window; resets on exit. NEW playwright e2e test_ui_edit_mode_timeline_zoom_drags_short_point: window 0.5-8.5 asserted, zoomed drag-trim persists to CSV (proves pixel->time maps through the window), Fit restores 0-12. Module 10/10 locally. Pending: greptile gate + PR + merge.",
     "notes": "Requested 2026-07-05 during DMG QA, initially deferred; pulled INTO v0.3.0 by the user 2026-07-06 ('if it's not crazy hard, let's just include it'). Assessed medium: zoom = visible time-window state; map time->pixels through the window in renderEditTrack, drag handlers, the range input (via min/max), pointer-seek, and progress fill; zoom controls in the edit bar; reset on edit-mode exit."
   },
   {
@@ -292,13 +292,13 @@
     "area": "gui",
     "title": "Delete/Backspace key deletes the selected point in edit mode",
     "user_visible_behavior": "In segment edit mode, pressing Delete (or Backspace) removes the currently selected point, same as clicking the Delete point button. No effect outside edit mode or when nothing is selected.",
-    "status": "not_started",
+    "status": "in_progress",
     "evidence_plan": [
       "Keydown handler routes Delete/Backspace to deleteSelectedPoint() only while editMode is active and a point is selected.",
       "Does not fire while typing in an input/textarea (none in edit mode today, but guard anyway).",
       "Playwright e2e: select a point, press Delete, count drops by one and autosave persists."
     ],
-    "evidence": "",
+    "evidence": "Implemented 2026-07-06 on feat/edit-mode-upgrades (RallyClip-perf): Delete/Backspace in edit mode deletes the selected point (inert without a selection). NEW playwright e2e test_ui_edit_mode_delete_key_removes_selected_point: no-selection guard + delete + autosave to segments_edited.csv verified; module 10/10 locally. Pending: greptile gate + PR + merge.",
     "notes": "Requested 2026-07-06 for v0.3.0. Existing keyboard shortcuts live in handleViewerKeyboardShortcuts (script.js). Part of v0.3.0."
   }
 ]
