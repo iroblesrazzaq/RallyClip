@@ -159,11 +159,12 @@
     "user_visible_behavior": "On Apple-silicon Macs, pose + LSTM inference runs on the GPU/ANE via MLX (or an equivalent CoreML execution path), cutting analysis time versus the current CPU-only onnxruntime path, with identical (or tolerance-documented) segment output.",
     "status": "in_progress",
     "evidence_plan": [
-      "YOLOv8n-pose and LSTM weights converted to MLX (or CoreML EP) with a documented conversion script.",
-      "Golden-clip segments match the onnxruntime CPU path byte-equal or within the documented 0.25s tolerance.",
-      "Benchmark on the 17-sample sweep: wall-clock and peak RSS vs onnxruntime CPU recorded.",
-      "Runtime selects the accelerated path on Apple silicon and falls back to CPU onnxruntime elsewhere.",
-      "Bundle-size impact measured (MLX deps vs onnxruntime)."
+      "Static 544x960 pose ONNX export ships in the model bundle alongside the dynamic export.",
+      "Opt-in CoreML execution provider flag on Apple silicon; CPU dynamic path stays the byte-parity default.",
+      "Letterbox-pad fallback keeps non-16:9 sources correct on the static input.",
+      "NEW golden verification: static-export outputs match the bundled dynamic ONNX on the sweep fixtures (confident-detection divergence <= spike's 1.2e-4).",
+      "Measured end-to-end pose speedup on Apple silicon recorded (spike: 120.4 vs 15.6 fps, ~7.7-8x).",
+      "Existing golden CLI parity stays byte-equal on the default CPU path."
     ],
     "evidence": "Spike complete 2026-07-05 (docs/perf/coreml-spike/ on RallyClip-perf + DECISIONS.md entry): CoreML EP in stock onnxruntime 1.24.4 with a STATIC 544x960 re-export (MLProgram, MLComputeUnits=ALL) runs pose at 120.4 fps vs 15.6 fps shipping CPU path (8.05x); confident-detection divergence 1.2e-4. Dynamic-axes model blocks ANE (only 1.2x). LSTM measured slower on CoreML \u2014 stays CPU. Decision: no MLX rewrite; productionize static export + opt-in CoreML provider (CPU stays parity default). Remaining: bundle static export, provider flag + fallback, sweep benchmark, golden tolerance policy. Spike docs MERGED 2026-07-05 (PR #30). Runtime productionization not started.",
     "notes": "Requested 2026-07-05. Consider coremltools/onnxruntime-coreml EP as a lower-risk alternative to full MLX rewrite; decide in a spike first. Spike verdict 2026-07-05: CoreML EP wins, MLX rejected. Re-confirmed 2026-07-05: user wants the inference speedup shipped ('speeding up the inference for sure')."
@@ -228,11 +229,11 @@
     "user_visible_behavior": "A user who is not the developer can download the DMG and open the app without Gatekeeper blocks: Developer ID signed, notarized, stapled; app has a proper bundle identifier and version; optionally distributed via the Mac App Store.",
     "status": "in_progress",
     "evidence_plan": [
-      "Developer ID certificate obtained; codesign with hardened runtime + entitlements.",
-      "notarytool submission passes and the ticket is stapled to the DMG.",
-      "Fresh Mac (or new user account) opens the downloaded DMG with no right-click-Open workaround.",
-      "release.yml performs sign+notarize in CI with secrets.",
-      "Decision recorded: direct DMG vs Mac App Store (sandboxing implications for file access)."
+      "User runs xcrun notarytool store-credentials (interactive, one-time).",
+      "sign_macos_app.sh signs the PyInstaller bundle with the Developer ID cert (L9W8X6N9B9), hardened runtime + entitlements.",
+      "notarytool submit --wait accepts the build; stapler staple succeeds; spctl -a -t open --context context:primary-signature validates the DMG.",
+      "Fresh macOS user account opens the app with no right-click-Open dance.",
+      "Wire into release.yml with GitHub secrets (base64 .p12 + password + ASC API key) after the local flow is proven."
     ],
     "evidence": "2026-07-06: v0.2.0 released UNSIGNED (manual DMG, gh release create). Developer ID Application cert (L9W8X6N9B9) verified in login keychain. Blockers: notarytool store-credentials not run (user-interactive); release.yml tag build was broken by --yolo-size nano (ultralytics import in torch-free bundle) - fix on PR #35.",
     "notes": "Requested 2026-07-05 ('making it an app'). Spec already has entitlements file; bundle_identifier currently None in RallyClip.spec."
@@ -262,12 +263,13 @@
     "user_visible_behavior": "In segment edit mode, the user can zoom the timeline in and out so that short points (a few seconds in a long match) become wide enough to grab and drag their trim handles precisely. Most points are small on the full-match timeline today, making timing adjustments hard.",
     "status": "not_started",
     "evidence_plan": [
-      "Zoom control (buttons, pinch, or scroll) scales the edit track around the playhead/selected point.",
-      "Trim handles remain draggable and accurate at all zoom levels.",
-      "Playwright e2e covering zoom + drag-trim of a short point."
+      "Zoom controls in the edit bar (+ / - / fit) scale the edit timeline around the playhead or selected point.",
+      "Trim handles remain draggable and accurate at all zoom levels; scrubbing works within the zoomed window.",
+      "Zoom resets when leaving edit mode; playback outside edit mode is unaffected.",
+      "NEW Playwright e2e: zoom in on a short point, drag its trim handle, edited CSV persists with the new time."
     ],
     "evidence": "",
-    "notes": "Requested 2026-07-05 during DMG QA but explicitly DEFERRED by the user ('that feature is a little harder to do, so skip that for now; editing is lower priority'). Do not start until continuous playback and inference speedup are done."
+    "notes": "Requested 2026-07-05 during DMG QA, initially deferred; pulled INTO v0.3.0 by the user 2026-07-06 ('if it's not crazy hard, let's just include it'). Assessed medium: zoom = visible time-window state; map time->pixels through the window in renderEditTrack, drag handlers, the range input (via min/max), pointer-seek, and progress fill; zoom controls in the edit bar; reset on edit-mode exit."
   },
   {
     "id": "seek-thumb-white-on-top",
@@ -297,6 +299,6 @@
       "Playwright e2e: select a point, press Delete, count drops by one and autosave persists."
     ],
     "evidence": "",
-    "notes": "Requested 2026-07-06 for v0.3.0. Existing keyboard shortcuts live in handleViewerKeyboardShortcuts (script.js)."
+    "notes": "Requested 2026-07-06 for v0.3.0. Existing keyboard shortcuts live in handleViewerKeyboardShortcuts (script.js). Part of v0.3.0."
   }
 ]
