@@ -634,11 +634,13 @@ select {
     display: none;
 }
 
+/* Sits above the range input (z2) so the neon bars read on top of the white
+   track; pointer-events none keeps the input scrubbable through it. */
 .viewer-point-track {
     position: absolute;
     inset: 0;
     pointer-events: none;
-    z-index: 1;
+    z-index: 3;
 }
 
 .viewer-point-segment {
@@ -648,7 +650,8 @@ select {
     height: 0.5rem;
     border-radius: 999px;
     background: var(--tennis);
-    opacity: 0.92;
+    border: 1px solid rgba(0, 0, 0, 0.85);
+    box-sizing: border-box;
     box-shadow: 0 0 8px rgba(204, 255, 0, 0.35);
 }
 
