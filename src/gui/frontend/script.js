@@ -978,6 +978,19 @@ class RallyClipApp {
         standby.load();
     }
 
+    shouldWaitForDirectStandby(nextPointIndex) {
+        // The timeupdate advance fires ~30-80ms before the watcher's gate; if
+        // the standby is still loading at that moment, a cold seek here would
+        // waste an almost-ready swap. Give the standby a short grace window
+        // (playing ~0.3s into the dead gap after the point) before giving up.
+        if (!this.directPlayback) return false;
+        const state = this.directStandby;
+        if (!state || state.pointIndex !== nextPointIndex) return false;
+        const end = Number(this.activePlaybackSegment?.end);
+        if (!Number.isFinite(end)) return false;
+        return this.getViewerSourceTime() <= end + 0.3;
+    }
+
     tryDirectStandbySwap(nextPointIndex) {
         if (!this.directPlayback) return false;
         const state = this.directStandby;
@@ -2609,6 +2622,7 @@ class RallyClipApp {
         const nextPointIndex = this.activePlaybackSegment.nextPointIndex;
         if (Number.isInteger(nextPointIndex) && this.pointIntervals[nextPointIndex]) {
             if (this.tryDirectStandbySwap(nextPointIndex)) return;
+            if (this.shouldWaitForDirectStandby(nextPointIndex)) return;
             this.seekViewerToSourceTime(this.pointIntervals[nextPointIndex].start, true);
             return;
         }
