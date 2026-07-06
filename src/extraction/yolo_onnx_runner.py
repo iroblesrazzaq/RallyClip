@@ -259,9 +259,10 @@ class YOLO:
         # the ANE) fix their own input size; letterbox to that exact canvas
         # and ignore the caller's imgsz.
         shape = model_input.shape
+        # d > 0: some legacy exporters encode dynamic dims as 0, not strings.
         self._static_hw = (
             (int(shape[2]), int(shape[3]))
-            if len(shape) == 4 and all(isinstance(d, int) for d in shape[2:])
+            if len(shape) == 4 and all(isinstance(d, int) and d > 0 for d in shape[2:])
             else None
         )
 
