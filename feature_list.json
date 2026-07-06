@@ -218,7 +218,7 @@
       "17-sample sweep re-run with the new model for sanity."
     ],
     "evidence": "",
-    "notes": "Requested 2026-07-05. Blocks on/pairs with training-quality-harness so improvement is measurable. See also e2e-seg model memory (per-frame segment head). Re-confirmed as a near-term priority 2026-07-05 during v0.2 DMG QA ('improve our models, so retrain on our big thing')."
+    "notes": "Requested 2026-07-05. Blocks on/pairs with training-quality-harness so improvement is measurable. See also e2e-seg model memory (per-frame segment head). Re-confirmed as a near-term priority 2026-07-05 during v0.2 DMG QA ('improve our models, so retrain on our big thing'). 2026-07-06: user explicitly DEFERRED out of v0.3.0 ('no retrain yet')."
   },
   {
     "id": "macos-app-distribution",
@@ -283,5 +283,20 @@
     ],
     "evidence": "Implemented 2026-07-06 on PR #35 (open): track visuals moved to an underlay div, input track transparent, white black-ringed thumb at z4 above bars z3; edit track bumped to z5 (edit e2e caught the pointer-event regression). Playwright 8/8.",
     "notes": "Requested 2026-07-05 after the v0.2.0 release ('the white little ball ... I need the ball indicator to be on top of everything'). Explicitly NOT to be implemented yet - queue it. Likely approach: render a custom thumb element inside the point track layer, or split tracks so bars sit between the range track and the thumb."
+  },
+  {
+    "id": "edit-delete-key",
+    "priority": 14,
+    "area": "gui",
+    "title": "Delete/Backspace key deletes the selected point in edit mode",
+    "user_visible_behavior": "In segment edit mode, pressing Delete (or Backspace) removes the currently selected point, same as clicking the Delete point button. No effect outside edit mode or when nothing is selected.",
+    "status": "not_started",
+    "evidence_plan": [
+      "Keydown handler routes Delete/Backspace to deleteSelectedPoint() only while editMode is active and a point is selected.",
+      "Does not fire while typing in an input/textarea (none in edit mode today, but guard anyway).",
+      "Playwright e2e: select a point, press Delete, count drops by one and autosave persists."
+    ],
+    "evidence": "",
+    "notes": "Requested 2026-07-06 for v0.3.0. Existing keyboard shortcuts live in handleViewerKeyboardShortcuts (script.js)."
   }
 ]
