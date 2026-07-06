@@ -2873,11 +2873,14 @@ class RallyClipApp {
 
     populateDeviceSelect() {
         const options = [{ value: "", label: `Auto (${this.autoDevice})` }];
-        ["cuda", "mps", "cpu"].forEach((device) => {
+        const deviceLabels = { cuda: "CUDA", mps: "MPS", coreml: "CoreML (fast, Apple)", cpu: "CPU" };
+        ["cuda", "mps", "coreml", "cpu"].forEach((device) => {
             const available = this.availableDevices.includes(device);
+            // CoreML only exists on Apple silicon; don't show it elsewhere.
+            if (device === "coreml" && !available) return;
             options.push({
                 value: device,
-                label: available ? device.toUpperCase() : `${device.toUpperCase()} (unavailable)`,
+                label: available ? deviceLabels[device] : `${deviceLabels[device]} (unavailable)`,
                 disabled: !available,
             });
         });
@@ -2903,6 +2906,11 @@ class RallyClipApp {
         const selected = this.yoloDevice.value;
         if (!selected) {
             this.deviceNote.textContent = `Auto picks ${this.autoDevice.toUpperCase()} on this machine (CUDA > MPS > CPU).`;
+            return;
+        }
+        if (selected === "coreml") {
+            this.deviceNote.textContent =
+                "Runs pose on the Apple Neural Engine — much faster analysis; results can differ minutely from CPU.";
             return;
         }
         this.deviceNote.textContent = `Using ${selected.toUpperCase()} for pose extraction.`;

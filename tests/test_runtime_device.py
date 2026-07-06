@@ -94,3 +94,27 @@ def test_apply_pose_device_gui_mode_ignores_ambient_env(monkeypatch):
     device = apply_pose_device(None, model_path="yolov8n-pose.pt", set_env=False)
     assert device == "cpu"
     assert os.environ["POSE_DEVICE"] == "cuda"
+
+
+def test_resolve_pose_device_accepts_coreml():
+    from runtime.device import resolve_pose_device
+
+    assert resolve_pose_device("coreml") == "coreml"
+
+
+def test_auto_device_never_picks_coreml(monkeypatch):
+    """CoreML is opt-in only: even when available, auto stays on the CPU
+    byte-parity default (no torch -> no cuda/mps here)."""
+    import runtime.device as device_mod
+
+    monkeypatch.setattr(device_mod, "_torch_available", lambda: False)
+    monkeypatch.setattr(device_mod, "coreml_pose_available", lambda: True)
+    assert "coreml" in device_mod.detect_available_devices()
+    assert device_mod.resolve_auto_device() == "cpu"
+
+
+def test_coreml_unavailable_off_apple_silicon(monkeypatch):
+    import runtime.device as device_mod
+
+    monkeypatch.setattr(device_mod.sys, "platform", "linux")
+    assert device_mod.coreml_pose_available() is False
