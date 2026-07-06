@@ -310,6 +310,9 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
     assert startup["points"] == [{"start": 1, "end": 2}, {"start": 4, "end": 5}]
     assert startup["seekValue"] == pytest.approx(1.0, abs=0.2)
     assert startup["pointMarkers"] == 2
+    # The markers must actually render (they shipped display:none for a while
+    # after the Qt-native player, which drew its own, was deleted).
+    expect(page.locator(".viewer-point-segment").first).to_be_visible()
 
     scheduler = page.evaluate(
         """() => {

@@ -58,6 +58,11 @@ class RallyClipApp {
         // (the element just buffers ahead) and buys headroom on slow disks so
         // the swap never has to fall back to a cold seek mid-play.
         this.directStandbyLeadSeconds = 8;
+        // Start the standby rolling (muted, hidden) this long before the
+        // boundary: play() on a cold element takes WKWebView ~100ms to spin
+        // up the audio pipeline, which is audible; unmuting a rolling
+        // element is not.
+        this.directWarmupSeconds = 0.5;
         this.editMode = false;
         this.editSelectedIndex = -1;
         this.editDrag = null;
@@ -287,7 +292,9 @@ class RallyClipApp {
             if (this.directPlayback) this.startDirectSegmentWatcher();
         });
         video.addEventListener("pause", () => {
-            if (video === this.matchVideo) this.updateViewerControls();
+            if (video !== this.matchVideo) return;
+            this.updateViewerControls();
+            this.cancelDirectStandbyWarmup();
         });
         video.addEventListener("loadedmetadata", () => {
             if (video === this.matchVideo) this.updateViewerControls();
@@ -928,6 +935,13 @@ class RallyClipApp {
             const t = this.getViewerSourceTime();
             if (Number.isInteger(segment.nextPointIndex) && end - t < this.directStandbyLeadSeconds) {
                 this.prepareDirectStandby(segment.nextPointIndex);
+                const state = this.directStandby;
+                if (
+                    state && state.pointIndex === segment.nextPointIndex
+                    && state.ready && !state.warm && end - t <= this.directWarmupSeconds
+                ) {
+                    this.warmDirectStandby(state, end - t);
+                }
             }
             if (t >= end - 0.05) this.advanceAfterActivePlaybackSegment();
         };
@@ -947,7 +961,7 @@ class RallyClipApp {
         if (current && current.video === standby && current.pointIndex === nextPointIndex && current.target === next.start) return;
         const sourceUrl = this.matchVideo.dataset.previewUrl;
         if (!sourceUrl) return;
-        const state = { video: standby, pointIndex: nextPointIndex, target: next.start, ready: false };
+        const state = { video: standby, pointIndex: nextPointIndex, target: next.start, ready: false, warm: false };
         this.directStandby = state;
         const onSeeked = () => {
             standby.removeEventListener("seeked", onSeeked);
@@ -978,6 +992,35 @@ class RallyClipApp {
         standby.load();
     }
 
+    warmDirectStandby(state, remainingSeconds) {
+        // Roll the standby muted+hidden through the tail of the gap so it
+        // arrives at the point start exactly when the boundary hits; the swap
+        // then only unmutes an already-playing element.
+        const standby = state.video;
+        if (!standby || standby === this.matchVideo || standby !== this.matchVideoBuffer) return;
+        state.warm = true;
+        standby.muted = true;
+        const preRoll = Math.max(0.05, Math.min(this.directWarmupSeconds, remainingSeconds));
+        standby.currentTime = Math.max(0, state.target - preRoll);
+        const playPromise = standby.play();
+        if (playPromise?.catch) {
+            playPromise.catch(() => {
+                if (this.directStandby === state) state.warm = false;
+            });
+        }
+    }
+
+    cancelDirectStandbyWarmup() {
+        // A warm standby is rolling; if playback stops being about to cross
+        // the boundary (pause, manual seek, edit mode), stop it and forget it
+        // so the watcher can re-prepare cleanly on resume.
+        const state = this.directStandby;
+        if (!state?.warm) return;
+        const standby = state.video;
+        if (standby && standby !== this.matchVideo) standby.pause();
+        this.directStandby = null;
+    }
+
     shouldWaitForDirectStandby(nextPointIndex) {
         // The timeupdate advance fires ~30-80ms before the watcher's gate; if
         // the standby is still loading at that moment, a cold seek here would
@@ -1002,15 +1045,23 @@ class RallyClipApp {
         // a mismatched target means the pre-seek landed in the wrong place.
         // One-sided tolerance: forward overshoot stays inside the point, but a
         // backward miss would briefly play inter-point gap content.
-        if (!point || point.start !== state.target || standby.currentTime < state.target - 0.1 || standby.currentTime > state.target + 0.75) {
+        // A warm standby is rolling toward the target through the (dead,
+        // muted, hidden) gap tail, so being early is expected; a cold one
+        // must sit at the target already.
+        const backTolerance = state.warm ? this.directWarmupSeconds + 0.25 : 0.1;
+        if (!point || point.start !== state.target || standby.currentTime < state.target - backTolerance || standby.currentTime > state.target + 0.75) {
+            if (state.warm) standby.pause();
             this.directStandby = null;
             return false;
         }
         const previous = this.matchVideo;
         this.directStandby = null;
-        standby.muted = previous.muted;
         standby.volume = previous.volume;
         previous.pause();
+        standby.muted = previous.muted;
+        // On a warm (already-rolling) standby play() resolves immediately;
+        // on a cold one it starts playback — either way the catch below
+        // falls back to a seek if the engine refuses.
         const playPromise = standby.play();
         this.matchVideo = standby;
         this.matchVideoBuffer = previous;
@@ -2161,6 +2212,7 @@ class RallyClipApp {
             console.warn("Could not refresh point times before editing", err);
         }
         if (this.viewingItemId !== itemId) return;
+        this.cancelDirectStandbyWarmup();
         this.editMode = true;
         this.editSelectedIndex = this.pointIntervals.length ? 0 : -1;
         if (this.viewerHasVideo()) this.matchVideo.pause();
@@ -2509,6 +2561,7 @@ class RallyClipApp {
             return;
         }
         if (this.directPlayback && this.matchVideo.src) {
+            this.cancelDirectStandbyWarmup();
             this.matchVideo.currentTime = target;
             this.lastViewerTime = target;
             this.updateViewerTimeline(target);
