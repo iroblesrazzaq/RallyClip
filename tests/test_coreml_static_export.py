@@ -108,16 +108,28 @@ def test_static_export_matches_dynamic_onnx_on_fixture_clip():
     assert detections > 0, "fixture produced no confident detections; golden proves nothing"
 
 
-def test_pose_extractor_coreml_falls_back_to_cpu_without_static_sibling(tmp_path):
-    """device='coreml' with no *-static.onnx next to the model degrades to CPU."""
+def test_pose_extractor_coreml_falls_back_to_cpu_without_static_sibling(tmp_path, monkeypatch):
+    """device='coreml' with no *-static.onnx next to the model degrades to CPU,
+    and a POSE_DEVICE=coreml env is corrected so later extractors in the same
+    process don't retry (and re-warn about) the unavailable path."""
     from extraction.pose_extractor import PoseExtractor
 
     shutil.copy(DYNAMIC_ONNX, tmp_path / DYNAMIC_ONNX.name)
-    extractor = PoseExtractor(
-        model_dir=str(tmp_path), model_path=DYNAMIC_ONNX.name, device="coreml"
-    )
+    monkeypatch.setenv("POSE_DEVICE", "coreml")
+    extractor = PoseExtractor(model_dir=str(tmp_path), model_path=DYNAMIC_ONNX.name)
     assert extractor.device == "cpu"
     assert extractor.model._static_hw is None
+    import os
+
+    assert os.environ["POSE_DEVICE"] == "cpu"
+
+
+def test_static_onnx_sibling_ignores_bare_filenames():
+    """A model path with no directory must not glob the CWD for static exports."""
+    from extraction.pose_extractor import PoseExtractor
+
+    assert PoseExtractor._static_onnx_sibling("yolov8n-pose-960-dynamic.onnx") is None
+    assert PoseExtractor._static_onnx_sibling("x/y-static.onnx") == "x/y-static.onnx"
 
 
 def test_pose_extractor_coreml_uses_static_sibling_when_available():

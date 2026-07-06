@@ -80,6 +80,7 @@ class PoseExtractor:
             if os.path.exists(candidate):
                 yolo_arg = candidate
 
+        requested_device = self.device
         if str(yolo_arg).lower().endswith(".onnx"):
             # Torch-free path: onnxruntime runner with the same predict surface.
             from extraction.yolo_onnx_runner import YOLO as OnnxYOLO
@@ -105,6 +106,15 @@ class PoseExtractor:
                 self.model.to(self.device)
             except Exception:
                 pass
+        if (
+            requested_device == "coreml"
+            and self.device != "coreml"
+            and os.environ.get("POSE_DEVICE", "").strip().lower() == "coreml"
+        ):
+            # The coreml request degraded to CPU: sync the env so later
+            # extractors in this process don't retry (and re-warn about) the
+            # same unavailable path.
+            os.environ["POSE_DEVICE"] = self.device
 
     def _resolve_onnx_session(self, dynamic_path: str):
         """Pick the ONNX file + ORT providers for the requested device.
@@ -141,7 +151,12 @@ class PoseExtractor:
 
         if str(dynamic_path).lower().endswith("-static.onnx"):
             return str(dynamic_path)
-        matches = sorted(glob.glob(os.path.join(os.path.dirname(str(dynamic_path)), "*-static.onnx")))
+        parent = os.path.dirname(str(dynamic_path))
+        if not parent:
+            # Bare filename: no directory to search — globbing would scan the
+            # CWD and could pick up an unrelated *-static.onnx.
+            return None
+        matches = sorted(glob.glob(os.path.join(parent, "*-static.onnx")))
         return matches[0] if matches else None
 
     def frame_iterator_pyav(self, video_path: str):
