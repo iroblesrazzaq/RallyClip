@@ -75,6 +75,11 @@
                             </div>
                             <div class="viewer-edit-bar" id="viewerEditBar" hidden>
                                 <span class="viewer-edit-hint" id="viewerEditHint">Tap a point, then drag its ends to trim.</span>
+                                <div class="viewer-edit-zoom" role="group" aria-label="Timeline zoom">
+                                    <button type="button" class="btn btn-secondary btn-small" id="editZoomOutBtn" aria-label="Zoom out timeline" disabled>&minus;</button>
+                                    <button type="button" class="btn btn-secondary btn-small" id="editZoomInBtn" aria-label="Zoom in timeline">+</button>
+                                    <button type="button" class="btn btn-ghost btn-small" id="editZoomFitBtn" disabled>Fit</button>
+                                </div>
                                 <div class="viewer-edit-actions">
                                     <button type="button" class="btn btn-secondary btn-small" id="editAddPointBtn">Add point</button>
                                     <button type="button" class="btn btn-secondary btn-small" id="editDeletePointBtn" disabled>Delete point</button>

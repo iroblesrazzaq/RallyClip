@@ -73,6 +73,11 @@ class RallyClipApp {
         this.segmentsEdited = false;
         this.minPointSeconds = 0.5;
         this.addPointSeconds = 8;
+        // Edit-mode timeline zoom: null = full match; otherwise the visible
+        // {start, end} window in source seconds. The range input's min/max
+        // carry the window, so every seek handler keeps working in source time.
+        this.editZoomWindow = null;
+        this.editZoomMinSpan = 8;
         this.previewSpinnerTimeout = null;
         this.viewerControlsHideTimeout = null;
         this.welcomeTypeTimers = [];
@@ -168,6 +173,9 @@ class RallyClipApp {
         this.editDeletePointBtn = document.getElementById("editDeletePointBtn");
         this.editResetBtn = document.getElementById("editResetBtn");
         this.editDoneBtn = document.getElementById("editDoneBtn");
+        this.editZoomInBtn = document.getElementById("editZoomInBtn");
+        this.editZoomOutBtn = document.getElementById("editZoomOutBtn");
+        this.editZoomFitBtn = document.getElementById("editZoomFitBtn");
 
         this.uploadView = document.getElementById("uploadView");
         this.backToLibrary = document.getElementById("backToLibrary");
@@ -227,6 +235,9 @@ class RallyClipApp {
         this.editDeletePointBtn.addEventListener("click", () => this.deleteSelectedPoint());
         this.editResetBtn.addEventListener("click", () => this.resetSegmentEdits());
         this.editDoneBtn.addEventListener("click", () => this.exitEditMode());
+        this.editZoomInBtn.addEventListener("click", () => this.zoomEditTimeline(0.5));
+        this.editZoomOutBtn.addEventListener("click", () => this.zoomEditTimeline(2));
+        this.editZoomFitBtn.addEventListener("click", () => this.setEditZoomWindow(null));
         [this.primaryMatchVideo, this.secondaryMatchVideo].forEach((video) => this.bindViewerVideoEvents(video));
         this.viewerVideoWrap.addEventListener("pointermove", () => this.showViewerControls());
         this.viewerVideoWrap.addEventListener("pointerenter", () => this.showViewerControls());
@@ -2085,7 +2096,8 @@ class RallyClipApp {
         const rect = this.viewerSeekWrap.getBoundingClientRect();
         if (!rect.width) return;
         const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-        const target = this.clampViewerSourceTime(ratio * this.sourceDuration);
+        const win = this.timelineWindow();
+        const target = this.clampViewerSourceTime(win.start + ratio * (win.end - win.start));
         this.updateViewerTimeline(target);
         this.seekViewerToSourceTime(target, this.viewerHasVideo() && !this.matchVideo.paused);
     }
@@ -2112,6 +2124,12 @@ class RallyClipApp {
             event.preventDefault();
             if (typeof event.stopPropagation === "function") event.stopPropagation();
             this.toggleViewerFullscreen(event);
+        } else if ((event.key === "Delete" || event.key === "Backspace") && this.editMode) {
+            // Only with an explicit selection: a stray Backspace must not
+            // delete whatever point happens to sit under the playhead.
+            if (this.editSelectedIndex < 0) return;
+            event.preventDefault();
+            this.deleteSelectedPoint();
         } else if (event.key === "Escape" && this.viewerFullscreenFallback) {
             event.preventDefault();
             this.viewerFullscreenFallback = false;
@@ -2169,8 +2187,9 @@ class RallyClipApp {
     configureViewerTimeline(duration, sourceTime = null) {
         const safeDuration = Math.max(0, Number(duration) || 0);
         this.viewerTimeline.hidden = safeDuration <= 0;
-        this.viewerSeek.min = "0";
-        this.viewerSeek.max = safeDuration > 0 ? String(safeDuration) : "0";
+        const win = this.timelineWindow(safeDuration);
+        this.viewerSeek.min = String(win.start);
+        this.viewerSeek.max = String(win.end);
         this.viewerSeek.step = "0.1";
         this.viewerDuration.textContent = this.formatClock(safeDuration);
         const current = Number.isFinite(sourceTime) ? sourceTime : Number(this.viewerSeek.value) || 0;
@@ -2178,19 +2197,52 @@ class RallyClipApp {
         this.renderViewerPointRanges();
     }
 
+    // Visible timeline window in source seconds. Full match unless edit-mode
+    // zoom is active; the seek input's min/max mirror it, so range-input
+    // values stay plain source times at every zoom level.
+    timelineWindow(duration = Math.max(0, Number(this.sourceDuration) || 0)) {
+        const win = this.editMode ? this.editZoomWindow : null;
+        if (!win || duration <= 0) return { start: 0, end: duration };
+        const start = Math.max(0, Math.min(win.start, duration));
+        return { start, end: Math.max(start, Math.min(win.end, duration)) };
+    }
+
+    setEditZoomWindow(window) {
+        this.editZoomWindow = window;
+        this.configureViewerTimeline(this.sourceDuration, this.getViewerSourceTime());
+    }
+
+    zoomEditTimeline(spanFactor) {
+        const duration = this.editTrackDuration();
+        if (!this.editMode || duration <= 0) return;
+        const current = this.timelineWindow(duration);
+        const span = Math.max(this.editZoomMinSpan, (current.end - current.start) * spanFactor);
+        if (span >= duration) {
+            this.setEditZoomWindow(null);
+            return;
+        }
+        // Center on the selected point so its handles land mid-window;
+        // otherwise on the playhead.
+        const seg = this.pointIntervals[this.editSelectedIndex];
+        const focus = seg ? (seg.start + seg.end) / 2 : this.clampViewerSourceTime(this.getViewerSourceTime());
+        const start = Math.max(0, Math.min(focus - span / 2, duration - span));
+        this.setEditZoomWindow({ start, end: start + span });
+    }
+
     renderViewerPointRanges() {
         if (!this.viewerPointTrack) return;
         this.viewerPointTrack.innerHTML = "";
-        const duration = Math.max(0, Number(this.sourceDuration) || 0);
-        if (duration <= 0) return;
+        const win = this.timelineWindow();
+        const span = win.end - win.start;
+        if (span <= 0) return;
         this.pointIntervals.forEach((seg) => {
-            const start = Math.max(0, Math.min(duration, seg.start));
-            const end = Math.max(start, Math.min(duration, seg.end));
+            const start = Math.max(win.start, Math.min(win.end, seg.start));
+            const end = Math.max(start, Math.min(win.end, seg.end));
             if (end <= start) return;
             const marker = document.createElement("span");
             marker.className = "viewer-point-segment";
-            marker.style.left = `${(start / duration) * 100}%`;
-            marker.style.width = `${Math.max(0.12, ((end - start) / duration) * 100)}%`;
+            marker.style.left = `${((start - win.start) / span) * 100}%`;
+            marker.style.width = `${Math.max(0.12, ((end - start) / span) * 100)}%`;
             this.viewerPointTrack.appendChild(marker);
         });
         if (this.editMode) this.renderEditTrack();
@@ -2217,6 +2269,7 @@ class RallyClipApp {
         if (this.viewingItemId !== itemId) return;
         this.cancelDirectStandbyWarmup();
         this.editMode = true;
+        this.editZoomWindow = null;
         this.editSelectedIndex = this.pointIntervals.length ? 0 : -1;
         if (this.viewerHasVideo()) this.matchVideo.pause();
         this.setManualPlaybackSegmentForSourceTime(this.getViewerSourceTime());
@@ -2233,6 +2286,10 @@ class RallyClipApp {
         this.editDrag = null;
         this.editSelectedIndex = -1;
         this.editScrubPending = null;
+        if (this.editZoomWindow) {
+            this.editZoomWindow = null;
+            this.configureViewerTimeline(this.sourceDuration, this.getViewerSourceTime());
+        }
         if (this.viewerEditTrack) {
             this.viewerEditTrack.innerHTML = "";
             this.viewerEditTrack.hidden = true;
@@ -2259,6 +2316,10 @@ class RallyClipApp {
             this.viewerEditBtn.textContent = this.editMode ? "Editing points" : "Edit points";
         }
         this.editDeletePointBtn.disabled = !this.editMode || this.editSelectedIndex < 0;
+        const zoomSpan = this.editZoomWindow ? this.editZoomWindow.end - this.editZoomWindow.start : this.editTrackDuration();
+        this.editZoomInBtn.disabled = !this.editMode || zoomSpan <= this.editZoomMinSpan;
+        this.editZoomOutBtn.disabled = !this.editMode || !this.editZoomWindow;
+        this.editZoomFitBtn.disabled = !this.editMode || !this.editZoomWindow;
         // Local unsaved changes count too: a failed autosave must not lock the
         // user out of Reset.
         this.editResetBtn.disabled = !this.editMode || (!this.segmentsEdited && !this.editSessionDirty);
@@ -2270,10 +2331,11 @@ class RallyClipApp {
 
     editTimeFromClientX(clientX) {
         const rect = this.viewerSeekWrap.getBoundingClientRect();
-        const duration = this.editTrackDuration();
-        if (!rect.width || duration <= 0) return 0;
+        const win = this.timelineWindow(this.editTrackDuration());
+        const span = win.end - win.start;
+        if (!rect.width || span <= 0) return win.start;
         const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-        return ratio * duration;
+        return win.start + ratio * span;
     }
 
     renderEditTrack() {
@@ -2311,10 +2373,14 @@ class RallyClipApp {
         const seg = this.pointIntervals[index];
         const element = el || this.viewerEditTrack?.querySelector(`[data-index="${index}"]`);
         if (!seg || !element || duration <= 0) return;
-        const startPct = Math.max(0, Math.min(100, (seg.start / duration) * 100));
-        const endPct = Math.max(startPct, Math.min(100, (seg.end / duration) * 100));
+        const win = this.timelineWindow(duration);
+        const span = win.end - win.start;
+        if (span <= 0) return;
+        const startPct = Math.max(0, Math.min(100, ((seg.start - win.start) / span) * 100));
+        const endPct = Math.max(startPct, Math.min(100, ((seg.end - win.start) / span) * 100));
         element.style.left = `${startPct}%`;
         element.style.width = `${Math.max(0.4, endPct - startPct)}%`;
+        element.classList.toggle("is-offscreen", seg.end <= win.start || seg.start >= win.end);
     }
 
     setEditHintForSegment(index) {
@@ -2535,14 +2601,16 @@ class RallyClipApp {
     updateViewerTimeline(sourceTime) {
         const safeTime = Math.max(0, Number(sourceTime) || 0);
         this.viewerCurrentTime.textContent = this.formatClock(safeTime);
+        const min = Number(this.viewerSeek.min) || 0;
         const max = Number(this.viewerSeek.max) || 0;
-        const progress = max > 0 ? Math.max(0, Math.min(100, (safeTime / max) * 100)) : 0;
+        const span = max - min;
+        const progress = span > 0 ? Math.max(0, Math.min(100, ((safeTime - min) / span) * 100)) : 0;
         // Set on the wrap: the white track/progress renders in the underlay
         // div (the input's own track is transparent so its thumb can sit
         // above the point bars).
         this.viewerSeekWrap.style.setProperty("--viewer-progress", `${progress}%`);
         if (!this.viewerSeekDragging) {
-            this.viewerSeek.value = String(Math.min(safeTime, max || safeTime));
+            this.viewerSeek.value = String(Math.max(min, Math.min(safeTime, max || safeTime)));
         }
     }
 
