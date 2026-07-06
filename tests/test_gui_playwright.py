@@ -854,6 +854,100 @@ def test_ui_segment_edit_mode_trims_adds_deletes_and_resets(page: Page, ui_backe
     expect(page.locator("#viewerEditBar")).to_be_hidden()
 
 
+def _open_item_in_edit_mode(page: Page, base_url: str, item_id: str) -> None:
+    _open_to_library(page, base_url)
+    page.locator(f'.lib-card[data-id="{item_id}"]').click()
+    expect(page.locator("#viewerView")).to_be_visible()
+    expect(page.locator("#viewerTimeline")).to_be_visible(timeout=30_000)
+    page.wait_for_function(
+        "() => Boolean(window.rallyClipApp?.viewerHasVideo?.())",
+        timeout=30_000,
+    )
+    page.locator("#viewerEditBtn").click()
+    expect(page.locator("#viewerEditBar")).to_be_visible()
+    expect(page.locator(".viewer-edit-segment")).to_have_count(2)
+    expect(page.locator(".viewer-edit-segment.is-selected")).to_have_count(1)
+
+
+def test_ui_edit_mode_delete_key_removes_selected_point(page: Page, ui_backend: BackendClient):
+    """Delete/Backspace in edit mode removes the selected point and autosaves;
+    with no selection the key must be inert (a stray Backspace must not delete
+    whatever point sits under the playhead)."""
+    from gui import app as gui_app
+
+    item_id = _fabricate_viewer_item()
+    item_dir = Path(gui_app.LIBRARY_DIR) / item_id
+    _open_item_in_edit_mode(page, ui_backend.base_url, item_id)
+
+    # No selection -> the key does nothing.
+    page.evaluate("() => { const app = window.rallyClipApp; app.editSelectedIndex = -1; app.renderEditTrack(); }")
+    expect(page.locator(".viewer-edit-segment.is-selected")).to_have_count(0)
+    page.keyboard.press("Backspace")
+    expect(page.locator(".viewer-edit-segment")).to_have_count(2)
+
+    # Select point 1, delete it with the Delete key, and the edit persists.
+    page.locator('.viewer-edit-segment[data-index="0"]').click()
+    expect(page.locator(".viewer-edit-segment.is-selected")).to_have_count(1)
+    page.keyboard.press("Delete")
+    expect(page.locator(".viewer-edit-segment")).to_have_count(1)
+    page.wait_for_function(
+        f"""() => fetch('/api/library/{item_id}/segments')
+            .then((r) => r.json())
+            .then((p) => p.edited && p.segments.length === 1 && p.segments[0].start === 4)"""
+    )
+    assert (item_dir / "segments_edited.csv").exists()
+
+
+def test_ui_edit_mode_timeline_zoom_drags_short_point(page: Page, ui_backend: BackendClient):
+    """Timeline zoom: zooming in narrows the seek window around the selected
+    point, drag-trimming maps pixels through the zoom window (not the full
+    match), the edit autosaves, and Fit restores the full timeline."""
+    item_id = _fabricate_viewer_item()
+    _open_item_in_edit_mode(page, ui_backend.base_url, item_id)
+
+    expect(page.locator("#editZoomOutBtn")).to_be_disabled()
+    expect(page.locator("#editZoomFitBtn")).to_be_disabled()
+
+    # Select point 2 (4-5s), then zoom in: the 12s clip narrows to the 8s
+    # minimum span centered on the point -> window 0.5-8.5, carried by the
+    # seek input's min/max.
+    page.locator('.viewer-edit-segment[data-index="1"]').click()
+    page.locator("#editZoomInBtn").click()
+    seek_range = page.evaluate(
+        "() => ({ min: Number(window.rallyClipApp.viewerSeek.min), max: Number(window.rallyClipApp.viewerSeek.max) })"
+    )
+    assert seek_range == {"min": 0.5, "max": 8.5}
+    expect(page.locator("#editZoomInBtn")).to_be_disabled()  # at min span
+    expect(page.locator("#editZoomOutBtn")).to_be_enabled()
+
+    # Drag the end handle right by 1/8 of the track = 1s at the zoomed scale
+    # (it would be 1.5s if pixels still mapped over the full 12s match).
+    wrap_box = page.locator(".viewer-seek-wrap").bounding_box()
+    selected = page.locator(".viewer-edit-segment.is-selected")
+    handle_box = selected.locator('.viewer-edit-handle[data-edge="end"]').bounding_box()
+    start_x = handle_box["x"] + handle_box["width"] / 2
+    start_y = handle_box["y"] + handle_box["height"] / 2
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x + wrap_box["width"] / 8, start_y, steps=8)
+    page.mouse.up()
+    page.wait_for_function(
+        f"""() => fetch('/api/library/{item_id}/segments')
+            .then((r) => r.json())
+            .then((p) => p.edited && p.segments[1].end > 5.6 && p.segments[1].end < 6.4)"""
+    )
+
+    # Fit restores the full timeline; leaving edit mode keeps it that way.
+    page.locator("#editZoomFitBtn").click()
+    seek_range = page.evaluate(
+        "() => ({ min: Number(window.rallyClipApp.viewerSeek.min), max: Number(window.rallyClipApp.viewerSeek.max) })"
+    )
+    assert seek_range == {"min": 0, "max": 12}
+    expect(page.locator("#editZoomOutBtn")).to_be_disabled()
+    page.locator("#editDoneBtn").click()
+    expect(page.locator("#viewerEditBar")).to_be_hidden()
+
+
 def test_ui_new_match_runs_to_library(page: Page, ui_backend: BackendClient, ui_clip: Path):
     """Full UI journey: library -> New match -> pick file -> Start -> progress ->
     back to the library on completion. The synthetic clip finds no points, so no
