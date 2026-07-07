@@ -8,9 +8,11 @@ from typing import Literal, Optional
 
 DeviceName = Literal["cuda", "mps", "coreml", "cpu"]
 
-# Auto-selection order. "coreml" is deliberately absent: the CPU ONNX path is
-# the byte-parity default and CoreML is opt-in only (explicit choice).
-_DEVICE_ORDER: tuple[DeviceName, ...] = ("cuda", "mps", "cpu")
+# Auto-selection order. On Apple silicon CoreML is the auto pick (severalfold
+# faster pose; the shipped app is built for it) and outranks MPS, which is
+# demoted for pose models anyway. The CPU dynamic path remains the byte-parity
+# reference and the automatic fallback whenever CoreML is unusable.
+_DEVICE_ORDER: tuple[DeviceName, ...] = ("cuda", "coreml", "mps", "cpu")
 
 _VALID_DEVICES = frozenset({"cuda", "mps", "coreml", "cpu"})
 
@@ -24,8 +26,14 @@ def _torch_available() -> bool:
 
 
 def coreml_pose_available() -> bool:
-    """CoreML EP usable for pose: Apple silicon + onnxruntime built with the EP."""
+    """CoreML EP usable for pose: Apple silicon (native, not Rosetta) on
+    macOS 12+ (MLProgram floor) with an onnxruntime built with the EP."""
     if sys.platform != "darwin" or platform.machine() != "arm64":
+        return False
+    try:
+        if int(platform.mac_ver()[0].split(".")[0] or 0) < 12:
+            return False
+    except ValueError:
         return False
     try:
         import onnxruntime as ort  # noqa: WPS433 — optional at import time

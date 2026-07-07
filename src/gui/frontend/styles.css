@@ -523,8 +523,10 @@ select {
     transition: opacity 0.22s ease, transform 0.22s ease;
 }
 
-.viewer-video-wrap:hover .viewer-overlay,
-.viewer-video-wrap:focus-within .viewer-overlay,
+/* Visibility is driven purely by the is-controls-visible class (pointer
+   movement / focus / pause re-arm it in JS). A :hover rule here would pin
+   the bar up whenever the cursor rests anywhere over the video and defeat
+   the idle fade-out. */
 .viewer-video-wrap.is-controls-visible .viewer-overlay {
     opacity: 1;
     pointer-events: auto;

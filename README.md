@@ -126,7 +126,7 @@ rallyclip --video "raw_videos/your_match.mp4"
 - `--csv-output-dir PATH` (default: video directory; enable CSV with `--write-csv`)
 - `--write-csv / --no-csv` (default: off)
 - `--yolo-size {nano,small,medium,large}` (default: `small`)
-- `--yolo-device {cpu,cuda,mps,coreml}` (force pose model device; `coreml` runs the bundled static ONNX on the Apple Neural Engine — several times faster pose on Apple silicon, opt-in because `cpu` is the byte-parity reference)
+- `--yolo-device {cpu,cuda,mps,coreml}` (force pose model device; on Apple silicon auto picks `coreml` — the bundled static ONNX on the Apple Neural Engine, several times faster pose — and degrades to `cpu`, the byte-parity reference, whenever CoreML is unusable)
 - Advanced overrides: `--conf`, `--low`, `--high`, `--sigma`, `--seq-len`, `--overlap`, `--min-dur-sec`, `--fps`
 - Artifact overrides: `--artifact-dir`, `--manifest-path`
 - Config file: `--config path/to/config.toml` (defaults to `./config.toml` if present)
