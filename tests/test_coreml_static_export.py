@@ -136,6 +136,24 @@ def test_static_onnx_sibling_ignores_bare_filenames():
     assert PoseExtractor._static_onnx_sibling("x/y-static.onnx") == "x/y-static.onnx"
 
 
+def test_static_onnx_sibling_never_guesses_between_multiple_exports(tmp_path):
+    """With several *-static.onnx present, only an unambiguous name match wins —
+    an alphabetical pick could silently run the wrong resolution."""
+    from extraction.pose_extractor import PoseExtractor
+
+    dynamic = tmp_path / "yolov8n-pose-960-dynamic.onnx"
+    dynamic.touch()
+    ours = tmp_path / "yolov8n-pose-544x960-static.onnx"
+    ours.touch()
+    assert PoseExtractor._static_onnx_sibling(str(dynamic)) == str(ours)
+
+    (tmp_path / "aaa-other-model-static.onnx").touch()
+    assert PoseExtractor._static_onnx_sibling(str(dynamic)) == str(ours)
+
+    (tmp_path / "yolov8n-pose-320x576-static.onnx").touch()
+    assert PoseExtractor._static_onnx_sibling(str(dynamic)) is None
+
+
 @requires_bundled_exports
 def test_pose_extractor_coreml_uses_static_sibling_when_available():
     """On Apple silicon with the CoreML EP, device='coreml' loads the static export."""
