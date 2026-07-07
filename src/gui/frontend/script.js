@@ -260,6 +260,7 @@ class RallyClipApp {
         document.addEventListener("keydown", (e) => this.handleViewerKeyboardShortcuts(e), true);
         document.addEventListener("fullscreenchange", () => this.updateViewerFullscreenState());
         document.addEventListener("webkitfullscreenchange", () => this.updateViewerFullscreenState());
+        window.addEventListener("resize", () => this.handleWindowResizeFullscreenSync());
         this.libraryGrid.addEventListener("click", (e) => this.onLibraryClick(e));
 
         this.dropZone.addEventListener("dragover", (e) => {
@@ -2053,11 +2054,34 @@ class RallyClipApp {
         this.updateViewerFullscreenState();
     }
 
+    // Ground truth for the desktop shell: OS fullscreen means the window
+    // occupies the whole screen. Passed to pywebview on every call so an
+    // Escape/green-button exit can't desync its toggle-based state.
+    isWindowFullscreen() {
+        return Boolean(window.screen)
+            && Math.abs(window.innerWidth - window.screen.width) <= 2
+            && Math.abs(window.innerHeight - window.screen.height) <= 2;
+    }
+
+    handleWindowResizeFullscreenSync() {
+        if (!this.viewerNativeWindowFullscreen) return;
+        clearTimeout(this.viewerFullscreenResyncTimer);
+        this.viewerFullscreenResyncTimer = setTimeout(() => {
+            if (this.viewerNativeWindowFullscreen && !this.isWindowFullscreen()) {
+                // The user left OS fullscreen behind our back (Escape or the
+                // green button): drop the fullscreen layout to match.
+                this.viewerNativeWindowFullscreen = false;
+                this.viewerFullscreenFallback = false;
+                this.updateViewerFullscreenState();
+            }
+        }, 250);
+    }
+
     async exitNativeWindowFullscreen() {
         if (!this.viewerNativeWindowFullscreen) return;
         this.viewerNativeWindowFullscreen = false;
         try {
-            await window.pywebview?.api?.set_fullscreen(false);
+            await window.pywebview?.api?.set_fullscreen(false, this.isWindowFullscreen());
         } catch (err) {
             console.warn("Could not exit window fullscreen", err);
         }
@@ -2071,7 +2095,7 @@ class RallyClipApp {
         // lay the player over it (the fixed-inset fallback layout).
         if (window.pywebview?.api?.set_fullscreen) {
             try {
-                await window.pywebview.api.set_fullscreen(true);
+                await window.pywebview.api.set_fullscreen(true, this.isWindowFullscreen());
                 this.viewerNativeWindowFullscreen = true;
                 this.viewerFullscreenFallback = true;
                 return;
