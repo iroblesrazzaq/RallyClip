@@ -45,15 +45,19 @@ def coreml_pose_available() -> bool:
 def detect_available_devices() -> list[DeviceName]:
     """Return acceleration backends available on this machine, in priority order."""
     available: list[DeviceName] = []
-    if _torch_available():
+    has_torch = _torch_available()
+    if has_torch:
         import torch
 
         if torch.cuda.is_available():
             available.append("cuda")
-        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-            available.append("mps")
     if coreml_pose_available():
         available.append("coreml")
+    if has_torch:
+        import torch
+
+        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            available.append("mps")
     available.append("cpu")
     return available
 
