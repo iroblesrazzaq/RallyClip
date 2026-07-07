@@ -92,6 +92,7 @@ class RallyClipApp {
         this.viewerSeekDragging = false;
         this.activePlaybackSegment = null;
         this.viewerFullscreenFallback = false;
+        this.viewerNativeWindowFullscreen = false;
         this.mseActive = false;
         this.mseDisabled = false;
         this.mseObjectUrl = null;
@@ -259,6 +260,7 @@ class RallyClipApp {
         document.addEventListener("keydown", (e) => this.handleViewerKeyboardShortcuts(e), true);
         document.addEventListener("fullscreenchange", () => this.updateViewerFullscreenState());
         document.addEventListener("webkitfullscreenchange", () => this.updateViewerFullscreenState());
+        window.addEventListener("resize", () => this.handleWindowResizeFullscreenSync());
         this.libraryGrid.addEventListener("click", (e) => this.onLibraryClick(e));
 
         this.dropZone.addEventListener("dragover", (e) => {
@@ -300,11 +302,16 @@ class RallyClipApp {
         video.addEventListener("play", () => {
             if (video !== this.matchVideo) return;
             this.updateViewerControls();
+            // The bar is pinned while paused; on resume re-arm its idle fade.
+            // Only if it's already up — a play() from the gapless standby swap
+            // must not flash the bar mid-playback.
+            if (this.viewerVideoWrap?.classList.contains("is-controls-visible")) this.showViewerControls();
             if (this.directPlayback) this.startDirectSegmentWatcher();
         });
         video.addEventListener("pause", () => {
             if (video !== this.matchVideo) return;
             this.updateViewerControls();
+            this.showViewerControls();
             this.cancelDirectStandbyWarmup();
         });
         video.addEventListener("loadedmetadata", () => {
@@ -575,7 +582,7 @@ class RallyClipApp {
             this.renderViewerPointRanges();
             this.viewerSeekDragging = false;
             this.viewerTimeline.hidden = true;
-            this.hideViewerControls();
+            this.hideViewerControls({ force: true });
             this.updateViewerControls();
             this.hidePreviewLoading();
         }
@@ -612,13 +619,18 @@ class RallyClipApp {
         this.viewerControlsHideTimeout = setTimeout(() => this.hideViewerControls(), 2600);
     }
 
-    hideViewerControls() {
+    hideViewerControls(options = {}) {
         if (this.viewerControlsHideTimeout) {
             clearTimeout(this.viewerControlsHideTimeout);
             this.viewerControlsHideTimeout = null;
         }
-        if (this.editMode) return;
         if (!this.viewerVideoWrap) return;
+        if (!options.force) {
+            if (this.editMode) return;
+            // Platform convention: the bar stays up while paused and fades
+            // once playback resumes.
+            if (this.viewerHasVideo() && this.matchVideo.paused) return;
+        }
         this.viewerVideoWrap.classList.remove("is-controls-visible");
         this.viewerVideoWrap.classList.add("is-controls-idle");
     }
@@ -2026,6 +2038,7 @@ class RallyClipApp {
             const fullscreenElement = this.viewerFullscreenElement();
             if (fullscreenElement || this.viewerFullscreenFallback) {
                 this.viewerFullscreenFallback = false;
+                await this.exitNativeWindowFullscreen();
                 if (document.exitFullscreen && fullscreenElement) await document.exitFullscreen();
                 else if (document.webkitExitFullscreen && fullscreenElement) document.webkitExitFullscreen();
                 else if (document.webkitCancelFullScreen && fullscreenElement) document.webkitCancelFullScreen();
@@ -2041,9 +2054,55 @@ class RallyClipApp {
         this.updateViewerFullscreenState();
     }
 
+    // Ground truth for the desktop shell: OS fullscreen means the window
+    // occupies the whole screen. Passed to pywebview on every call so an
+    // Escape/green-button exit can't desync its toggle-based state.
+    isWindowFullscreen() {
+        return Boolean(window.screen)
+            && Math.abs(window.innerWidth - window.screen.width) <= 2
+            && Math.abs(window.innerHeight - window.screen.height) <= 2;
+    }
+
+    handleWindowResizeFullscreenSync() {
+        if (!this.viewerNativeWindowFullscreen) return;
+        clearTimeout(this.viewerFullscreenResyncTimer);
+        this.viewerFullscreenResyncTimer = setTimeout(() => {
+            if (this.viewerNativeWindowFullscreen && !this.isWindowFullscreen()) {
+                // The user left OS fullscreen behind our back (Escape or the
+                // green button): drop the fullscreen layout to match.
+                this.viewerNativeWindowFullscreen = false;
+                this.viewerFullscreenFallback = false;
+                this.updateViewerFullscreenState();
+            }
+        }, 250);
+    }
+
+    async exitNativeWindowFullscreen() {
+        if (!this.viewerNativeWindowFullscreen) return;
+        this.viewerNativeWindowFullscreen = false;
+        try {
+            await window.pywebview?.api?.set_fullscreen(false, this.isWindowFullscreen());
+        } catch (err) {
+            console.warn("Could not exit window fullscreen", err);
+        }
+    }
+
     async requestViewerFullscreen() {
         const target = this.viewerVideoWrap;
         const video = this.matchVideo;
+        // Desktop shell first: WKWebView doesn't grant element fullscreen to
+        // the page, so ask pywebview for real OS fullscreen on the window and
+        // lay the player over it (the fixed-inset fallback layout).
+        if (window.pywebview?.api?.set_fullscreen) {
+            try {
+                await window.pywebview.api.set_fullscreen(true, this.isWindowFullscreen());
+                this.viewerNativeWindowFullscreen = true;
+                this.viewerFullscreenFallback = true;
+                return;
+            } catch (err) {
+                console.warn("pywebview fullscreen failed; trying element fullscreen", err);
+            }
+        }
         try {
             if (target.requestFullscreen) {
                 await target.requestFullscreen();
@@ -2133,6 +2192,7 @@ class RallyClipApp {
         } else if (event.key === "Escape" && this.viewerFullscreenFallback) {
             event.preventDefault();
             this.viewerFullscreenFallback = false;
+            this.exitNativeWindowFullscreen();
             this.updateViewerFullscreenState();
         }
     }
@@ -2872,7 +2932,8 @@ class RallyClipApp {
     }
 
     populateDeviceSelect() {
-        const options = [{ value: "", label: `Auto (${this.autoDevice})` }];
+        const deviceNames = { cuda: "CUDA", mps: "MPS", coreml: "CoreML", cpu: "CPU" };
+        const options = [{ value: "", label: `Auto (${deviceNames[this.autoDevice] || this.autoDevice})` }];
         const deviceLabels = { cuda: "CUDA", mps: "MPS", coreml: "CoreML (fast, Apple)", cpu: "CPU" };
         ["cuda", "mps", "coreml", "cpu"].forEach((device) => {
             const available = this.availableDevices.includes(device);
@@ -2905,7 +2966,9 @@ class RallyClipApp {
         }
         const selected = this.yoloDevice.value;
         if (!selected) {
-            this.deviceNote.textContent = `Auto picks ${this.autoDevice.toUpperCase()} on this machine (CUDA > MPS > CPU).`;
+            const names = { cuda: "CUDA", mps: "MPS", coreml: "CoreML (Apple Neural Engine)", cpu: "CPU" };
+            this.deviceNote.textContent =
+                `Auto picks ${names[this.autoDevice] || this.autoDevice} on this machine (CUDA > CoreML > MPS > CPU).`;
             return;
         }
         if (selected === "coreml") {
