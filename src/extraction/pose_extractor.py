@@ -49,7 +49,7 @@ class PoseExtractor:
             self.device = device
         else:
             env_device = os.environ.get("POSE_DEVICE", "").strip().lower()
-            device_from_env = env_device in {"cpu", "cuda", "mps"}
+            device_from_env = env_device in {"cpu", "cuda", "mps", "coreml"}
             self.device = resolve_pose_device(env_device if device_from_env else None)
             if not device_from_env:
                 self.device = prefer_cpu_over_mps_for_pose(self.device, self.model_path)
@@ -80,13 +80,18 @@ class PoseExtractor:
             if os.path.exists(candidate):
                 yolo_arg = candidate
 
+        requested_device = self.device
         if str(yolo_arg).lower().endswith(".onnx"):
             # Torch-free path: onnxruntime runner with the same predict surface.
             from extraction.yolo_onnx_runner import YOLO as OnnxYOLO
 
-            self.device = "cpu"  # CPU execution provider only for now
-            self.model = OnnxYOLO(yolo_arg)
+            model_arg, providers = self._resolve_onnx_session(yolo_arg)
+            self.model = OnnxYOLO(model_arg, providers=providers)
         else:
+            if self.device == "coreml":
+                # CoreML rides the ONNX runner; ultralytics .pt weights can't use it.
+                logging.warning("POSE: coreml requires ONNX weights; using cpu for %s.", yolo_arg)
+                self.device = "cpu"
             from ultralytics import YOLO
             from ultralytics.utils import SETTINGS
 
@@ -101,6 +106,74 @@ class PoseExtractor:
                 self.model.to(self.device)
             except Exception:
                 pass
+        if (
+            requested_device == "coreml"
+            and self.device != "coreml"
+            and os.environ.get("POSE_DEVICE", "").strip().lower() == "coreml"
+        ):
+            # The coreml request degraded to CPU: sync the env so later
+            # extractors in this process don't retry (and re-warn about) the
+            # same unavailable path.
+            os.environ["POSE_DEVICE"] = self.device
+
+    def _resolve_onnx_session(self, dynamic_path: str):
+        """Pick the ONNX file + ORT providers for the requested device.
+
+        Default (cpu): the dynamic-axes export on the CPU EP — the byte-parity
+        reference path. Opt-in device "coreml": the static-shape sibling export
+        (*-static.onnx next to the dynamic model) on the CoreML EP, ~8x pose
+        throughput on Apple silicon (docs/perf/coreml-spike/) — dynamic axes
+        block the Neural Engine, hence the separate static file. Any missing
+        piece degrades to the CPU path with a warning instead of failing.
+        """
+        if self.device == "coreml":
+            from runtime.device import coreml_pose_available
+
+            static_path = self._static_onnx_sibling(dynamic_path)
+            if not coreml_pose_available():
+                logging.warning("POSE: coreml requested but the CoreML EP is unavailable; using cpu.")
+            elif static_path is None:
+                logging.warning(
+                    "POSE: coreml requested but no *-static.onnx export found next to %s; using cpu.",
+                    dynamic_path,
+                )
+            else:
+                return static_path, [
+                    ("CoreMLExecutionProvider", {"ModelFormat": "MLProgram", "MLComputeUnits": "ALL"}),
+                    "CPUExecutionProvider",
+                ]
+        self.device = "cpu"
+        return dynamic_path, None
+
+    @staticmethod
+    def _static_onnx_sibling(dynamic_path: str) -> Optional[str]:
+        import glob
+
+        if str(dynamic_path).lower().endswith("-static.onnx"):
+            return str(dynamic_path)
+        parent = os.path.dirname(str(dynamic_path))
+        if not parent:
+            # Bare filename: no directory to search — globbing would scan the
+            # CWD and could pick up an unrelated *-static.onnx.
+            return None
+        matches = sorted(glob.glob(os.path.join(parent, "*-static.onnx")))
+        if len(matches) <= 1:
+            return matches[0] if matches else None
+        # Multiple static exports: only proceed on an unambiguous match with
+        # the dynamic model's name (its stem minus the "-dynamic"/resolution
+        # tokens), never a silent alphabetical pick of the wrong resolution.
+        tokens = os.path.basename(str(dynamic_path))[: -len(".onnx")].split("-")
+        while tokens and (tokens[-1] == "dynamic" or tokens[-1].isdigit()):
+            tokens.pop()
+        prefix = "-".join(tokens)
+        preferred = [m for m in matches if prefix and os.path.basename(m).startswith(prefix)]
+        if len(preferred) == 1:
+            return preferred[0]
+        logging.warning(
+            "POSE: multiple *-static.onnx exports next to %s and no unambiguous match; using cpu.",
+            dynamic_path,
+        )
+        return None
 
     def frame_iterator_pyav(self, video_path: str):
         # Yields the decoded ``av.VideoFrame`` (NOT a BGR ndarray) so the caller can defer the
