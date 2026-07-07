@@ -5,6 +5,12 @@ import types
 import pytest
 
 
+def _disable_coreml(monkeypatch):
+    import runtime.device as device_mod
+
+    monkeypatch.setattr(device_mod, "coreml_pose_available", lambda: False)
+
+
 def test_resolve_auto_device_prefers_cuda(monkeypatch):
     torch_mod = types.SimpleNamespace(
         cuda=types.SimpleNamespace(is_available=lambda: True),
@@ -17,6 +23,7 @@ def test_resolve_auto_device_prefers_cuda(monkeypatch):
 
 
 def test_resolve_auto_device_falls_back_to_mps(monkeypatch):
+    _disable_coreml(monkeypatch)
     torch_mod = types.SimpleNamespace(
         cuda=types.SimpleNamespace(is_available=lambda: False),
         backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: True)),
@@ -28,6 +35,7 @@ def test_resolve_auto_device_falls_back_to_mps(monkeypatch):
 
 
 def test_resolve_auto_device_falls_back_to_cpu(monkeypatch):
+    _disable_coreml(monkeypatch)
     torch_mod = types.SimpleNamespace(
         cuda=types.SimpleNamespace(is_available=lambda: False),
         backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: False)),
@@ -50,6 +58,7 @@ def test_resolve_pose_device_honors_explicit_choice(monkeypatch):
 
 
 def test_apply_pose_device_sets_env(monkeypatch):
+    _disable_coreml(monkeypatch)
     torch_mod = types.SimpleNamespace(
         cuda=types.SimpleNamespace(is_available=lambda: False),
         backends=types.SimpleNamespace(mps=types.SimpleNamespace(is_available=lambda: True)),
@@ -79,6 +88,7 @@ def test_apply_pose_device_honors_explicit_mps(monkeypatch):
 
 
 def test_apply_pose_device_gui_mode_ignores_ambient_env(monkeypatch):
+    _disable_coreml(monkeypatch)
     """GUI jobs use set_env=False and must not inherit shell POSE_DEVICE."""
     import os
 
@@ -102,14 +112,22 @@ def test_resolve_pose_device_accepts_coreml():
     assert resolve_pose_device("coreml") == "coreml"
 
 
-def test_auto_device_never_picks_coreml(monkeypatch):
-    """CoreML is opt-in only: even when available, auto stays on the CPU
-    byte-parity default (no torch -> no cuda/mps here)."""
+def test_auto_device_prefers_coreml_when_available(monkeypatch):
+    """The shipped Apple-silicon app should get CoreML without touching
+    settings; CPU is the fallback, not the auto pick (no torch here)."""
     import runtime.device as device_mod
 
     monkeypatch.setattr(device_mod, "_torch_available", lambda: False)
     monkeypatch.setattr(device_mod, "coreml_pose_available", lambda: True)
     assert "coreml" in device_mod.detect_available_devices()
+    assert device_mod.resolve_auto_device() == "coreml"
+
+
+def test_auto_device_without_coreml_stays_cpu(monkeypatch):
+    import runtime.device as device_mod
+
+    monkeypatch.setattr(device_mod, "_torch_available", lambda: False)
+    monkeypatch.setattr(device_mod, "coreml_pose_available", lambda: False)
     assert device_mod.resolve_auto_device() == "cpu"
 
 
