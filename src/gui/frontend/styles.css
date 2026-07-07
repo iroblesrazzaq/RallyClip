@@ -761,6 +761,16 @@ select {
     flex-wrap: wrap;
 }
 
+.viewer-edit-zoom {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.viewer-edit-zoom .btn {
+    min-width: 2.2rem;
+}
+
 .viewer-edit-track {
     position: absolute;
     inset: 0;
@@ -781,6 +791,10 @@ select {
     pointer-events: auto;
     cursor: pointer;
     touch-action: none;
+}
+
+.viewer-edit-segment.is-offscreen {
+    display: none;
 }
 
 .viewer-edit-segment.is-selected {

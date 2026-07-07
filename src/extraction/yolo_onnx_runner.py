@@ -133,6 +133,31 @@ def letterbox(img: np.ndarray, new_shape: int, stride: int = STRIDE):
     return np.ascontiguousarray(tensor, dtype=np.float32) / 255.0, r, (left, top)
 
 
+def letterbox_exact(img: np.ndarray, target_hw: tuple[int, int]):
+    """Letterbox onto an exact (H, W) canvas (Ultralytics auto=False).
+
+    Same resize + center-pad math as `letterbox`, but pads out to the full
+    target instead of the minimal stride-32 rectangle, as a static-shape ONNX
+    input requires. For sources whose stride-32 rect letterbox already equals
+    the target — 16:9 at imgsz 960 -> 544x960 — the pixels are identical; any
+    other aspect stays geometrically correct via extra pad (and, when the
+    source is taller than the target aspect, a smaller scale).
+    """
+    th, tw = target_hw
+    shape = img.shape[:2]
+    r = min(th / shape[0], tw / shape[1])
+    new_unpad = (min(tw, int(round(shape[1] * r))), min(th, int(round(shape[0] * r))))
+    dw = (tw - new_unpad[0]) / 2
+    dh = (th - new_unpad[1]) / 2
+    if shape[::-1] != new_unpad:
+        img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
+    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114))
+    tensor = img[..., ::-1].transpose(2, 0, 1)[None]
+    return np.ascontiguousarray(tensor, dtype=np.float32) / 255.0, r, (left, top)
+
+
 def _nms(boxes: np.ndarray, scores: np.ndarray, iou_thr: float) -> np.ndarray:
     """Greedy NMS matching torchvision.ops.nms (suppress IoU > thr)."""
     order = scores.argsort()[::-1]
@@ -228,7 +253,18 @@ class YOLO:
             str(model_path), sess_options=opts,
             providers=providers or ["CPUExecutionProvider"],
         )
-        self._input_name = self._session.get_inputs()[0].name
+        model_input = self._session.get_inputs()[0]
+        self._input_name = model_input.name
+        # Static-shape exports (the CoreML-friendly ones — dynamic axes block
+        # the ANE) fix their own input size; letterbox to that exact canvas
+        # and ignore the caller's imgsz.
+        shape = model_input.shape
+        # d > 0: some legacy exporters encode dynamic dims as 0, not strings.
+        self._static_hw = (
+            (int(shape[2]), int(shape[3]))
+            if len(shape) == 4 and all(isinstance(d, int) and d > 0 for d in shape[2:])
+            else None
+        )
 
     def to(self, device) -> "YOLO":  # parity with ultralytics API; CPU EP only
         return self
@@ -249,7 +285,10 @@ class YOLO:
             source = [source]
         results = []
         for img in source:
-            tensor, ratio, pad = letterbox(img, int(imgsz))
+            if self._static_hw is not None:
+                tensor, ratio, pad = letterbox_exact(img, self._static_hw)
+            else:
+                tensor, ratio, pad = letterbox(img, int(imgsz))
             pred = self._session.run(None, {self._input_name: tensor})[0]
             boxes, bconf, kpt_xy, kpt_conf = decode_v8_pose(
                 pred, ratio, pad, img.shape[:2], float(conf), float(iou), int(max_det)

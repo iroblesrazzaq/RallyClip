@@ -365,7 +365,11 @@ def main() -> int:
     p.add_argument("--manifest-path", help="Path to model manifest.json for runtime defaults")
     p.add_argument("--pipeline-id", help="Explicit analysis pipeline override for compatible artifacts")
     p.add_argument("--yolo-size", choices=list(YOLO_SIZE_MAP.keys()), help="YOLO pose model size (auto-downloads if needed)")
-    p.add_argument("--yolo-device", choices=["cpu", "cuda", "mps"], help="Force YOLO device (overrides POSE_DEVICE env)")
+    p.add_argument(
+        "--yolo-device",
+        choices=["cpu", "cuda", "mps", "coreml"],
+        help="Force YOLO device (overrides POSE_DEVICE env); coreml = static ONNX on the Apple Neural Engine",
+    )
 
     p.add_argument("--fps", type=float, help="Sampling FPS used during feature creation")
     p.add_argument("--seq-len", type=int, help="Sequence length for inference windows")

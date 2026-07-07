@@ -2,11 +2,17 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
+import sys
 from typing import Literal, Optional
 
-DeviceName = Literal["cuda", "mps", "cpu"]
+DeviceName = Literal["cuda", "mps", "coreml", "cpu"]
 
+# Auto-selection order. "coreml" is deliberately absent: the CPU ONNX path is
+# the byte-parity default and CoreML is opt-in only (explicit choice).
 _DEVICE_ORDER: tuple[DeviceName, ...] = ("cuda", "mps", "cpu")
+
+_VALID_DEVICES = frozenset({"cuda", "mps", "coreml", "cpu"})
 
 
 def _torch_available() -> bool:
@@ -17,17 +23,29 @@ def _torch_available() -> bool:
     return True
 
 
+def coreml_pose_available() -> bool:
+    """CoreML EP usable for pose: Apple silicon + onnxruntime built with the EP."""
+    if sys.platform != "darwin" or platform.machine() != "arm64":
+        return False
+    try:
+        import onnxruntime as ort  # noqa: WPS433 — optional at import time
+    except ImportError:
+        return False
+    return "CoreMLExecutionProvider" in ort.get_available_providers()
+
+
 def detect_available_devices() -> list[DeviceName]:
     """Return acceleration backends available on this machine, in priority order."""
-    if not _torch_available():
-        return ["cpu"]
-    import torch
-
     available: list[DeviceName] = []
-    if torch.cuda.is_available():
-        available.append("cuda")
-    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-        available.append("mps")
+    if _torch_available():
+        import torch
+
+        if torch.cuda.is_available():
+            available.append("cuda")
+        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+            available.append("mps")
+    if coreml_pose_available():
+        available.append("coreml")
     available.append("cpu")
     return available
 
@@ -43,7 +61,7 @@ def resolve_auto_device() -> DeviceName:
 
 def resolve_pose_device(explicit: Optional[str] = None, *, read_env: bool = True) -> DeviceName:
     """Resolve pose/YOLO device from explicit choice, env, or auto priority."""
-    valid = set(_DEVICE_ORDER)
+    valid = _VALID_DEVICES
     if explicit:
         choice = explicit.strip().lower()
         if choice in {"", "auto"}:
@@ -51,7 +69,7 @@ def resolve_pose_device(explicit: Optional[str] = None, *, read_env: bool = True
         elif choice in valid:
             return choice  # type: ignore[return-value]
         else:
-            raise ValueError(f"Unsupported device '{explicit}'. Choose auto, cuda, mps, or cpu.")
+            raise ValueError(f"Unsupported device '{explicit}'. Choose auto, cuda, mps, coreml, or cpu.")
 
     if read_env:
         env_val = os.environ.get("POSE_DEVICE", "").strip().lower()
