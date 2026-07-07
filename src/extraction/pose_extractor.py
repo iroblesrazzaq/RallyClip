@@ -86,7 +86,16 @@ class PoseExtractor:
             from extraction.yolo_onnx_runner import YOLO as OnnxYOLO
 
             model_arg, providers = self._resolve_onnx_session(yolo_arg)
-            self.model = OnnxYOLO(model_arg, providers=providers)
+            try:
+                self.model = OnnxYOLO(model_arg, providers=providers)
+            except Exception as exc:
+                if providers is None:
+                    raise  # the CPU reference path failing is a real error
+                # CoreML session/compile failures (rare: OS/driver quirks)
+                # must degrade to the CPU path, not kill the analysis.
+                logging.warning("POSE: CoreML session failed (%s); using cpu.", exc)
+                self.device = "cpu"
+                self.model = OnnxYOLO(yolo_arg)
         else:
             if self.device == "coreml":
                 # CoreML rides the ONNX runner; ultralytics .pt weights can't use it.

@@ -68,12 +68,33 @@ def main() -> int:
     # (the QtWebEngine shell needed an explicit downloadRequested handler).
     webview.settings["ALLOW_DOWNLOADS"] = True
 
-    webview.create_window(
+    class _WindowApi:
+        """window.pywebview.api — lets the viewer take the whole screen.
+
+        WKWebView doesn't grant element fullscreen to the page, so the
+        frontend's fullscreen button calls set_fullscreen here (real OS
+        fullscreen on the window) and lays the player over the full window.
+        """
+
+        def __init__(self) -> None:
+            self.window = None
+            self._fullscreen = False
+
+        def set_fullscreen(self, flag) -> bool:
+            flag = bool(flag)
+            if self.window is not None and flag != self._fullscreen:
+                self.window.toggle_fullscreen()
+                self._fullscreen = flag
+            return self._fullscreen
+
+    api = _WindowApi()
+    api.window = webview.create_window(
         "RallyClip",
         f"http://127.0.0.1:{port}/",
         width=1280,
         height=840,
         min_size=(960, 600),
+        js_api=api,
     )
     webview.start()
     return 0

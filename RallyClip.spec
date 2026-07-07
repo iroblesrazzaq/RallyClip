@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import copy_metadata
 
 # Torch-free bundle: pose runs on the ONNX inside models/rallyclip_v0.3.1
 # (extraction.yolo_onnx_runner + onnxruntime); no .pt weights, no ultralytics.
@@ -10,6 +11,10 @@ hiddenimports = ['gui.app', 'gui.analysis_worker', 'cli.main', 'runtime.assets',
 hiddenimports += collect_submodules('flask')
 tmp_ret = collect_all('psutil')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+# The in-app update check reads importlib.metadata.version("rallyclip");
+# without the dist-info the frozen app falls back to a hardcoded 0.1.0 and
+# nags about every release — including older ones.
+datas += copy_metadata('rallyclip')
 
 
 a = Analysis(
