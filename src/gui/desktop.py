@@ -80,9 +80,28 @@ def main() -> int:
             self.window = None
             self._fullscreen = False
 
-        def set_fullscreen(self, flag) -> bool:
+        def _sync_backend_flag(self) -> None:
+            # pywebview's cocoa backend keeps its own is_fullscreen and picks
+            # the NSWindow collection behavior from it; an Escape/green-button
+            # exit leaves it stale too, which can turn the next toggle into a
+            # no-op. Repair it to match reality before toggling.
+            try:
+                from webview.platforms.cocoa import BrowserView
+
+                BrowserView.instances[self.window.uid].is_fullscreen = self._fullscreen
+            except Exception:
+                pass
+
+        def set_fullscreen(self, flag, currently_fullscreen=None) -> bool:
+            """Drive OS fullscreen. The frontend passes the window's actual
+            state (window size == screen size), so leaving fullscreen with
+            Escape or the green button can't desync this flag into re-entering
+            fullscreen on the next call."""
             flag = bool(flag)
+            if currently_fullscreen is not None:
+                self._fullscreen = bool(currently_fullscreen)
             if self.window is not None and flag != self._fullscreen:
+                self._sync_backend_flag()
                 self.window.toggle_fullscreen()
                 self._fullscreen = flag
             return self._fullscreen
