@@ -157,7 +157,23 @@ class PoseExtractor:
             # CWD and could pick up an unrelated *-static.onnx.
             return None
         matches = sorted(glob.glob(os.path.join(parent, "*-static.onnx")))
-        return matches[0] if matches else None
+        if len(matches) <= 1:
+            return matches[0] if matches else None
+        # Multiple static exports: only proceed on an unambiguous match with
+        # the dynamic model's name (its stem minus the "-dynamic"/resolution
+        # tokens), never a silent alphabetical pick of the wrong resolution.
+        tokens = os.path.basename(str(dynamic_path))[: -len(".onnx")].split("-")
+        while tokens and (tokens[-1] == "dynamic" or tokens[-1].isdigit()):
+            tokens.pop()
+        prefix = "-".join(tokens)
+        preferred = [m for m in matches if prefix and os.path.basename(m).startswith(prefix)]
+        if len(preferred) == 1:
+            return preferred[0]
+        logging.warning(
+            "POSE: multiple *-static.onnx exports next to %s and no unambiguous match; using cpu.",
+            dynamic_path,
+        )
+        return None
 
     def frame_iterator_pyav(self, video_path: str):
         # Yields the decoded ``av.VideoFrame`` (NOT a BGR ndarray) so the caller can defer the
