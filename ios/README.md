@@ -67,13 +67,38 @@ cd ios && xcodegen generate --spec project.yml --project . \
        -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' build
 ```
 
+## Tests (`RallyClipTests`, Swift Testing)
+
+```bash
+cd ios && xcodegen generate --spec project.yml --project .
+# Fast, deterministic suites only (skip the heavy end-to-end run):
+xcodebuild test -project RallyClip.xcodeproj -scheme RallyClip \
+  -destination 'platform=iOS Simulator,name=iPhone 17' \
+  -skip-testing:RallyClipTests/EndToEndParityTests
+# Everything, including end-to-end parity:
+xcodebuild test -project RallyClip.xcodeproj -scheme RallyClip \
+  -destination 'platform=iOS Simulator,name=iPhone 17'
+```
+
+- **`PipelineMathTests`** — deterministic ports vs. the Python originals:
+  windowing, gaussian, hysteresis, segment extraction, scaler, the 362-dim
+  feature layout + velocity, near/far assignment + court filter, pose decode + NMS.
+- **`ModelRuntimeTests`** — bundled assets on the CPU path: manifest contract,
+  scaler, LSTM produces valid probabilities, pose runs, court default mask +
+  synthetic detect.
+- **`EndToEndParityTests`** (tag `.e2e`) — runs the whole pipeline on the committed
+  `tests/fixtures/golden_cli/clip.mp4` and asserts the segments match
+  `golden_segments.csv` (same rule as the desktop `test_cli_golden_parity`:
+  identical count, boundaries within one 0.2 s hop).
+
 ## Verification status
 
 - [x] Compiles for the iOS Simulator (Xcode 26.2, clean build, no app-code warnings).
-- [ ] Runs on a physical device with the CoreML EP (simulator = CPU only).
-- [ ] Numerical parity vs. desktop golden CLI run (`tests/fixtures/golden_cli`):
-      pose decode, feature vector, LSTM probs, final segments. **Must be checked
-      on-device before trusting output.** Parity risks are marked `// PARITY:` in code.
-- [ ] Court detection parity vs. `tests/test_court_detection_deterministic.py`
-      fixtures (the Obj-C++ port mirrors cv2 calls 1:1, but ORB/RANSAC and some
-      cv2 defaults can differ across OpenCV builds).
+- [x] Full test suite green on the simulator (CPU path): 26 deterministic/runtime
+      tests + end-to-end parity — **segments match the desktop golden exactly**.
+- [ ] Runs on a physical device with the CoreML EP (simulator = CPU only). The
+      static-export + ANE path (`PoseDevice.coreml`) is not exercised by the
+      simulator; verify a device run before trusting the CoreML numbers.
+- [ ] Court detection asserted directly against `test_court_detection_deterministic`
+      fixtures (currently only exercised transitively by the end-to-end run, which
+      passes). Parity risks remain marked `// PARITY:` in code.

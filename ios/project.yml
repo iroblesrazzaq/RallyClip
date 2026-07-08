@@ -51,3 +51,30 @@ targets:
         MARKETING_VERSION: "0.3.0"
         CURRENT_PROJECT_VERSION: "1"
         ENABLE_BITCODE: NO
+
+  RallyClipTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: RallyClipTests
+      # Desktop golden fixture for the end-to-end parity test.
+      - { path: ../tests/fixtures/golden_cli/clip.mp4, buildPhase: resources }
+      - { path: ../tests/fixtures/golden_cli/golden_segments.csv, buildPhase: resources }
+    dependencies:
+      - target: RallyClip
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.rallyclip.tests
+
+schemes:
+  RallyClip:
+    build:
+      targets:
+        RallyClip: all
+        RallyClipTests: [test]
+    test:
+      targets:
+        - RallyClipTests
+    run:
+      config: Debug
