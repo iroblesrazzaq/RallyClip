@@ -48,12 +48,15 @@ final class ViewerModel: ObservableObject {
     private func addObserver() {
         timeObserver = player.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.05, preferredTimescale: 600), queue: .main) { [weak self] t in
-            guard let self else { return }
-            let s = CMTimeGetSeconds(t)
-            self.currentTime = s
-            self.isPlaying = self.player.timeControlStatus == .playing
-            guard self.isPlaying, !self.editing, let active = self.active else { return }
-            if s >= active.end - 0.05 { self.advance() }
+            // Delivered on the main queue, so hopping to the MainActor is safe.
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let s = CMTimeGetSeconds(t)
+                self.currentTime = s
+                self.isPlaying = self.player.timeControlStatus == .playing
+                guard self.isPlaying, !self.editing, let active = self.active else { return }
+                if s >= active.end - 0.05 { self.advance() }
+            }
         }
     }
 

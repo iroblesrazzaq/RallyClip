@@ -2,13 +2,18 @@ name: RallyClip
 options:
   bundleIdPrefix: com.rallyclip
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "17.0"
   createIntermediateGroups: true
 
 packages:
   onnxruntime:
     url: https://github.com/microsoft/onnxruntime-swift-package-manager
     from: "1.19.0"
+  # OpenCV as a prebuilt binary xcframework via SPM (device + simulator arm64),
+  # so no manual framework download / build is needed.
+  opencv:
+    url: https://github.com/yeatse/opencv-spm
+    from: "4.9.0"
 
 settings:
   base:
@@ -26,19 +31,18 @@ targets:
     platform: iOS
     sources:
       - path: RallyClip
-    resources:
-      # The v0.3.1 model artifact + court fallback, copied straight from the
-      # tracked desktop bundle so both apps ship byte-identical weights.
-      - path: ../models/rallyclip_v0.3.1/model.onnx
-      - path: ../models/rallyclip_v0.3.1/scaler.json
-      - path: ../models/rallyclip_v0.3.1/manifest.json
-      - path: ../models/rallyclip_v0.3.1/yolov8n-pose-544x960-static.onnx
-      - path: ../models/rallyclip_v0.3.1/yolov8n-pose-960-dynamic.onnx
-      - path: ../src/preprocessing/default_court_mask.png
+      # The v0.3.1 model artifact + court fallback, bundled straight from the
+      # tracked desktop assets so both apps ship byte-identical weights.
+      - { path: ../models/rallyclip_v0.3.1/model.onnx, buildPhase: resources }
+      - { path: ../models/rallyclip_v0.3.1/scaler.json, buildPhase: resources }
+      - { path: ../models/rallyclip_v0.3.1/manifest.json, buildPhase: resources }
+      - { path: ../models/rallyclip_v0.3.1/yolov8n-pose-544x960-static.onnx, buildPhase: resources }
+      - { path: ../models/rallyclip_v0.3.1/yolov8n-pose-960-dynamic.onnx, buildPhase: resources }
+      - { path: ../src/preprocessing/default_court_mask.png, buildPhase: resources }
     dependencies:
       - package: onnxruntime
-      - framework: Frameworks/opencv2.xcframework
-        embed: false
+      - package: opencv
+        product: OpenCV
     settings:
       base:
         INFOPLIST_FILE: RallyClip/Resources/Info.plist

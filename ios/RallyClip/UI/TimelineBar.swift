@@ -15,8 +15,8 @@ struct TimelineBar: View {
             let w = geo.size.width
             let win = vm.window()
             let span = max(0.0001, win.end - win.start)
-            func x(_ t: Double) -> CGFloat { CGFloat((min(max(t, win.start), win.end) - win.start) / span) * w }
-            func time(_ px: CGFloat) -> Double { win.start + Double(max(0, min(1, px / w))) * span }
+            let x: (Double) -> CGFloat = { t in CGFloat((min(max(t, win.start), win.end) - win.start) / span) * w }
+            let time: (CGFloat) -> Double = { px in win.start + Double(max(0, min(1, px / w))) * span }
             let playX = x(vm.currentTime)
 
             ZStack(alignment: .leading) {

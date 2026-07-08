@@ -1,5 +1,5 @@
 import Foundation
-import onnxruntime
+import OnnxRuntimeBindings
 
 /// TennisPointLSTM on onnxruntime (CPU — the LSTM is slower on CoreML, so the
 /// desktop keeps it on CPU; see the v0.3.1 manifest / CoreML spike note).

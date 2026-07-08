@@ -3,7 +3,13 @@
 #pragma once
 
 #import <CoreVideo/CoreVideo.h>
-#import <opencv2/opencv.hpp>
+// Include only the modules we use — the `opencv2.hpp` umbrella pulls in the
+// `stitching`/`photo` headers whose identifiers collide with Objective-C.
+#import <opencv2/core.hpp>
+#import <opencv2/imgproc.hpp>
+#import <opencv2/imgcodecs.hpp>
+#import <opencv2/features2d.hpp>
+#import <opencv2/calib3d.hpp>
 
 namespace rc {
 

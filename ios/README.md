@@ -47,20 +47,30 @@ parity fallback), and `default_court_mask.png`. Contract values are read from
 
 ## Build
 
-Prereqs: Xcode 15+, [XcodeGen](https://github.com/yonwoo9/XcodeGen) (`brew install xcodegen`).
+Prereqs: Xcode 15+ (built with 26.2), XcodeGen (`brew install xcodegen`).
 
-1. **OpenCV**: download `opencv2.xcframework` (iOS) from
-   <https://opencv.org/releases/> (4.x, matches the desktop `opencv-python>=4.8,<5`
-   court goldens) and unzip it to `ios/Frameworks/opencv2.xcframework`.
-2. `cd ios && xcodegen generate`
-3. `open RallyClip.xcodeproj` — onnxruntime is pulled via SPM
-   (`onnxruntime-swift-package-manager`) on first resolve.
-4. Select a device / simulator and Run. (CoreML EP + Neural Engine require a
-   real device; the simulator falls back to CPU automatically.)
+```bash
+cd ios && xcodegen generate && open RallyClip.xcodeproj
+```
+
+Both native deps resolve over SPM on first build — no manual downloads:
+`onnxruntime` (`onnxruntime-swift-package-manager`, module `OnnxRuntimeBindings`)
+and OpenCV 4.13 (`yeatse/opencv-spm`, product `OpenCV`, framework `opencv2`).
+Select a device/simulator and Run. CoreML EP + Neural Engine require a **real
+device**; the simulator falls back to CPU automatically. Deployment target iOS 17.
+
+CLI build (what CI / the authoring sandbox used):
+
+```bash
+cd ios && xcodegen generate --spec project.yml --project . \
+  && xcodebuild -project RallyClip.xcodeproj -scheme RallyClip \
+       -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' build
+```
 
 ## Verification status
 
-- [ ] Compiles in Xcode (author could not build iOS in the authoring sandbox).
+- [x] Compiles for the iOS Simulator (Xcode 26.2, clean build, no app-code warnings).
+- [ ] Runs on a physical device with the CoreML EP (simulator = CPU only).
 - [ ] Numerical parity vs. desktop golden CLI run (`tests/fixtures/golden_cli`):
       pose decode, feature vector, LSTM probs, final segments. **Must be checked
       on-device before trusting output.** Parity risks are marked `// PARITY:` in code.

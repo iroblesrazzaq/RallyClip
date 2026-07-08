@@ -1,5 +1,6 @@
+#import "RCCV.hpp"            // OpenCV modules first, before any UIKit/Foundation macros
+#import <UIKit/UIKit.h>       // NSValue CGRectValue category
 #import "RCCourtDetector.h"
-#import "RCCV.hpp"
 #import <vector>
 #import <cmath>
 #import <limits>
@@ -56,7 +57,7 @@ void detectCourtLines(const cv::Mat &frame,
     cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
     cv::GaussianBlur(gray, blurred, cv::Size(7, 7), 0);
     cv::Canny(blurred, canny, 50, 150);
-    cv::cvtColor(frame, lab, cv::COLOR_BGR2LAB);
+    cv::cvtColor(frame, lab, cv::COLOR_BGR2Lab);
     cv::inRange(lab, cv::Scalar(145, 105, 105), cv::Scalar(255, 150, 150), white);
     cv::Mat k4 = cv::Mat::ones(4, 4, CV_8U);
     cv::dilate(canny, dilated, k4);

@@ -1,6 +1,6 @@
 import Foundation
 import CoreVideo
-import onnxruntime
+import OnnxRuntimeBindings
 
 /// YOLOv8-pose on onnxruntime. Ports `extraction/yolo_onnx_runner.py`
 /// (`predict` + `decode_v8_pose` + NMS) and the device/session selection in
@@ -93,7 +93,7 @@ final class PoseRunner {
 
     private func floats(from value: ORTValue) throws -> ([Float], [Int]) {
         let info = try value.tensorTypeAndShapeInfo()
-        let dims = (try info.shape()).map { $0.intValue }
+        let dims = info.shape.map { $0.intValue }
         let data = try value.tensorData() as Data
         let count = data.count / MemoryLayout<Float>.size
         var arr = [Float](repeating: 0, count: count)
