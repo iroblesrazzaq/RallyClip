@@ -20,6 +20,9 @@ final class ViewerModel: ObservableObject {
     /// nil = full match; else the visible {start,end} window in source seconds.
     @Published var zoomWindow: (start: Double, end: Double)?
     @Published var sessionDirty = false
+    /// Highlight-selection mode: tap points to pick a subset to export as one clip.
+    @Published var selectingHighlight = false
+    @Published var highlightSelection: Set<Int> = []
 
     let minPointSeconds = 0.5
     let addPointSeconds = 8.0
@@ -54,7 +57,7 @@ final class ViewerModel: ObservableObject {
                 let s = CMTimeGetSeconds(t)
                 self.currentTime = s
                 self.isPlaying = self.player.timeControlStatus == .playing
-                guard self.isPlaying, !self.editing, let active = self.active else { return }
+                guard self.isPlaying, !self.editing, !self.selectingHighlight, let active = self.active else { return }
                 if s >= active.end - 0.05 { self.advance() }
             }
         }
@@ -84,7 +87,7 @@ final class ViewerModel: ObservableObject {
 
     func seek(to t: Double, autoplay: Bool) {
         let target = clamp(t)
-        active = editing ? (duration, nil) : segment(for: target)
+        active = (editing || selectingHighlight) ? (duration, nil) : segment(for: target)
         player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         currentTime = target
         if autoplay { player.play(); isPlaying = true }
@@ -93,7 +96,7 @@ final class ViewerModel: ObservableObject {
     func togglePlay() {
         if isPlaying { player.pause(); isPlaying = false }
         else {
-            if active == nil { active = editing ? (duration, nil) : segment(for: currentTime) }
+            if active == nil { active = (editing || selectingHighlight) ? (duration, nil) : segment(for: currentTime) }
             player.play(); isPlaying = true
         }
     }
@@ -133,6 +136,7 @@ final class ViewerModel: ObservableObject {
     // MARK: - edit mode
 
     func enterEdit() {
+        if selectingHighlight { exitHighlight() }
         points = store.segments(match.id)
         editing = true
         zoomWindow = nil
@@ -153,6 +157,35 @@ final class ViewerModel: ObservableObject {
         player.pause(); isPlaying = false
         seek(to: points[i].start, autoplay: false)
     }
+
+    // MARK: - highlight selection
+
+    /// Enter highlight-select mode; returns false (with no state change) when
+    /// there are no points to pick from.
+    @discardableResult
+    func enterHighlight() -> Bool {
+        guard !points.isEmpty else { onToast("No points to export.", .error); return false }
+        if editing { exitEdit() }
+        points = store.segments(match.id)
+        selectingHighlight = true
+        highlightSelection = []
+        player.pause(); isPlaying = false
+        active = (duration, nil)
+        return true
+    }
+
+    func exitHighlight() {
+        selectingHighlight = false
+        highlightSelection = []
+    }
+
+    func toggleHighlight(_ i: Int) {
+        guard points.indices.contains(i) else { return }
+        if highlightSelection.contains(i) { highlightSelection.remove(i) } else { highlightSelection.insert(i) }
+    }
+
+    func selectAllHighlight() { highlightSelection = Set(points.indices) }
+    func clearHighlight() { highlightSelection = [] }
 
     /// Drag a handle. edge: .start/.end. Clamps to neighbors + minPointSeconds.
     func trim(index: Int, edge: Edge, to t: Double) {

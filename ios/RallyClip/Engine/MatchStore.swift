@@ -20,6 +20,9 @@ final class MatchStore {
     private func dir(_ id: String) -> URL { root.appendingPathComponent(id, isDirectory: true) }
     func sourceURL(_ id: String) -> URL { dir(id).appendingPathComponent("source.mov") }
     func exportURL(_ id: String) -> URL { dir(id).appendingPathComponent("export.mp4") }
+    func highlightURL(_ id: String) -> URL { dir(id).appendingPathComponent("highlight.mp4") }
+    private func pointsDir(_ id: String) -> URL { dir(id).appendingPathComponent("points", isDirectory: true) }
+    func pointsZipURL(_ id: String) -> URL { dir(id).appendingPathComponent("points.zip") }
     private func metaURL(_ id: String) -> URL { dir(id).appendingPathComponent("meta.json") }
     private func csvURL(_ id: String) -> URL { dir(id).appendingPathComponent("segments.csv") }
     private func editedURL(_ id: String) -> URL { dir(id).appendingPathComponent("segments_edited.csv") }
@@ -68,15 +71,23 @@ final class MatchStore {
 
     func saveEditedSegments(_ id: String, _ segments: [Segment]) {
         writeCSV(segments, to: editedURL(id))
-        try? fm.removeItem(at: exportURL(id))   // export is now stale
+        invalidateExports(id)   // all cut artifacts are now stale
         updateMeta(id) { $0.hasEdits = true; $0.nSegments = segments.count; $0.pointDurationS = pointDuration(segments) }
     }
 
     func resetEdits(_ id: String) {
         try? fm.removeItem(at: editedURL(id))
-        try? fm.removeItem(at: exportURL(id))
+        invalidateExports(id)
         let original = readCSV(csvURL(id)) ?? []
         updateMeta(id) { $0.hasEdits = false; $0.nSegments = original.count; $0.pointDurationS = pointDuration(original) }
+    }
+
+    /// Drop every derived clip so the next export reflects the current segments.
+    private func invalidateExports(_ id: String) {
+        try? fm.removeItem(at: exportURL(id))
+        try? fm.removeItem(at: highlightURL(id))
+        try? fm.removeItem(at: pointsZipURL(id))
+        try? fm.removeItem(at: pointsDir(id))
     }
 
     func delete(_ id: String) { try? fm.removeItem(at: dir(id)) }
@@ -87,6 +98,45 @@ final class MatchStore {
         if fm.fileExists(atPath: url.path) { return url }
         try await ClipExporter.export(sourceURL: sourceURL(id), segments: segments(id), to: url)
         return url
+    }
+
+    /// Concatenate a user-selected subset of points into one highlight clip.
+    /// `indices` index into `segments(id)` (the effective, edited-wins list).
+    /// Rebuilt each call since the selection varies. Mirrors the desktop
+    /// `/highlight?points=…` route.
+    func buildHighlight(_ id: String, indices: [Int]) async throws -> URL {
+        let all = segments(id)
+        let picked = indices.sorted().filter { all.indices.contains($0) }.map { all[$0] }
+        guard !picked.isEmpty else { throw PipelineError.export("no points selected") }
+        let url = highlightURL(id)
+        try await ClipExporter.export(sourceURL: sourceURL(id), segments: picked, to: url)
+        return url
+    }
+
+    /// Each point as its own clip, zipped (`point_01.mp4`, …). Cached until an
+    /// edit invalidates it. Mirrors the desktop `/points.zip` route.
+    func ensurePointsZip(_ id: String) async throws -> URL {
+        let zip = pointsZipURL(id)
+        if fm.fileExists(atPath: zip.path) { return zip }
+        try await ClipExporter.exportIndividual(sourceURL: sourceURL(id), segments: segments(id), to: pointsDir(id))
+        try zipDirectory(pointsDir(id), to: zip)
+        return zip
+    }
+
+    /// Zip a directory via NSFileCoordinator's `.forUploading` option (the
+    /// system's built-in directory→.zip path; no third-party archiver).
+    private func zipDirectory(_ directory: URL, to dest: URL) throws {
+        let coordinator = NSFileCoordinator()
+        var coordError: NSError?
+        var copyError: Error?
+        coordinator.coordinate(readingItemAt: directory, options: [.forUploading], error: &coordError) { tmpZip in
+            do {
+                try? fm.removeItem(at: dest)
+                try fm.copyItem(at: tmpZip, to: dest)
+            } catch { copyError = error }
+        }
+        if let coordError { throw coordError }
+        if let copyError { throw copyError }
     }
 
     func csvData(_ id: String) -> Data? {

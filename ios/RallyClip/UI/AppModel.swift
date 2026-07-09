@@ -147,4 +147,30 @@ final class AppModel: ObservableObject {
         do { return try await MatchStore.shared.ensureExport(m.id) }
         catch { toast("Could not export the clip.", .error); return nil }
     }
+
+    /// Concatenate the selected points into one highlight clip (shared as
+    /// `<name>_highlight.mp4`). `indices` are into the match's effective points.
+    func exportHighlight(_ m: MatchMeta, indices: [Int]) async -> URL? {
+        do {
+            let built = try await MatchStore.shared.buildHighlight(m.id, indices: indices)
+            return sharableCopy(of: built, named: "\(m.name)_highlight.mp4")
+        } catch { toast("Could not export the highlight.", .error); return nil }
+    }
+
+    /// Each point as its own clip, zipped (shared as `<name>_points.zip`).
+    func exportPointsZip(_ m: MatchMeta) async -> URL? {
+        do {
+            let built = try await MatchStore.shared.ensurePointsZip(m.id)
+            return sharableCopy(of: built, named: "\(m.name)_points.zip")
+        } catch { toast("Could not export the points.", .error); return nil }
+    }
+
+    /// Copy a stored artifact into a temp file with a user-friendly name for the
+    /// share sheet (falls back to the original URL if the copy fails).
+    private func sharableCopy(of url: URL, named name: String) -> URL {
+        let dest = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+        try? FileManager.default.removeItem(at: dest)
+        do { try FileManager.default.copyItem(at: url, to: dest); return dest }
+        catch { return url }
+    }
 }

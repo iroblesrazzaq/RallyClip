@@ -51,18 +51,37 @@ struct ViewerView: View {
                 }
                 Button("CSV") { if let u = csvURL() { share = ShareItem(url: u) } }
                     .buttonStyle(RCButtonStyle(kind: .secondary, palette: palette))
-                Button("Export video") { Task { if let u = await app.exportMatch(vm.match) { share = ShareItem(url: u) } } }
-                    .buttonStyle(RCButtonStyle(kind: .primary, palette: palette))
+                exportMenu
             }
         }
+    }
+
+    private var exportMenu: some View {
+        Menu {
+            Button("All points — one clip") {
+                Task { if let u = await app.exportMatch(vm.match) { share = ShareItem(url: u) } }
+            }
+            Button("Selected points — highlight…") { vm.enterHighlight(); bumpControls() }
+            Button("Each point separately — .zip") {
+                Task { if let u = await app.exportPointsZip(vm.match) { share = ShareItem(url: u) } }
+            }
+        } label: {
+            Text("Export ▾")
+                .font(.serif(17, weight: .bold))
+                .padding(.horizontal, 20).padding(.vertical, 12)
+                .background(palette.accent).foregroundStyle(palette.onAccent)
+                .overlay(Capsule().stroke(palette.ink, lineWidth: 1))
+                .clipShape(Capsule())
+        }
+        .disabled(vm.editing)
     }
 
     private var videoArea: some View {
         ZStack {
             PlayerLayerView(player: vm.player)
                 .background(Color.black)
-                .onTapGesture { if !vm.editing { vm.togglePlay(); bumpControls() } }
-            if controlsVisible || vm.editing {
+                .onTapGesture { if !vm.editing && !vm.selectingHighlight { vm.togglePlay(); bumpControls() } }
+            if controlsVisible || vm.editing || vm.selectingHighlight {
                 overlay.transition(.opacity)
             }
         }
@@ -88,6 +107,7 @@ struct ViewerView: View {
                     }
                 }
                 if vm.editing { editBar }
+                if vm.selectingHighlight { selectBar }
             }
             .padding(fullscreen ? 24 : 16)
             .background(
@@ -110,6 +130,31 @@ struct ViewerView: View {
                 Button("Done") { vm.exitEdit() }.buttonStyle(RCButtonStyle(kind: .primary, palette: palette, small: true))
             }
         }
+    }
+
+    private var selectBar: some View {
+        HStack {
+            Text(selectHint).font(.system(size: 14, weight: .semibold)).foregroundStyle(.white.opacity(0.9)).lineLimit(1)
+            Spacer()
+            HStack(spacing: 6) {
+                smallBtn("Select all") { vm.selectAllHighlight() }
+                smallBtn("Clear") { vm.clearHighlight() }
+                smallBtn("Cancel") { vm.exitHighlight() }
+                Button(vm.highlightSelection.isEmpty ? "Export highlight" : "Export highlight (\(vm.highlightSelection.count))") {
+                    let indices = Array(vm.highlightSelection)
+                    Task { if let u = await app.exportHighlight(vm.match, indices: indices) { share = ShareItem(url: u) } }
+                    vm.exitHighlight()
+                }
+                .buttonStyle(RCButtonStyle(kind: .primary, palette: palette, small: true))
+                .disabled(vm.highlightSelection.isEmpty)
+            }
+        }
+    }
+
+    private var selectHint: String {
+        let n = vm.highlightSelection.count
+        return n == 0 ? "Tap points to add them to the highlight."
+                      : "\(n) point\(n == 1 ? "" : "s") selected — they’ll play back-to-back."
     }
 
     private var editHint: String {

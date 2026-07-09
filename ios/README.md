@@ -86,6 +86,9 @@ xcodebuild test -project RallyClip.xcodeproj -scheme RallyClip \
 - **`ModelRuntimeTests`** — bundled assets on the CPU path: manifest contract,
   scaler, LSTM produces valid probabilities, pose runs, court default mask +
   synthetic detect.
+- **`ExportTests`** — the per-point export flows cut real clips out of the golden
+  fixture: one clip per point in order (`points.zip`), and a highlight whose
+  length is the sum of the selected points (`buildHighlight`).
 - **`EndToEndParityTests`** (tag `.e2e`) — runs the whole pipeline on the committed
   `tests/fixtures/golden_cli/clip.mp4` and asserts the segments match
   `golden_segments.csv` (same rule as the desktop `test_cli_golden_parity`:

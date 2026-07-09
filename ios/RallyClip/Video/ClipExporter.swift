@@ -56,4 +56,24 @@ enum ClipExporter {
             throw PipelineError.export(session.error?.localizedDescription ?? "export failed")
         }
     }
+
+    /// Cut each point into its own clip (`point_01.mp4`, `point_02.mp4`, … in
+    /// chronological order) inside `directory`, which is recreated empty first.
+    /// Native analogue of the desktop `points.zip` build (one `segment_video`
+    /// call per interval). Returns the written clip URLs.
+    @discardableResult
+    static func exportIndividual(sourceURL: URL, segments: [Segment], to directory: URL) async throws -> [URL] {
+        guard !segments.isEmpty else { throw PipelineError.export("no points to export") }
+        let fm = FileManager.default
+        try? fm.removeItem(at: directory)
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        let sorted = segments.sorted { $0.start < $1.start || ($0.start == $1.start && $0.end < $1.end) }
+        var urls: [URL] = []
+        for (i, seg) in sorted.enumerated() {
+            let out = directory.appendingPathComponent(String(format: "point_%02d.mp4", i + 1))
+            try await export(sourceURL: sourceURL, segments: [seg], to: out)
+            urls.append(out)
+        }
+        return urls
+    }
 }
