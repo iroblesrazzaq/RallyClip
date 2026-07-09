@@ -4,18 +4,20 @@ RallyClip is an open-source tool for tennis video segmentation. It extracts rall
 
 This repo ships:
 - `rallyclip` CLI for local inference
-- `rallyclip-desktop` native desktop app (pywebview: WKWebView on macOS, WebView2 on Windows)
+- `rallyclip-desktop` for macos desktop app
 - `rallyclip gui` browser-based local UI for development
 - open training pipeline code
 
+
+## Features coming soon (in rough order)
+- Retrain on scaled data
+- iOS mobile app beta coming soon
+
+
 ## Current release status
 
-The first public desktop release is `v0.1.0` for **Apple Silicon macOS only**.
-It was built, signed, notarized, stapled, and uploaded manually as a DMG. There
-is not yet a full GitHub Actions release pipeline.
-
-The packaged app uses the native QtMultimedia replay viewer for saved matches.
-Browser/WebM playback remains a development fallback.
+The current public desktop release is `v0.3.0` for **Apple Silicon macOS only**.
+It was built, signed, notarized, stapled, and uploaded manually as a DMG. 
 
 ## Runtime architecture direction
 
@@ -34,18 +36,11 @@ See `docs/ENVIRONMENT.md` and `docs/runtime-api-engine-refactor.md` for the curr
 branch handoff and test commands.
 
 
-## Features coming soon (in rough order)
-- gh release (desktop app)
-- Retrain on YOLOv26-pose model for better accuracy/lower FLOPS
-- Retrain on scaled data
-- quantize yolov26 to int8 for edge inference speed
-
 
 ## Features down the road
 In no particular order,
 - OPTIMIZE TF OUTTA THE MODELS TO MAKE THEM FASTER AND BETTER!!!!
 - Find best inference setup (YOLO batching, etc) – mostly for deployed app by also will release open source :)
-- port to TS, npm for easier runtime, install with npm, no dealing with python deps
 - Doubles support (need to label + train on doubles data)
 - Open dataset (once deployed, opt-in for publicly available dataset for open-source community to use)
 - Match scoring
