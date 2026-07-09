@@ -676,9 +676,56 @@ select {
     box-shadow: 0 0 8px rgba(204, 255, 0, 0.35);
 }
 
-/* Edit mode draws its own draggable segments on top; hide the static bars. */
-.viewer-video-wrap.is-editing .viewer-point-track {
+/* Edit / highlight-select mode draw their own segments on top; hide the static bars. */
+.viewer-video-wrap.is-editing .viewer-point-track,
+.viewer-video-wrap.is-selecting .viewer-point-track {
     display: none;
+}
+
+/* ----- Export menu ----- */
+.export-menu-wrap {
+    position: relative;
+}
+
+.export-menu {
+    position: absolute;
+    top: calc(100% + 0.4rem);
+    right: 0;
+    z-index: 20;
+    min-width: 15rem;
+    padding: 0.35rem;
+    border-radius: 0.65rem;
+    background: #14161c;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.export-menu[hidden] {
+    display: none;
+}
+
+.export-menu-item {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.9);
+    text-align: left;
+    padding: 0.55rem 0.7rem;
+    border-radius: 0.45rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.export-menu-item:hover,
+.export-menu-item:focus-visible {
+    background: rgba(204, 255, 0, 0.16);
+    color: #fff;
+    outline: none;
 }
 
 .viewer-seek-wrap input[type="range"] {
@@ -828,10 +875,44 @@ select {
     left: 100%;
 }
 
-.viewer-video-wrap.is-editing .viewer-overlay {
+.viewer-video-wrap.is-editing .viewer-overlay,
+.viewer-video-wrap.is-selecting .viewer-overlay {
     opacity: 1;
     pointer-events: auto;
     transform: translateY(0);
+}
+
+/* ----- Highlight selection mode ----- */
+.viewer-select-track {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    /* Above the range input (z4) so the toggle bars win pointer events. */
+    z-index: 5;
+}
+
+.viewer-select-segment {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 0.95rem;
+    border-radius: 0.35rem;
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    pointer-events: auto;
+    cursor: pointer;
+    touch-action: none;
+}
+
+.viewer-select-segment.is-offscreen {
+    display: none;
+}
+
+.viewer-select-segment.is-selected {
+    background: rgba(204, 255, 0, 0.62);
+    border-color: var(--tennis);
+    height: 1.25rem;
+    box-shadow: 0 0 10px rgba(204, 255, 0, 0.4);
 }
 
 .empty-title {

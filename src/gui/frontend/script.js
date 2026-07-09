@@ -71,6 +71,9 @@ class RallyClipApp {
         this.editSaveGen = 0;
         this.editSessionDirty = false;
         this.segmentsEdited = false;
+        this.exportMenuOpen = false;
+        this.highlightMode = false;
+        this.highlightSelection = new Set();
         this.minPointSeconds = 0.5;
         this.addPointSeconds = 8;
         // Edit-mode timeline zoom: null = full match; otherwise the visible
@@ -165,6 +168,17 @@ class RallyClipApp {
         this.viewerCurrentTime = document.getElementById("viewerCurrentTime");
         this.viewerDuration = document.getElementById("viewerDuration");
         this.viewerExportBtn = document.getElementById("viewerExportBtn");
+        this.viewerExportMenu = document.getElementById("viewerExportMenu");
+        this.exportAllBtn = document.getElementById("exportAllBtn");
+        this.exportHighlightBtn = document.getElementById("exportHighlightBtn");
+        this.exportEachBtn = document.getElementById("exportEachBtn");
+        this.viewerSelectTrack = document.getElementById("viewerSelectTrack");
+        this.viewerSelectBar = document.getElementById("viewerSelectBar");
+        this.viewerSelectHint = document.getElementById("viewerSelectHint");
+        this.selectAllPointsBtn = document.getElementById("selectAllPointsBtn");
+        this.selectClearBtn = document.getElementById("selectClearBtn");
+        this.selectCancelBtn = document.getElementById("selectCancelBtn");
+        this.selectExportBtn = document.getElementById("selectExportBtn");
         this.viewerCsvBtn = document.getElementById("viewerCsvBtn");
         this.viewerEditBtn = document.getElementById("viewerEditBtn");
         this.viewerEditTrack = document.getElementById("viewerEditTrack");
@@ -225,8 +239,31 @@ class RallyClipApp {
         this.updateBtn.addEventListener("click", () => this.openUpdatePage());
         this.backToLibrary.addEventListener("click", () => this.showLibrary());
         this.backFromViewer.addEventListener("click", () => this.showLibrary());
-        this.viewerExportBtn.addEventListener("click", () => {
+        this.viewerExportBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.toggleExportMenu();
+        });
+        this.exportAllBtn.addEventListener("click", () => {
+            this.closeExportMenu();
             if (this.viewingItemId) this.triggerDownload(`/api/library/${this.viewingItemId}/video`);
+        });
+        this.exportEachBtn.addEventListener("click", () => {
+            this.closeExportMenu();
+            if (this.viewingItemId) this.triggerDownload(`/api/library/${this.viewingItemId}/points.zip`);
+        });
+        this.exportHighlightBtn.addEventListener("click", () => {
+            this.closeExportMenu();
+            this.enterHighlightMode();
+        });
+        this.selectAllPointsBtn.addEventListener("click", () => this.selectAllPoints());
+        this.selectClearBtn.addEventListener("click", () => this.clearHighlightSelection());
+        this.selectCancelBtn.addEventListener("click", () => this.exitHighlightMode());
+        this.selectExportBtn.addEventListener("click", () => this.exportHighlight());
+        // Close the export menu on any outside click.
+        document.addEventListener("click", (e) => {
+            if (!this.exportMenuOpen) return;
+            if (this.viewerExportMenu.contains(e.target) || this.viewerExportBtn.contains(e.target)) return;
+            this.closeExportMenu();
         });
         this.viewerCsvBtn.addEventListener("click", () => {
             if (this.viewingItemId) this.triggerDownload(`/api/library/${this.viewingItemId}/csv`);
@@ -552,6 +589,8 @@ class RallyClipApp {
         this.progressCard.hidden = viewName !== "processing";
         if (viewName !== "viewer" && this.matchVideo) {
             this.exitEditMode({ silent: true });
+            this.closeExportMenu();
+            this.exitHighlightMode();
             this.segmentsEdited = false;
             // Orphan the old item's autosave queue so the next item's saves
             // don't wait behind it (queued ones no-op via the generation bump).
@@ -2306,6 +2345,121 @@ class RallyClipApp {
             this.viewerPointTrack.appendChild(marker);
         });
         if (this.editMode) this.renderEditTrack();
+        if (this.highlightMode) this.renderSelectTrack();
+    }
+
+    // ----- Export menu + highlight selection -------------------------------- //
+    // "Selected points" concatenates a chosen subset into one highlight clip;
+    // "Each point separately" and "All points" are one-click downloads. The
+    // selection is by index into the same (edited-wins) pointIntervals the
+    // timeline draws, so it can't drift from what the user sees.
+
+    toggleExportMenu() {
+        if (this.exportMenuOpen) this.closeExportMenu();
+        else this.openExportMenu();
+    }
+
+    openExportMenu() {
+        if (!this.viewerExportMenu) return;
+        this.exportMenuOpen = true;
+        this.viewerExportMenu.hidden = false;
+        this.viewerExportBtn.setAttribute("aria-expanded", "true");
+    }
+
+    closeExportMenu() {
+        if (!this.viewerExportMenu) return;
+        this.exportMenuOpen = false;
+        this.viewerExportMenu.hidden = true;
+        this.viewerExportBtn.setAttribute("aria-expanded", "false");
+    }
+
+    enterHighlightMode() {
+        if (!this.viewingItemId || !this.pointIntervals.length) {
+            this.showToast("No points to export.", "error");
+            return;
+        }
+        if (this.editMode) this.exitEditMode({ silent: true });
+        this.highlightMode = true;
+        this.highlightSelection = new Set();
+        if (this.viewerHasVideo()) this.matchVideo.pause();
+        if (this.viewerVideoWrap) this.viewerVideoWrap.classList.add("is-selecting");
+        if (this.viewerSelectBar) this.viewerSelectBar.hidden = false;
+        if (this.viewerSelectTrack) this.viewerSelectTrack.hidden = false;
+        this.showViewerControls();
+        this.renderSelectTrack();
+    }
+
+    exitHighlightMode() {
+        this.highlightMode = false;
+        this.highlightSelection = new Set();
+        if (this.viewerVideoWrap) this.viewerVideoWrap.classList.remove("is-selecting");
+        if (this.viewerSelectBar) this.viewerSelectBar.hidden = true;
+        if (this.viewerSelectTrack) {
+            this.viewerSelectTrack.innerHTML = "";
+            this.viewerSelectTrack.hidden = true;
+        }
+    }
+
+    selectAllPoints() {
+        if (!this.highlightMode) return;
+        this.highlightSelection = new Set(this.pointIntervals.map((_, i) => i));
+        this.renderSelectTrack();
+    }
+
+    clearHighlightSelection() {
+        if (!this.highlightMode) return;
+        this.highlightSelection.clear();
+        this.renderSelectTrack();
+    }
+
+    togglePointSelection(index) {
+        if (this.highlightSelection.has(index)) this.highlightSelection.delete(index);
+        else this.highlightSelection.add(index);
+        this.renderSelectTrack();
+    }
+
+    updateSelectUi() {
+        if (!this.viewerSelectBar) return;
+        const count = this.highlightSelection.size;
+        if (this.selectExportBtn) {
+            this.selectExportBtn.disabled = count === 0;
+            this.selectExportBtn.textContent = count ? `Export highlight (${count})` : "Export highlight";
+        }
+        if (this.viewerSelectHint) {
+            this.viewerSelectHint.textContent = count
+                ? `${count} point${count === 1 ? "" : "s"} selected — they’ll play back-to-back.`
+                : "Tap points to add them to the highlight.";
+        }
+    }
+
+    renderSelectTrack() {
+        if (!this.viewerSelectTrack) return;
+        this.viewerSelectTrack.innerHTML = "";
+        this.updateSelectUi();
+        if (!this.highlightMode) return;
+        const win = this.timelineWindow();
+        const span = win.end - win.start;
+        if (span <= 0) return;
+        this.pointIntervals.forEach((seg, index) => {
+            const startPct = Math.max(0, Math.min(100, ((seg.start - win.start) / span) * 100));
+            const endPct = Math.max(startPct, Math.min(100, ((seg.end - win.start) / span) * 100));
+            const el = document.createElement("div");
+            el.className = "viewer-select-segment";
+            el.dataset.index = String(index);
+            el.style.left = `${startPct}%`;
+            el.style.width = `${Math.max(0.4, endPct - startPct)}%`;
+            if (this.highlightSelection.has(index)) el.classList.add("is-selected");
+            el.classList.toggle("is-offscreen", seg.end <= win.start || seg.start >= win.end);
+            el.addEventListener("click", () => this.togglePointSelection(index));
+            this.viewerSelectTrack.appendChild(el);
+        });
+    }
+
+    exportHighlight() {
+        if (!this.viewingItemId || !this.highlightSelection.size) return;
+        const indices = Array.from(this.highlightSelection).sort((a, b) => a - b);
+        this.triggerDownload(`/api/library/${this.viewingItemId}/highlight?points=${indices.join(",")}`);
+        this.exitHighlightMode();
     }
 
     // ----- Segment edit mode ------------------------------------------------ //
@@ -2314,6 +2468,7 @@ class RallyClipApp {
 
     async enterEditMode() {
         if (this.editMode || !this.viewingItemId) return;
+        if (this.highlightMode) this.exitHighlightMode();
         const itemId = this.viewingItemId;
         try {
             const resp = await fetch(`/api/library/${itemId}/segments`);

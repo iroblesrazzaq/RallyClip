@@ -46,7 +46,14 @@
                     <div class="viewer-actions">
                         <button type="button" class="btn btn-secondary" id="viewerEditBtn" hidden>Edit points</button>
                         <button type="button" class="btn btn-secondary" id="viewerCsvBtn" hidden>CSV</button>
-                        <button type="button" class="btn btn-primary" id="viewerExportBtn">Export video</button>
+                        <div class="export-menu-wrap">
+                            <button type="button" class="btn btn-primary" id="viewerExportBtn" aria-haspopup="true" aria-expanded="false">Export ▾</button>
+                            <div class="export-menu" id="viewerExportMenu" role="menu" hidden>
+                                <button type="button" class="export-menu-item" id="exportAllBtn" role="menuitem">All points — one clip</button>
+                                <button type="button" class="export-menu-item" id="exportHighlightBtn" role="menuitem">Selected points — highlight…</button>
+                                <button type="button" class="export-menu-item" id="exportEachBtn" role="menuitem">Each point separately — .zip</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
                 <div class="viewer-video-wrap">
@@ -61,6 +68,7 @@
                                 <div class="viewer-point-track" id="viewerPointTrack" aria-hidden="true"></div>
                                 <input type="range" id="viewerSeek" min="0" max="0" step="0.1" value="0" aria-label="Match timeline">
                                 <div class="viewer-edit-track" id="viewerEditTrack" hidden></div>
+                                <div class="viewer-select-track" id="viewerSelectTrack" hidden></div>
                             </div>
                             <div class="viewer-control-row">
                                 <div class="viewer-left-controls">
@@ -85,6 +93,15 @@
                                     <button type="button" class="btn btn-secondary btn-small" id="editDeletePointBtn" disabled>Delete point</button>
                                     <button type="button" class="btn btn-ghost btn-small" id="editResetBtn" disabled>Reset to original</button>
                                     <button type="button" class="btn btn-primary btn-small" id="editDoneBtn">Done</button>
+                                </div>
+                            </div>
+                            <div class="viewer-edit-bar viewer-select-bar" id="viewerSelectBar" hidden>
+                                <span class="viewer-edit-hint" id="viewerSelectHint">Tap points to add them to the highlight.</span>
+                                <div class="viewer-edit-actions">
+                                    <button type="button" class="btn btn-secondary btn-small" id="selectAllPointsBtn">Select all</button>
+                                    <button type="button" class="btn btn-ghost btn-small" id="selectClearBtn">Clear</button>
+                                    <button type="button" class="btn btn-ghost btn-small" id="selectCancelBtn">Cancel</button>
+                                    <button type="button" class="btn btn-primary btn-small" id="selectExportBtn" disabled>Export highlight</button>
                                 </div>
                             </div>
                         </div>

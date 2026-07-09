@@ -15,6 +15,7 @@ import time
 import uuid
 import webbrowser
 import csv
+import zipfile
 from datetime import datetime, timedelta
 from importlib import metadata as importlib_metadata
 from fractions import Fraction
@@ -2352,6 +2353,110 @@ def library_video(item_id: str):
     except Exception as exc:
         logging.exception("Could not export library video %s", item_id)
         return jsonify({"error": f"Could not export video: {exc}"}), 500
+
+
+def _library_source_and_intervals(item_id: str) -> tuple[Path, Path, list[tuple[float, float]]]:
+    """Resolve a saved match's source video and its effective point intervals.
+
+    Uses the edited-wins CSV (`resolve_segments`). Raises FileNotFoundError when
+    the source or point intervals are missing — the per-point export flows have
+    no meaning for legacy already-cut items with no CSV.
+    """
+    source_path = _resolve_library_source(item_id)
+    if source_path is None:
+        raise FileNotFoundError("Video not available")
+    csv_path = _resolve_library_segments(item_id)
+    intervals = _sorted_point_intervals(csv_path) if csv_path is not None else []
+    if not intervals:
+        raise FileNotFoundError("No point intervals available")
+    return source_path, csv_path, intervals
+
+
+def _selected_point_indices(raw: Optional[str], count: int) -> list[int]:
+    """Parse a comma-separated `points` query into validated, sorted indices.
+
+    Raises ValueError on malformed input, an empty selection, or out-of-range
+    indices (which the client should never send).
+    """
+    tokens = [tok.strip() for tok in (raw or "").split(",")]
+    try:
+        indices = sorted({int(tok) for tok in tokens if tok != ""})
+    except ValueError as exc:
+        raise ValueError("Invalid points selection") from exc
+    if not indices:
+        raise ValueError("No points selected")
+    if indices[0] < 0 or indices[-1] >= count:
+        raise ValueError("Points selection out of range")
+    return indices
+
+
+@app.route("/api/library/<item_id>/highlight", methods=["GET"])
+def library_highlight(item_id: str):
+    """Concatenate a user-selected subset of points into a single highlight clip.
+
+    `?points=0,2,5` indexes into the effective (edited-wins) sorted intervals.
+    Regenerated per request since the selection varies; serialized with the
+    per-item export lock so concurrent requests don't both re-encode.
+    """
+    try:
+        source_path, _csv_path, intervals = _library_source_and_intervals(item_id)
+        indices = _selected_point_indices(request.args.get("points"), len(intervals))
+        selected = [intervals[i] for i in indices]
+        highlight_path = _library_item_dir(item_id) / "highlight.mp4"
+        with _export_lock(item_id):
+            _load_segment_video()(str(source_path), selected, str(highlight_path))
+        return send_file(str(highlight_path), as_attachment=True, download_name=f"{item_id}_highlight.mp4")
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logging.exception("Could not export highlight for %s", item_id)
+        return jsonify({"error": f"Could not export highlight: {exc}"}), 500
+
+
+@app.route("/api/library/<item_id>/points.zip", methods=["GET"])
+def library_points_zip(item_id: str):
+    """Export each point as its own clip and deliver them as one .zip.
+
+    Files are named `point_01.mp4`, `point_02.mp4`, … in chronological order.
+    The zip is cached and rebuilt only when the source or segments change.
+    """
+    try:
+        source_path, csv_path, intervals = _library_source_and_intervals(item_id)
+        item_dir = _library_item_dir(item_id)
+        points_dir = item_dir / "points"
+        zip_path = item_dir / "points.zip"
+        with _export_lock(item_id):
+            needs_build = not zip_path.exists()
+            if not needs_build:
+                zip_mtime = zip_path.stat().st_mtime
+                needs_build = (
+                    source_path.stat().st_mtime > zip_mtime
+                    or csv_path.stat().st_mtime > zip_mtime
+                )
+            if needs_build:
+                if points_dir.exists():
+                    shutil.rmtree(points_dir)
+                points_dir.mkdir(parents=True, exist_ok=True)
+                segment = _load_segment_video()
+                clip_paths = []
+                for i, interval in enumerate(intervals, start=1):
+                    clip_path = points_dir / f"point_{i:02d}.mp4"
+                    segment(str(source_path), [interval], str(clip_path))
+                    clip_paths.append(clip_path)
+                # ZIP_STORED: mp4 is already compressed, so skip the deflate pass.
+                with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as archive:
+                    for clip_path in clip_paths:
+                        archive.write(clip_path, arcname=clip_path.name)
+        return send_file(str(zip_path), as_attachment=True, download_name=f"{item_id}_points.zip")
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        logging.exception("Could not export points zip for %s", item_id)
+        return jsonify({"error": f"Could not export points: {exc}"}), 500
 
 
 @app.route("/api/library/<item_id>/preview", methods=["GET"])
