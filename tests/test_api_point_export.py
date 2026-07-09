@@ -137,3 +137,25 @@ def test_points_zip_is_cached_until_segments_change(client, match):
 def test_points_zip_unknown_item_404(client, match):
     resp = client.get("/api/library/nope/points.zip")
     assert resp.status_code == 404
+
+
+# ----- cache invalidation on edit/reset ----- #
+
+
+def test_invalidate_drops_all_cut_artifacts(client, match):
+    """Editing/resetting segments must drop the zip + highlight caches too, not
+    just export.mp4 — otherwise the mtime-cached zip serves pre-edit clips."""
+    client.get("/api/library/item-a/points.zip")
+    client.get("/api/library/item-a/highlight?points=0,2")
+    item_dir = match["dir"]
+    (item_dir / "export.mp4").write_bytes(b"x")
+    assert (item_dir / "points.zip").exists()
+    assert (item_dir / "points").exists()
+    assert list(item_dir.glob("highlight_*.mp4"))
+
+    gui_app._invalidate_library_export("item-a")   # what the segments PUT/DELETE handlers call
+
+    assert not (item_dir / "export.mp4").exists()
+    assert not (item_dir / "points.zip").exists()
+    assert not (item_dir / "points").exists()
+    assert not list(item_dir.glob("highlight_*.mp4"))

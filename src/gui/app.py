@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -2395,14 +2396,16 @@ def library_highlight(item_id: str):
     """Concatenate a user-selected subset of points into a single highlight clip.
 
     `?points=0,2,5` indexes into the effective (edited-wins) sorted intervals.
-    Regenerated per request since the selection varies; serialized with the
-    per-item export lock so concurrent requests don't both re-encode.
+    The output filename encodes the selection so two concurrent requests with
+    different selections never write the same file (which one client could
+    still be streaming); regenerated per request so it reflects current edits.
     """
     try:
         source_path, _csv_path, intervals = _library_source_and_intervals(item_id)
         indices = _selected_point_indices(request.args.get("points"), len(intervals))
         selected = [intervals[i] for i in indices]
-        highlight_path = _library_item_dir(item_id) / "highlight.mp4"
+        token = hashlib.sha1(",".join(map(str, indices)).encode()).hexdigest()[:12]
+        highlight_path = _library_item_dir(item_id) / f"highlight_{token}.mp4"
         with _export_lock(item_id):
             _load_segment_video()(str(source_path), selected, str(highlight_path))
         return send_file(str(highlight_path), as_attachment=True, download_name=f"{item_id}_highlight.mp4")
@@ -2640,10 +2643,17 @@ def _parse_segments_request(payload: Any) -> list[tuple[float, float]]:
 
 
 def _invalidate_library_export(item_id: str) -> None:
-    # export.mp4 was cut from the previous point times; drop it so the next
-    # download re-exports from the effective CSV.
+    # Every cut artifact was derived from the previous point times; drop them
+    # all so the next download re-exports from the effective CSV. points.zip in
+    # particular is mtime-cached, and after a reset the restored segments.csv is
+    # OLDER than the zip, so without this the stale clips would be served.
+    item_dir = _library_item_dir(item_id)
     with _export_lock(item_id):
-        (_library_item_dir(item_id) / "export.mp4").unlink(missing_ok=True)
+        (item_dir / "export.mp4").unlink(missing_ok=True)
+        (item_dir / "points.zip").unlink(missing_ok=True)
+        shutil.rmtree(item_dir / "points", ignore_errors=True)
+        for stale in item_dir.glob("highlight_*.mp4"):
+            stale.unlink(missing_ok=True)
 
 
 @app.route("/api/library/<item_id>/segments", methods=["GET"])
