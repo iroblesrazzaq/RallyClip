@@ -41,12 +41,22 @@ def train_seg(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> None:
     train_ds = Hdf5SequenceDataset(train_path)
 
     device = _resolve_device(config.get("device"))
-    head = str(config.get("head", "linear"))
+    # config["head"] is the pipeline-level selector (classic|e2e_seg); the seg
+    # model's internal readout is chosen by seg_head (mlp|linear).
+    head = str(config.get("seg_head", "mlp"))
     model = TennisPointSegLSTM(input_size=train_ds.feature_dim, head=head).to(device)
+
+    if config.get("pos_weight") is None:
+        from training.train.loop import _default_pos_weight
+
+        pos_weight_value = _default_pos_weight(train_ds)
+        logger.info("Derived pos_weight=%.4f from train positive rate", pos_weight_value)
+    else:
+        pos_weight_value = float(config.get("pos_weight"))
 
     loss_cfg = SegLossConfig(
         fps=float(config.get("fps", 5.0)),
-        pos_weight=float(config.get("pos_weight", 3.0)),
+        pos_weight=pos_weight_value,
         cls_weight=float(config.get("cls_weight", 1.0)),
         boundary_weight=float(config.get("boundary_weight", 1.0)),
         diou_weight=float(config.get("diou_weight", 0.25)),

@@ -94,6 +94,7 @@ train:
   bidirectional: true
   dropout: 0.2
   # e2e_seg knobs (ignored by classic head)
+  seg_head: mlp  # mlp | linear — internal readout of the seg model
   selection_metric: acceptable  # val_loss | acceptable | good_weighted
   cls_weight: 1.0
   boundary_weight: 1.0
