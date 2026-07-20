@@ -1,0 +1,44 @@
+# Frozen train/val/test split for the unified 29-video corpus (2026-07-19).
+# Merge/overlay with base.yaml (+ data_container.yaml) when building datasets.
+# Sweep/LOSO pools MUST exclude test videos (pipeline hard-errors on overlap).
+#
+# Selection rationale (user-chosen, measured):
+# - TEST 3.84h / 427 segs (15% hours, 17% segs):
+#   legacy 3 vids (generalization: foreign courts/cameras/players) +
+#   new_data 3 vids (v0.3.1-CLEAN BENCHMARK — old model never saw new_data data;
+#   a86df9 = junior players + interspersed feeds, hard precision probe;
+#   a9051e = service-practice points, normal duration distribution).
+# - VAL 2.71h / 220 segs, by-video (honest early stopping; within-video val
+#   was optimistic in the old pipeline: 0.99 val AUROC vs 0.67 real seg-F1).
+# - TRAIN 20 vids, 18.97h, 1924 segs (13 new_data + 7 legacy).
+# Flip guard: __flip_h variants (when regenerated) never enter val/test.
+
+dataset:
+  split:
+    strategy: by_video
+    seed: 67
+    val_ratio: 0.0
+    test_ratio: 0.0
+    test_videos:
+      # --- legacy (generalization subset) ---
+      - "9⧸5⧸15 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN.mp4"
+      - "Aditi Narayan ｜ Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED.mp4"
+      - "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN.mp4"
+      # --- new_data (v0.3.1-clean benchmark subset) ---
+      - "2a78f52697780c3f7fd27962a96e730298e9c15fb2167028ec0e094b58f033b9.mp4"   # 0.83h scored
+      - "a9051e17933a58a0fb86f4799bea43de0673210ebec63ad04035a170bc4dcdc9.mp4"   # 1.45h service practice
+      - "a86df9f2c0ea7de59aff9fec703ca178afd4def34303293a3fa2498480c0a952.mp4"   # 0.42h juniors, feed-heavy
+    val_videos:
+      - "Monica Greene unedited tennis match play_utr7_genF_courtH_OUT_angleHIGH_zoomIN.mp4"
+      - "b34d1a7011c50f98bc459ae619ce55a59d8b487e4b4c797e0cf5bc3642ca3f09.mp4"   # 0.59h new_data
+      - "ba240bbdab57f37a1b3a3d8456feded7e8de058fa8dc83b4511a90bdb18560d9.mp4"   # 1.44h new_data
+
+# Convenience mirror for sweep exclusion guards
+holdout:
+  test_videos:
+    - "9⧸5⧸15 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN.mp4"
+    - "Aditi Narayan ｜ Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED.mp4"
+    - "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN.mp4"
+    - "2a78f52697780c3f7fd27962a96e730298e9c15fb2167028ec0e094b58f033b9.mp4"
+    - "a9051e17933a58a0fb86f4799bea43de0673210ebec63ad04035a170bc4dcdc9.mp4"
+    - "a86df9f2c0ea7de59aff9fec703ca178afd4def34303293a3fa2498480c0a952.mp4"

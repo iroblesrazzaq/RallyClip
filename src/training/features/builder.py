@@ -9,6 +9,12 @@ import h5py
 import numpy as np
 
 from training.features.registry import FeatureRegistry
+from training.io.fingerprint import (
+    build_features_fingerprint,
+    fingerprint_dict,
+    read_h5_fingerprint,
+    tmp_path_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +38,18 @@ class FeatureBuilder:
         overwrite: bool = False,
     ) -> Optional[Path]:
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        fingerprint_payload = build_features_fingerprint(
+            preproc_h5_path=preproc_h5,
+            feature_set=self.cfg.feature_set,
+            target_fps=self.cfg.target_fps,
+        )
+        fingerprint = fingerprint_dict(fingerprint_payload)
+
         if output_path.exists() and not (overwrite or self.cfg.overwrite):
-            logger.info("Skipping existing features: %s", output_path)
-            return output_path
+            if _is_valid_features_h5(output_path) and read_h5_fingerprint(output_path) == fingerprint:
+                logger.info("Skipping existing features: %s", output_path)
+                return output_path
+            logger.warning("Existing features file is stale/invalid; regenerating: %s", output_path)
 
         builder_cls = self.registry.get(self.cfg.feature_set)
         builder = builder_cls()
@@ -100,18 +115,36 @@ class FeatureBuilder:
         frames_arr = np.asarray(feature_frames, dtype=np.int64)
         times_arr = np.asarray(feature_times, dtype=np.float64)
 
-        with h5py.File(output_path, "w") as out:
-            out.create_dataset("features", data=features, compression="gzip")
-            out.create_dataset("targets", data=targets_arr)
-            out.create_dataset("frame_index", data=frames_arr)
-            out.create_dataset("timestamps", data=times_arr)
-            out.attrs["feature_set"] = self.cfg.feature_set
-            out.attrs["feature_dim"] = features.shape[1]
-            out.attrs["target_fps"] = float(self.cfg.target_fps)
-            out.attrs["source"] = str(preproc_h5)
+        if np.any(targets_arr < 0):
+            raise RuntimeError(f"Feature builder produced unlabeled targets from {preproc_h5}")
+
+        tmp_path = tmp_path_for(output_path)
+        try:
+            with h5py.File(tmp_path, "w") as out:
+                out.create_dataset("features", data=features, compression="gzip")
+                out.create_dataset("targets", data=targets_arr)
+                out.create_dataset("frame_index", data=frames_arr)
+                out.create_dataset("timestamps", data=times_arr)
+                out.attrs["feature_set"] = self.cfg.feature_set
+                out.attrs["feature_dim"] = features.shape[1]
+                out.attrs["target_fps"] = float(self.cfg.target_fps)
+                out.attrs["source"] = str(preproc_h5)
+                out.attrs["fingerprint"] = fingerprint
+            tmp_path.replace(output_path)
+        finally:
+            if tmp_path.exists():
+                tmp_path.unlink(missing_ok=True)
 
         logger.info("Saved features to %s", output_path)
         return output_path
+
+
+def _is_valid_features_h5(path: Path) -> bool:
+    try:
+        with h5py.File(path, "r") as h5f:
+            return all(key in h5f for key in ("features", "targets", "frame_index", "timestamps"))
+    except Exception:
+        return False
 
 
 def _pack_player(kps: np.ndarray, conf: np.ndarray, box: np.ndarray, box_conf: np.ndarray) -> Dict[str, np.ndarray]:

@@ -29,14 +29,29 @@ def evaluate_checkpoint(
 
     dataset = Hdf5SequenceDataset(dataset_path)
     device = _resolve_device(device_str)
-    model = TennisPointLSTM(input_size=dataset.feature_dim, return_logits=True).to(device)
-
     ckpt = torch.load(str(checkpoint_path), map_location=device)
+    model = build_model_from_checkpoint(ckpt, feature_dim=dataset.feature_dim).to(device)
     model.load_state_dict(ckpt.get("model_state_dict", ckpt))
 
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight], device=device))
     loader = torch.utils.data.DataLoader(dataset, batch_size=32, shuffle=False)
     return evaluate_model(model, loader, device, threshold, segment_cfg, fps, criterion)
+
+
+def build_model_from_checkpoint(ckpt: Dict[str, Any], *, feature_dim: int) -> TennisPointLSTM:
+    """Build TennisPointLSTM from stored arch keys (no state-dict archaeology)."""
+    arch = ckpt.get("arch") if isinstance(ckpt.get("arch"), dict) else {}
+    input_size = int(arch.get("input_size") or ckpt.get("input_size") or feature_dim)
+    hidden_size = int(arch.get("hidden_size") or ckpt.get("hidden_size") or 128)
+    num_layers = int(arch.get("num_layers") or ckpt.get("num_layers") or 2)
+    bidirectional = bool(arch.get("bidirectional", ckpt.get("bidirectional", True)))
+    return TennisPointLSTM(
+        input_size=input_size,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        bidirectional=bidirectional,
+        return_logits=True,
+    )
 
 
 def _resolve_device(device: str | None) -> torch.device:
