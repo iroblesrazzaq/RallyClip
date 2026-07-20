@@ -1,19 +1,24 @@
 # REPO_MAP — RallyClip (worktree: RallyClip-perf; branch: see docs/PROGRESS.md)
 
-Built at commit `42da683` (2026-07-05). Staleness check:
-`git diff --stat 42da683.. -- src tests scripts configs .github pyproject.toml`
+Built at commit `e1c32a7` (2026-07-19). Staleness check:
+`git diff --stat e1c32a7.. -- src tests scripts configs .github pyproject.toml`
 If that shows changes not reflected here, update this map in the same commit as your work.
+
+Cross-chat handoff (container): `../CHAT_HANDOFF.md`.
 
 ## Container context (one level up)
 
-This checkout lives in `rallyclip_container/` beside three siblings (the container
-dir is not a git repo; this table is the authoritative summary):
+This checkout lives in `rallyclip_container/` (the container dir is **not** a git
+repo). Sibling layout:
 
 | Sibling | What | Touch it? |
 |---|---|---|
-| `../RallyClip/` | Primary clone of the SAME repo (shares `.git`), parked on `docs`. Also hosts the test venv (`.venv-train`). | No feature work there. |
-| `../YOLO-ONNX/` | Separate repo: C++ ORT YOLO-pose runner + Ultralytics parity harness (`scripts/parity_v8n_960.py`). Prior art for the ONNX pose swap. | Read-only reference. |
-| `../rallyclip-prod/` | Separate repo: Modal cloud worker experiments. Likely deprecated (on-device pivot). | Don't invest. |
+| **This dir (`RallyClip-perf/`)** | Linked worktree of the same `.git` as `../RallyClip/`. Active feature + training work. Branch usually tracks `origin/main` (see PROGRESS). | **Yes — default place to code.** |
+| `../RallyClip/` | Primary clone (shares `.git`), often parked on `docs`. Holds local `data/`, `models/`, weights. | No feature work; read data/weights only. |
+| `../YOLO-ONNX/` | Separate repo: YOLO26 C++ ORT lab + Ultralytics/ONNX parity (`scripts/parity_v8n_960.py`). Desktop v8@960 ONNX came from here. | Export + parity; then copy contract into this repo's `models/pose/`. |
+| `../rallyclip-prod/` | **Different GitHub repo** (`rallyclip-prod`): Modal/Vercel cloud experiments. Not the desktop app. | Don't invest. |
+| `../new_data/` | new_data sessions + deterministic labels (`labels/`, `SINGLES_MATCHES_LABELING.md`). | Data + labeling scripts only. |
+| `../TODO.md` | Container data/training backlog (incl. YOLO26 §2b). | Update when backlog moves. |
 
 ## Top-level layout (this repo)
 
@@ -22,7 +27,7 @@ dir is not a git repo; this table is the authoritative summary):
 | `src/` | The Python package (8 subpackages, see seams below). `package-dir = src`. |
 | `tests/` | Pytest suites + `tests/fixtures/` (court goldens ~11MB, golden CLI clip, quality GT) + `tests/helpers/`. |
 | `scripts/` | Training/data tooling + `scripts/export_heatmap_model.py` (TCN ONNX export) + `scripts/fetch_artifact.py` / `scripts/release/pack_artifact.sh` (GitHub artifact zip) + `scripts/perf/` benchmarks + `scripts/release/` (sign, DMG, notarize, CI cert import). Not shipped. |
-| `configs/` | Training YAMLs (`configs/train/base.yaml`, `configs/extract/*`). |
+| `configs/` | Training YAMLs (`configs/train/base.yaml`, `holdout.yaml`, `configs/extract/*`). |
 | `models/` | Tracked **manifests + `rallyclip_v0.5.0/SHA256SUMS`**. ONNX is GitHub Release `artifact-rallyclip_v0.5.0`; `python scripts/fetch_artifact.py` unpacks into `models/rallyclip_v0.5.0/` (gitignored). `RallyClip.spec` still packs that folder into the DMG. |
 | `docs/` | This harness + plans (Tier 3) + `docs/perf/` (streaming-perf loop journal) + `docs/training.md` + `docs/artifact-registry-plan.md` (ONNX off git). |
 | `packaging/`, `RallyClip.spec` | PyInstaller/macOS packaging. |
@@ -44,7 +49,8 @@ dir is not a git repo; this table is the authoritative summary):
 - **Pose extraction (ONNX runtime)** → `src/extraction/yolo_onnx_runner.py` + `src/extraction/pose_extractor.py` (dispatch on weights extension), `tests/test_yolo_onnx_runner.py`, `docs/onnx-pose-parity-plan.md`, `../YOLO-ONNX/scripts/parity_v8n_960.py`.
 - **Court detection** → `src/preprocessing/court_detector_impl.py`, `tests/test_court_detection_deterministic.py`, `tests/helpers/court_fixtures.py`; regen fixtures with `scripts/court_fixtures_gen.py`.
 - **Features/preprocessing (runtime)** → `src/features/feature_engineer.py`, `src/preprocessing/data_preprocessor.py`, contract tests `tests/test_runtime_*_contract.py`.
-- **Training pipeline** → `docs/training.md`, `src/training/pipeline.py`, `configs/train/base.yaml`, `train.py`.
+- **Training pipeline** → `docs/training.md`, `src/training/pipeline.py`, `src/training/normalize/`, `configs/train/base.yaml` + `holdout.yaml`, `train.py`, `scripts/convert_new_data_labels.py`. Pose extract still `src/training/pose/yolo_hdf5.py` (moving to YOLO26 ONNX — `../TODO.md` §2b).
+- **new_data labels (container)** → `../new_data/SINGLES_MATCHES_LABELING.md`, `../new_data/labels/`, `../new_data/generate_labels.py`.
 - **Packaging/release** → `RallyClip.spec`, `packaging/macos/`, `scripts/release/`, `scripts/fetch_artifact.py`, `src/runtime/artifact.py`, `.github/workflows/release.yml`, `docs/cli-in-release-binary-plan.md`, `docs/artifact-registry-plan.md`.
 - **Perf** → `docs/perf/PLAN.md` + `docs/perf/JOURNAL.md`, `scripts/perf/bench_*.py`, baselines in `docs/perf/baseline/`.
 

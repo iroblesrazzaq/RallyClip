@@ -237,3 +237,83 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   DMG. An unnamed sidecar hash could verify the wrong bytes.
 - **Rejected:** Client-only AbortController as the cancel mechanism.
 
+## 2026-07-19 — Training pose switches to YOLO26n ONNX; desktop stays v8 until retrain
+
+- **What:** New training extracts will use **YOLO26n-pose ONNX** under a versioned
+  contract (`models/pose/yolo26n/` + shared ORT runner with e2e `[1,300,57]`
+  decode). Desktop v0.3.1 remains on **YOLOv8n** ONNX@960 (+ CoreML static
+  sibling). Export/parity lab stays in sibling `YOLO-ONNX/`; bundled contract
+  and training wire live in this repo. Re-export YOLO26 at training imgsz
+  (960 rect / static 544×960) — do not use the experimental 640×640 square
+  export for corpus work. Fingerprint pose HDF5 with model sha so v8/v26
+  caches never mix.
+- **Why:** YOLO26n is cheaper FLOPs for labeling/extract even if accuracy is
+  similar; training and desktop were already misaligned (train Ultralytics
+  `.pt` @ large imgsz vs desktop ONNX@960). A named ONNX contract is the path
+  to one extract path for train (and later desktop after retrain).
+- **Rejected:** Keep training on Ultralytics `.pt` forever (diverges from
+  runtime, heavier); switch desktop to YOLO26 before LSTM retrain (feature
+  distribution shift → silent quality drop); MLX rewrite (already rejected
+  2026-07-05 — CoreML EP is the Apple path).
+
+## 2026-07-19 — Normalize-to-720p@5fps before training YOLO (robust pipeline)
+
+- **What:** Training pipeline gains an explicit normalize stage (1280×720 @ 5
+  fps) before court/pose extract; `ignore_before_s` from new_data labels becomes
+  target `-1` (dropped from loss); holdout frozen in `configs/train/holdout.yaml`;
+  `train.head: classic | e2e_seg`. Implementation is in this worktree
+  (uncommitted as of this entry); details in `../CHAT_HANDOFF.md` and
+  `../TODO.md`.
+- **Why:** Court detector is pixel-absolute (tuned at 720p); 5 fps is known
+  sufficient; new_data warm-up must not be treated as negative; fixed ~5 h test set
+  preferred over 5-fold for sweep cost.
+- **Rejected:** Making court detector resolution-relative before retrain
+  (larger change, riskier for first corpus); treating warm-up as negative
+  class; leaving extract on full-fps YOLO then subsample at dataset build.
+
+## 2026-07-19 (session 2)
+
+- **YOLO26 training extraction runs CPU-only ORT for now.** CoreML deferred: the
+  e2e export carries NMS in-graph, which risks bad CoreML EP partitioning; not
+  worth engineering before the corpus is extracted once. Revisit if extract wall
+  time hurts.
+- **Pose models are manifest-defined backends** (models/pose/<name>/manifest.json:
+  head family, input/letterbox contract, COCO-17 keypoint order, model sha256).
+  Dataset identity tag = name@sha8; execution provider is provenance, not identity.
+- **Unified corpus data root = container-level ../training_data/**, decoupled from
+  both repos. Old RallyClip/data stays as-is for the v0.3.1 lineage.
+- **c31e6888 excluded from corpus** (video present, zero export JSONs).
+- **Flip augmentation deferred** — regenerate from normalized 720p@5fps videos
+  later instead of carrying old flip files forward.
+
+## 2026-07-19 (session 2, later) — YOLO26 → YOLOv8 reversal
+
+- **Pose model = YOLOv8n everywhere (training extract, desktop, iOS). YOLO26 ditched.**
+  Rationale: deployment target is Apple/CoreML, so ANE speed beats FLOPs. Measured
+  (M2 Pro): v8-static-CoreML 90 fps + sub-pixel parity vs CPU (≤0.9 px); v26-CoreML
+  41 fps with 30–180 px decode errors (e2e head fp16 candidate-selection flips —
+  inherent to the head, would recur in native iOS CoreML); v26-CPU ~10–12 fps.
+  Static-vs-dynamic v26 exports were bit-identical on CPU, isolating the EP as the
+  cause. Accuracy delta v8n↔v26n judged marginal for 2-players-at-720p.
+- **Corpus extraction runs provider=coreml** (static 544×960 sibling): ~1.5 h vs
+  ~10–27 h CPU, and features come from the same runtime the app executes
+  (train/serve consistency). EP stays provenance, not identity; parity gate in
+  tests/test_pose_backend.py. CoreML is hard-refused for yolo26-e2e head family.
+- YOLO26 bundle deleted from models/pose/; exports parked in ../YOLO-ONNX/exports/;
+  e2e decoder + dispatch kept in the runner (cheap, tested, documents the contract).
+
+## 2026-07-19 (session 2, data layout)
+
+- **Provenance-nested data layout in ../training_data/**: `sources/` is the only
+  physical home for video bytes (new_data session bundles moved whole; legacy_youtube
+  for the 11 old originals + annotation provenance copies). Pipeline consumes
+  flat interface layers only: `source_videos/` symlinks + flat `annotations/`
+  JSONs (golden — edit sources and re-materialize, never the flat dir).
+- **Normalize contract is a path tag**: `videos/norm=1280x720@5fps/` and
+  `pose_data/norm=…/…` (paths.py norm_tag(); default threaded through
+  raw_videos_dir/pose_*_dir so callers are unchanged). Future 1080p = sibling
+  tree + court-detector retune, not an overwrite.
+- **RallyClip/data deleted; RallyClip/raw_video dups deleted** (md5-verified vs
+  canonical first; old annotations+runs archived in
+  sources/legacy_youtube/legacy_rallyclip_data_archive.tar.gz). Old-model
+  benchmarking uses the bundled models/rallyclip_v0.3.1 artifact.
