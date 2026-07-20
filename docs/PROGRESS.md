@@ -4,11 +4,11 @@ _Last updated: 2026-09-09 (session: assisted DMG update, Greptile cancel + check
 
 _Last updated: 2026-07-19 (session 2: pose contract landed; **YOLO26 reversed → YOLOv8 + CoreML** after ANE benchmarks; unified training_data root; normalize running)._
 
-> **Supersedes below:** the YOLO26 items in this file describe infrastructure that
-> survives, but the active bundle is now `models/pose/yolov8n/` (v26 bundle
-> deleted, exports parked in ../YOLO-ONNX/exports/). Training extract runs
-> `provider: coreml` (~90 fps, sub-pixel parity). See DECISIONS.md 2026-07-19
-> session-2 entry and ../TODO.md §2b for the measurements and rationale.
+_Last updated: 2026-07-19 evening (session 2: v8 pose contract, unified data root,
+corpus extract, frozen split, classic retrain + benchmarks; e2e run in flight)._
+
+Full handoff: `../../CHAT_HANDOFF.md`. Backlog + idea log: `../../TODO.md`.
+Why-log: `docs/DECISIONS.md` (3 entries dated 2026-07-19).
 
 - `main` has published app **v0.5.0**. Inference artifact stays
   `artifact-rallyclip_v0.5.0`.
@@ -17,25 +17,9 @@ _Last updated: 2026-07-19 (session 2: pose contract landed; **YOLO26 reversed �
 
 ## Session 2 (2026-07-19, later) — what shipped (uncommitted)
 
-1. **Unified corpus root `../training_data/`** — source_videos/ (27 symlinks: 16 new_data
-   matches + 11 old originals; `c31e6888` excluded — video but zero new_data JSONs),
-   annotations/ (27, converted new_data labels + old JSONs), raw_videos/ (normalize output).
-   new_data merge audit clean (eca4 176→146 = pid dedup). Flips deferred.
-2. **YOLO26n pose contract** — `models/pose/yolo26n/` bundle: ONNX @960 dynamic
-   (exported via `../YOLO-ONNX/.venv-export`, ultralytics 8.4.102, opset 20) +
-   `manifest.json` (head family, letterbox, COCO-17 kpt names, shas). Parity vs
-   `.pt` ≤1e-4 px.
-3. **Runner** — `decode_yolo26_e2e` ([1,300,57], NMS in graph) + `decode_pose`
-   shape dispatch (56→v8 raw, 57→e2e) in `src/extraction/yolo_onnx_runner.py`.
-4. **Backend loader** — `src/extraction/pose_backend.py`: manifest → (model, meta),
-   sha-verified; cache tag = `name@sha8` (`yolo26n-960@116bf9a9`).
-5. **Extractor** — `YoloHdf5Extractor` takes manifest path; ONNX path is torch/
-   ultralytics-free; imgsz from manifest; HDF5 attrs get model sha + contract
-   version + head family. `base.yaml` → `yolo.model: models/pose/yolo26n/manifest.json`.
-6. **Decision: CPU ORT only for YOLO26** (no CoreML for now — e2e NMS-in-graph
-   partitioning risk; revisit post-extract).
-7. Tests: `tests/test_pose_backend.py` (12) + full suite green (264 passed; one
-   GUI latency benchmark fails only under ffmpeg load).
+## Git state
+
+Branch `feat/desktop-auto-update`, clean tree, 4 local commits (NOT pushed):
 
 1. Latest app release is the newest published `v*` tag from `/releases`.
 2. Frozen app downloads to a unique staging file, verifies SHA-256 (sidecar
@@ -58,46 +42,45 @@ features complete: 27/27/27**, no skips, under
 `pose_data/norm=1280x720@5fps/yolo=yolov8n-960@4a3fe0de/conf=0p25/imgsz=960/`
 (extract via CoreML EP; run log `../training_data/pipeline_run.log`).
 
-**Next:** build dataset (holdout overlay) → commit the working tree →
-train classic + e2e heads on the new corpus → benchmark vs bundled v0.3.1.
+- `a6c7e52` training: robust pipeline hardening + unified data layout
+- `7196b5b` extraction: manifest-defined pose backends (YOLOv8n contract)
+- `cd3f22f` docs: session decisions, progress, repo map updates
+- `2e732a1` train: fix e2e_seg launch (seg_head key, data-derived pos_weight)
 
-## Repo / worktree state
+## What shipped today
 
-| Checkout | Branch | Notes |
-|---|---|---|
-| **This tree (`RallyClip-perf/`)** | `feat/desktop-auto-update` @ `e1c32a7` (tracks `origin/main`) | **Active.** Large uncommitted training-pipeline land (normalize, new_data ingest, e2e head, holdout, tests). |
-| Sibling `../RallyClip/` | `docs` @ `3729f84` | Primary clone; parked. Local data/models only. |
-| Sibling `../rallyclip-prod/` | separate repo | Modal cloud experiments — out of scope. |
-| Sibling `../YOLO-ONNX/` | separate repo | Pose ONNX lab (YOLO26 + v8@960 parity). |
+1. **Pose backend**: YOLO26 evaluated then DITCHED (CoreML fp16 breaks its e2e head,
+   30–180 px; v8-static-CoreML = 90 fps sub-pixel). Manifest backend system in
+   `models/pose/yolov8n/` + `src/extraction/pose_backend.py`; provider cpu|coreml;
+   identity tag `yolov8n-960@4a3fe0de`; extractor torch-free.
+2. **Data**: container-level `../training_data/` with provenance `sources/` tree,
+   flat symlink/annotation interface layers, `norm=1280x720@5fps` contract tag in
+   paths.py. `RallyClip/data` deleted (archived); dup videos removed (md5-checked).
+3. **Corpus**: 29 videos / 25.5 h / 2571 segs fully normalized→extracted (CoreML,
+   ~55–65 fps)→preprocessed→featured. New sessions: a9051e (reclassified match,
+   service practice), 3e5f (unscored split-serve, 121 segs, 45% in-point).
+4. **Frozen split** in `configs/train/holdout.yaml`: test 6 (3 legacy + 3 new_data),
+   val 3 by-video, train 20. new_data test subset = clean v0.3.1 benchmark.
+5. **Dataset** `datasets/20260719_165056` (6615/970/1375 seqs of 100×362).
+6. **Classic retrain** run `20260719_165056` (best ep4, val bal_acc .881, early stop ep9).
+7. **Benchmarks (six-bin, new_data test)**: v0.3.1 12.9% acceptable → classic 28.6% →
+   +swept hysteresis (.6/.45/σ2/2s) 30.0% → +offsets(−.25/−.25) 31.1%. Legacy test
+   37.4→49.0% with offsets. Diagnosis: new_data residual = boundary VARIANCE (bias-correction
+   doesn't move it) → e2e head is the lever. Scripts/outputs in `../training_data/benchmarks/`.
 
-Shipping desktop still on **YOLOv8n ONNX@960** + optional CoreML EP (static 544×960). Training extract still Ultralytics `.pt` until YOLO26 contract lands.
+## In flight
 
-Handoff for other chats: `../CHAT_HANDOFF.md`. Data/training backlog: `../TODO.md`.
+- **e2e_seg training** `runs/20260719_e2e` (dataset symlinked to 20260719_165056),
+  log `../training_data/train_e2e_20260719.log`, selection_metric=acceptable.
+  When done: benchmark with `../training_data/benchmarks/bench_new_sv.py` pattern
+  (swap RUN dir + seg decode) and compare vs classic 31.1% / v0.3.1 12.9%.
 
-## What shipped this session (uncommitted in this worktree)
+## Next (in rough order)
 
-1. **new_data labels (container `new_data/`)** — deterministic point segments for singles_matches; `ignore_before_s`; check videos; docs in `sv/SINGLES_MATCHES_LABELING.md`.
-2. **Normalize stage** — 1280×720 @ 5 fps (`src/training/normalize/`, `scripts/normalize_videos.py`); `preprocess.target_fps: 5`.
-3. **new_data label ingest** — `scripts/convert_new_data_labels.py` → annotations + ignore prefix.
-4. **Ignore targets / flip guard / cache fingerprints / loud stage failures / eval fixes / determinism / data-derived `pos_weight`.**
-5. **E2E segment head** — `train.head: classic | e2e_seg`; seg_loop/loss/lstm/evaluator/segments6; fps from preprocess.
-6. **Holdout** — `configs/train/holdout.yaml` + sweep overlap hard-error.
-7. **Tests** — unit/smoke/characterization (~43); parity script `scripts/parity_check_normalize_yolo.py`.
-
-## Decisions locked this session
-
-- Training pose backend target: **YOLO26n-pose ONNX** (not Ultralytics `.pt` forever; not keep-v8-for-train). Desktop stays v8 until retrain.
-- Contract ownership: export/parity in `YOLO-ONNX/`; bundled manifest + runner + training extract in this repo (`models/pose/yolo26n/`, `src/extraction/`, `src/training/pose/`).
-- Existing `yolo26n-pose.onnx` at 640×640 is **not** the corpus contract — re-export at training imgsz required.
-
-## Next steps (in order)
-
-1. **YOLO26n ONNX contract** — manifest, e2e decode in runner, wire `YoloHdf5Extractor`, keypoint mapping check, fingerprint, parity gate (`../TODO.md` §2b).
-2. Export YOLO26 @ 960 rect (+ static CoreML sibling when ready); re-extract corpus under new cache tag.
-3. Commit robust-training + YOLO26 extract wiring; keep desktop on v8 until new model artifact.
-4. Retrain classic + e2e on YOLO26 features with holdout frozen.
-5. Optional later: split `pipeline.py` / ArtifactLayout (deferred Phase 6).
-
-## Open mess (user callout)
-
-Training pipeline / worktrees feel “all over the place.” Source of truth for code is **this worktree**; source of truth for new_data labels is **`../new_data/`**; pose lab is **`../YOLO-ONNX/`**. Consolidate extract defaults so train and (future) desktop share one YOLO26 contract after retrain.
+1. e2e benchmark + three-way comparison.
+2. Postprocess extras: gap-merge knob in sweep; recall-leaning operating point.
+3. Serve-convention fix experiment (ignore(-1) between-serve gaps in legacy) →
+   rebuild dataset → retrain both heads.
+4. FN>FP asymmetry: pos_weight multiplier / recall-weighted selection_metric.
+5. If e2e boundary variance persists: outside-offset heads (TODO §3c).
+6. Push branch / merge when a shippable artifact exists (bundle manifest v0.4).
