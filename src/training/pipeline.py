@@ -33,6 +33,7 @@ from training.normalize.normalize import NormalizeConfig, normalize_video
 from training.paths import (
     annotations_dir,
     datasets_dir,
+    pose_courts_dir,
     pose_features_dir,
     pose_preprocessed_dir,
     pose_raw_dir,
@@ -518,12 +519,14 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
     sample_fps = _parse_optional_float(extract_cfg.get("sample_fps"))
     raw_root = pose_raw_dir(data_root) / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
 
+    ct = court_cfg.get("target_time")
+    court_target_time = int(ct) if ct is not None else None  # None => midpoint anchor
     preprocessor = Hdf5Preprocessor(
         PreprocessConfig(
             target_fps=fps,
             save_court_masks=bool(preprocess_cfg.get("save_court_masks", False)),
             court_model_path=court_model_path,
-            court_target_time=int(court_cfg.get("target_time", 60)),
+            court_target_time=court_target_time,
             court_force=bool(court_cfg.get("force", False)),
         )
     )
@@ -564,6 +567,34 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
             summary["processed"] += 1
 
     logger.info("Preprocess summary: %s", summary)
+
+    # Court-detection health check: a silent court failure means a video was
+    # preprocessed with NO court filtering (bystanders / adjacent-court people
+    # pollute features). Surface it loudly per run instead of burying it.
+    courts_dir = pose_courts_dir(data_root)
+    court_fail = []
+    for video in videos:
+        vp = Path(video)
+        stem = vp.stem if vp.is_absolute() else (raw_dir / video).stem
+        npz = courts_dir / f"{stem}.npz"
+        ok = False
+        if npz.exists():
+            try:
+                with np.load(npz, allow_pickle=True) as _cz:
+                    ok = bool(_cz.get("success"))
+            except Exception:
+                ok = False
+        if not ok:
+            court_fail.append(stem)
+    if court_fail:
+        logger.warning(
+            "Court detection did NOT succeed for %d/%d videos (preprocessed WITHOUT "
+            "court filtering): %s",
+            len(court_fail), len(videos), ", ".join(s[:12] for s in court_fail),
+        )
+    else:
+        logger.info("Court detection succeeded for all %d videos", len(videos))
+
     if summary["processed"] == 0 and summary["skipped_existing"] == 0:
         raise RuntimeError(f"Preprocess produced no outputs: {summary}")
 
@@ -734,8 +765,12 @@ def _run_train(config: Dict[str, Any]) -> None:
         train_loop(dataset_dir, run_dir, train_cfg)
     elif head in {"e2e_seg", "e2e", "seg"}:
         train_seg(dataset_dir, run_dir, train_cfg)
+    elif head in {"e2e_heatmap", "heatmap"}:
+        from training.train.heatmap_loop import train_heatmap
+
+        train_heatmap(dataset_dir, run_dir, train_cfg)
     else:
-        raise ValueError(f"Unknown train.head: {head!r} (expected classic | e2e_seg)")
+        raise ValueError(f"Unknown train.head: {head!r} (expected classic | e2e_seg | e2e_heatmap)")
 
 
 def _run_eval(config: Dict[str, Any]) -> None:
@@ -753,6 +788,67 @@ def _run_eval(config: Dict[str, Any]) -> None:
         return
 
     head = str(train_cfg.get("head", "classic")).lower()
+    if head in {"e2e_heatmap", "heatmap"}:
+        from training.eval.heatmap_evaluator import HeatmapDecodeConfig, evaluate_heatmap_model
+        from training.metrics.segments6 import SixBinConfig
+        from training.train.heatmap_loop import build_heatmap_model
+        from training.train.heatmap_loss import E2EHeatmapLoss, HeatmapLossConfig
+
+        ckpt = torch.load(str(checkpoint_path), map_location="cpu")
+        state = ckpt.get("model_state_dict", ckpt)
+        # Backbone key differs (lstm.weight_ih_l0 vs gru.weight_ih_l0); infer from state.
+        backbone = str(train_cfg.get("heatmap_backbone", "lstm"))
+        weight = state.get("gru.weight_ih_l0", state.get("lstm.weight_ih_l0"))
+        input_size = int(weight.shape[1]) if weight is not None else 0
+        model = build_heatmap_model(
+            backbone, input_size, str(train_cfg.get("heatmap_head", "mlp"))
+        )
+        model.load_state_dict(state)
+        fps = float(preprocess_cfg.get("target_fps", 5))
+        sigma_seconds = float(train_cfg.get("heatmap_sigma_seconds", 0.5))
+        loss_cfg = HeatmapLossConfig(
+            fps=fps,
+            sigma_seconds=sigma_seconds,
+            pos_weight=float(train_cfg.get("pos_weight") or 3.0),
+            cls_weight=float(train_cfg.get("heatmap_cls_weight", 1.0)),
+            start_weight=float(train_cfg.get("heatmap_start_weight", 1.0)),
+            end_weight=float(train_cfg.get("heatmap_end_weight", 1.0)),
+            heatmap_loss=str(train_cfg.get("heatmap_loss", "bce")),
+            heatmap_pos_threshold=float(train_cfg.get("heatmap_pos_threshold", 0.1)),
+            heatmap_pos_weight=float(train_cfg.get("heatmap_pos_weight", 20.0)),
+            focal_alpha=float(train_cfg.get("heatmap_focal_alpha", 2.0)),
+            focal_beta=float(train_cfg.get("heatmap_focal_beta", 4.0)),
+        )
+
+        def _opt(key):
+            v = train_cfg.get(key)
+            return None if v is None else v
+
+        decode_cfg = HeatmapDecodeConfig(
+            mode=str(train_cfg.get("heatmap_decode_mode", "hybrid")),
+            threshold=float(train_cfg.get("threshold", 0.5)),
+            peak_threshold=float(train_cfg.get("heatmap_peak_threshold", 0.3)),
+            sigma_frames=sigma_seconds * fps,
+            refine_window_frames=None if _opt("heatmap_decode_window_frames") is None else int(train_cfg["heatmap_decode_window_frames"]),
+            nms_frames=None if _opt("heatmap_nms_frames") is None else int(train_cfg["heatmap_nms_frames"]),
+            min_duration_sec=float(train_cfg.get("heatmap_min_duration_sec", 0.3)),
+            max_duration_sec=float(train_cfg.get("heatmap_max_duration_sec", 60.0)),
+            pointness_gate=None if _opt("heatmap_pointness_gate") is None else float(train_cfg["heatmap_pointness_gate"]),
+        )
+        metrics, loss = evaluate_heatmap_model(
+            model,
+            test_path,
+            device=torch.device("cpu"),
+            criterion=E2EHeatmapLoss(loss_cfg),
+            decode_cfg=decode_cfg,
+            six_bin_cfg=SixBinConfig(),
+        )
+        eval_path = run_dir / "eval.json"
+        with eval_path.open("w", encoding="utf-8") as handle:
+            json.dump({"loss": float(loss), "metrics": metrics, "head": "e2e_heatmap"}, handle, indent=2)
+        logger.info("Heatmap test loss: %.4f metrics: %s", loss, metrics)
+        return
+
     if head in {"e2e_seg", "e2e", "seg"}:
         from training.eval.seg_evaluator import DecodeConfig, evaluate_seg_model
         from training.metrics.segments6 import SixBinConfig

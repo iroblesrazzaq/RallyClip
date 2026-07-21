@@ -28,7 +28,7 @@ class PreprocessConfig:
     target_fps: float
     save_court_masks: bool
     court_model_path: str
-    court_target_time: int
+    court_target_time: Optional[int]  # None => midpoint anchor (see CourtMaskCache)
     court_force: bool = False
     expect_width: int = CANONICAL_WIDTH
     expect_height: int = CANONICAL_HEIGHT
@@ -82,6 +82,12 @@ class Hdf5Preprocessor:
 
         cache = self.court_cache.get_or_create(data_root, video_path, force=self.cfg.court_force)
         court_mask = cache.mask
+        if not cache.success or court_mask is None:
+            logger.warning(
+                "No court mask for %s (detection failed) -> preprocessing WITHOUT court "
+                "filtering; off-court people will leak into features",
+                video_path.name,
+            )
 
         tmp_path = tmp_path_for(output_path)
         try:

@@ -30,7 +30,7 @@ def build_preprocess_fingerprint(
     raw_h5_path: Path,
     target_fps: float,
     court_model_path: str,
-    court_target_time: int,
+    court_target_time: Optional[int],
 ) -> Dict[str, Any]:
     return {
         "kind": "preprocess_v1",
@@ -38,7 +38,8 @@ def build_preprocess_fingerprint(
         "raw_h5_sha256": file_sha256(raw_h5_path),
         "target_fps": float(target_fps),
         "court_model_path": str(court_model_path),
-        "court_target_time": int(court_target_time),
+        # None => midpoint anchor; keep it distinct from any int in the hash.
+        "court_target_time": ("middle" if court_target_time is None else int(court_target_time)),
     }
 
 

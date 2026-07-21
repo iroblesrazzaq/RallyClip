@@ -1,4 +1,5 @@
-# Frozen train/val/test split for the unified 29-video corpus (2026-07-19).
+# Frozen train/val/test split for the unified 33-video corpus (2026-07-19 base;
+# +3 late: 133663e7 -> test, 59f28ea6 + b7009388 -> train; +1 2026-07-20: f096e860 -> train).
 # Merge/overlay with base.yaml (+ data_container.yaml) when building datasets.
 # Sweep/LOSO pools MUST exclude test videos (pipeline hard-errors on overlap).
 #
@@ -28,6 +29,7 @@ dataset:
       - "2a78f52697780c3f7fd27962a96e730298e9c15fb2167028ec0e094b58f033b9.mp4"   # 0.83h scored
       - "a9051e17933a58a0fb86f4799bea43de0673210ebec63ad04035a170bc4dcdc9.mp4"   # 1.45h service practice
       - "a86df9f2c0ea7de59aff9fec703ca178afd4def34303293a3fa2498480c0a952.mp4"   # 0.42h juniors, feed-heavy
+      - "133663e79e61f2a612dc77c4c8687f3b40142412a77e904e7f4aef6ecdd99bba.mp4"   # 0.48h scored match (added 2026-07-19 late)
     val_videos:
       - "Monica Greene unedited tennis match play_utr7_genF_courtH_OUT_angleHIGH_zoomIN.mp4"
       - "b34d1a7011c50f98bc459ae619ce55a59d8b487e4b4c797e0cf5bc3642ca3f09.mp4"   # 0.59h new_data
@@ -42,3 +44,4 @@ holdout:
     - "2a78f52697780c3f7fd27962a96e730298e9c15fb2167028ec0e094b58f033b9.mp4"
     - "a9051e17933a58a0fb86f4799bea43de0673210ebec63ad04035a170bc4dcdc9.mp4"
     - "a86df9f2c0ea7de59aff9fec703ca178afd4def34303293a3fa2498480c0a952.mp4"
+    - "133663e79e61f2a612dc77c4c8687f3b40142412a77e904e7f4aef6ecdd99bba.mp4"

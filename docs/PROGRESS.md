@@ -7,8 +7,44 @@ _Last updated: 2026-07-19 (session 2: pose contract landed; **YOLO26 reversed �
 _Last updated: 2026-07-19 evening (session 2: v8 pose contract, unified data root,
 corpus extract, frozen split, classic retrain + benchmarks; e2e run in flight)._
 
-Full handoff: `../../CHAT_HANDOFF.md`. Backlog + idea log: `../../TODO.md`.
-Why-log: `docs/DECISIONS.md` (3 entries dated 2026-07-19).
+_Last updated: 2026-07-20 (session 4: added the boundary-heatmap head e2e_heatmap;
+it is the new best model on both new_data and legacy. Session-3 court/loader work below
+is still uncommitted alongside it)._
+
+## Session 4 — boundary-heatmap head (NEW BEST MODEL)
+
+Added `train.head: e2e_heatmap` (twin startness/endness Gaussian heatmaps, BSN
+family) as new files only — no edits to the classic or e2e_seg code paths. Built
+after a critical review of the first plan changed four things: **hybrid decode**
+(pointness-runs define segments, heatmaps refine edges via soft-argmax) as the
+default instead of fragile peak-pair; **balanced-BCE** on the soft Gaussian as the
+default loss (focal opt-in); **peak-NMS + segment-merge** in the decoder; and a
+**val-swept** comparison (not a single default-param eval).
+
+Result (val-swept, same 3 new_data + 3 legacy subsets as the other benches):
+
+| Model | run_id | new_data test | Legacy test |
+|---|---|---|---|
+| classic, NO court | 20260719_165056 | 31.1% | 49.0% |
+| classic, WITH court | 20260720_court_classic | 37.1% | 31.3% |
+| e2e_seg, court | 20260720_court_e2e | 22.9% | 34.0% |
+| **heatmap, court (hybrid)** | **20260720_court_heatmap** | **42.2%** | **46.3%** |
+
+New best on new_data **and** recovers most of the legacy regression — only model strong on
+both at once. FN low (new_data 1.4%, legacy 13.9%): the hybrid decode preserved recall.
+Still overfits early (best epoch 2), bad_seg still ~29% (boundary precision is the
+residual error). New files: `models/heatmap_lstm.py`, `train/heatmap_loss.py`,
+`eval/heatmap_evaluator.py`, `train/heatmap_loop.py`; +tests `tests/test_heatmap_loss.py`
+(11, all pass; full suite 293 pass). Bench: `benchmarks/bench_court_heatmap.py`.
+Next levers: soft-argmax TIME loss term (currently shape-only), σ/focal sweep,
+shorter patience, serve-convention label fix (§3b-ii) before trusting exact numbers.
+
+---
+
+_Session 3 notes (still current — court + loader work, all uncommitted):_
+
+Full handoff: `../../CHAT_HANDOFF.md`. Backlog + idea dump: `../../TODO.md`.
+Why-log: `docs/DECISIONS.md` (session-3 block dated 2026-07-20).
 
 - `main` has published app **v0.5.0**. Inference artifact stays
   `artifact-rallyclip_v0.5.0`.
@@ -19,7 +55,18 @@ Why-log: `docs/DECISIONS.md` (3 entries dated 2026-07-19).
 
 ## Git state
 
-Branch `feat/desktop-auto-update`, clean tree, 4 local commits (NOT pushed):
+Branch `feat/desktop-auto-update`. **9 files modified, UNCOMMITTED** (session-3 work):
+- `src/preprocessing/court_detector_impl.py` — manifest-aware `_load_yolo`; middle-
+  anchored outward-expanding `extract_clean_frame` + helpers (`_detect_person_boxes`,
+  `_boxes_to_mask`, `_quad_iou`, `_homography_to_base`); `process_video(target_time=None)`.
+- `src/preprocessing/data_preprocessor.py` — middle-first `_court_sample_times`; midpoint anchor.
+- `src/training/courts/cache.py` — `target_time` Optional (None=midpoint); multi-anchor retry; loud fail.
+- `src/training/dataset/hdf5_dataset.py` — **in-memory load** (6 GB guard). THE speedup.
+- `src/training/io/fingerprint.py` — `court_target_time` Optional → "middle" in hash.
+- `src/training/pipeline.py` — Optional court_target_time; post-preprocess court-health summary.
+- `src/training/preprocess/preprocessor.py` — Optional court_target_time; loud per-video no-mask warn.
+- `configs/train/base.yaml` — `court.target_time: null`.
+- `configs/train/holdout.yaml` — test set +`133663e7` (7 test videos now).
 
 1. Latest app release is the newest published `v*` tag from `/releases`.
 2. Frozen app downloads to a unique staging file, verifies SHA-256 (sidecar
@@ -47,40 +94,53 @@ features complete: 27/27/27**, no skips, under
 - `cd3f22f` docs: session decisions, progress, repo map updates
 - `2e732a1` train: fix e2e_seg launch (seg_head key, data-derived pos_weight)
 
-## What shipped today
+Prior local commits still unpushed: a6c7e52, 7196b5b, ecfe385, 2e732a1, d52084d.
+**Nothing committed this session** — tests pass (see below); commit when ready.
 
-1. **Pose backend**: YOLO26 evaluated then DITCHED (CoreML fp16 breaks its e2e head,
-   30–180 px; v8-static-CoreML = 90 fps sub-pixel). Manifest backend system in
-   `models/pose/yolov8n/` + `src/extraction/pose_backend.py`; provider cpu|coreml;
-   identity tag `yolov8n-960@4a3fe0de`; extractor torch-free.
-2. **Data**: container-level `../training_data/` with provenance `sources/` tree,
-   flat symlink/annotation interface layers, `norm=1280x720@5fps` contract tag in
-   paths.py. `RallyClip/data` deleted (archived); dup videos removed (md5-checked).
-3. **Corpus**: 29 videos / 25.5 h / 2571 segs fully normalized→extracted (CoreML,
-   ~55–65 fps)→preprocessed→featured. New sessions: a9051e (reclassified match,
-   service practice), 3e5f (unscored split-serve, 121 segs, 45% in-point).
-4. **Frozen split** in `configs/train/holdout.yaml`: test 6 (3 legacy + 3 new_data),
-   val 3 by-video, train 20. new_data test subset = clean v0.3.1 benchmark.
-5. **Dataset** `datasets/20260719_165056` (6615/970/1375 seqs of 100×362).
-6. **Classic retrain** run `20260719_165056` (best ep4, val bal_acc .881, early stop ep9).
-7. **Benchmarks (six-bin, new_data test)**: v0.3.1 12.9% acceptable → classic 28.6% →
-   +swept hysteresis (.6/.45/σ2/2s) 30.0% → +offsets(−.25/−.25) 31.1%. Legacy test
-   37.4→49.0% with offsets. Diagnosis: new_data residual = boundary VARIANCE (bias-correction
-   doesn't move it) → e2e head is the lever. Scripts/outputs in `../training_data/benchmarks/`.
+## What happened this session
 
-## In flight
+1. **Found + fixed a corpus-wide silent failure**: court detection had been failing on
+   ALL videos (manifest handed to ultralytics). All prior training used NO court filter.
+2. **Court detector rewrite** (user spec): midpoint anchor, outward homography expansion
+   with IoU/person stop, multi-anchor retry, loud health reporting. 30/32 videos detect.
+3. **HDF5 loader fix**: gzip chunks (228,7,23) made per-item reads ~470 s/epoch; in-memory
+   load → ~30 s/epoch, bit-identical. Permanent speedup for all training.
+4. **Re-ran the corpus with court filtering** and retrained classic + e2e; benchmarked.
+5. **Added 3 new new_data videos earlier same day** → corpus 32 videos (133663e7→test, 59f28ea6
+   + b7009388→train).
 
-- **e2e_seg training** `runs/20260719_e2e` (dataset symlinked to 20260719_165056),
-  log `../training_data/train_e2e_20260719.log`, selection_metric=acceptable.
-  When done: benchmark with `../training_data/benchmarks/bench_new_sv.py` pattern
-  (swap RUN dir + seg decode) and compare vs classic 31.1% / v0.3.1 12.9%.
+## Results (six-bin acceptable rate, each model val-swept; new_data subset = 3, legacy = 3)
 
-## Next (in rough order)
+| Model | run_id | new_data test | Legacy test |
+|---|---|---|---|
+| v0.3.1 shipped | (bundled) | 12.9% | — |
+| classic, NO court | 20260719_165056 | 31.1% | 49.0% |
+| **classic, WITH court** | **20260720_court_classic** | **37.1%** | 31.3% |
+| e2e, court, patience 5 (best ep2) | 20260720_court_e2e | 22.9% | 34.0% |
+| e2e, court, patience 10 (best ep9) | 20260720_court_e2e_p10 | 19.3% | 10.2% |
 
-1. e2e benchmark + three-way comparison.
-2. Postprocess extras: gap-merge knob in sweep; recall-leaning operating point.
-3. Serve-convention fix experiment (ignore(-1) between-serve gaps in legacy) →
-   rebuild dataset → retrain both heads.
-4. FN>FP asymmetry: pos_weight multiplier / recall-weighted selection_metric.
-5. If e2e boundary variance persists: outside-offset heads (TODO §3c).
-6. Push branch / merge when a shippable artifact exists (bundle manifest v0.4).
+**Best model = classic + court (37.1% new_data).** Court filtering helped the new_data target domain
+(+6) but regressed legacy (−18, FN-driven) — confounded with the train-set change; user
+parked it (masks were legacy-tuned; new_data is the target). e2e underperforms and overfits
+early; longer patience didn't help (run variance > patience effect). Benchmark scripts +
+outputs in `../training_data/benchmarks/` (bench_court_classic.py, sweep_court_classic.py,
+bench_court_e2e.py, bench_court_e2e_p10.py).
+
+## Next (user's call — nothing running)
+
+1. Decide the working model: classic+court is the current best; commit the session's code.
+2. **Serve-convention label fix** (TODO §3b-ii) — poisons boundary supervision for any head.
+3. **Gaussian startness/endness heatmap head** (TODO §3c, user idea 2026-07-20) — soft
+   Gaussian boundary targets + soft-argmax decode; targets the persistent bad_seg failure.
+4. (Parked) legacy court-mask regression — cap far-court masking / isolate court-vs-train.
+5. Push branch / merge when a shippable artifact exists.
+
+## Ops notes
+
+- **Always wrap training in `caffeinate -ims`** — laptop sleep suspends (not kills) the
+  process; stacked restarts clobber the run dir.
+- Run: `cd RallyClip-perf && caffeinate -ims ~/anaconda3/bin/python train.py --config
+  base.yaml,data_container.yaml,holdout.yaml[,<overlay>] --steps <steps>`.
+- Force court recompute after a court change: `court.force: true` (cached npz is keyed by
+  video stem and reused otherwise). Tests: `~/anaconda3/bin/python -m pytest tests/ -q`
+  (282 pass minus heavy GUI/e2e).

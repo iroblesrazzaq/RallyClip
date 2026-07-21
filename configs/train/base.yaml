@@ -50,8 +50,9 @@ preprocess:
   overwrite: false
 
 court:
-  model_path: null
-  target_time: 60
+  model_path: null       # null => reuse the pose model (manifest ok; resolved to ONNX/CPU)
+  target_time: null       # null => anchor at the MIDDLE of the video (retries fan out
+                          # around the midpoint); an int pins a single anchor time
   force: false
 
 features:
@@ -73,7 +74,7 @@ dataset:
   videos: []
 
 train:
-  head: classic  # classic | e2e_seg
+  head: classic  # classic | e2e_seg | e2e_heatmap
   seed: 1337
   batch_size: 8
   train_batch_size: 8
@@ -100,6 +101,25 @@ train:
   boundary_weight: 1.0
   diou_weight: 0.25
   decode_vote: mean
+  # e2e_heatmap knobs (ignored by classic/e2e_seg heads)
+  heatmap_backbone: lstm        # lstm | gru (gru = ~25% fewer recurrent params)
+  heatmap_head: mlp             # mlp | linear
+  heatmap_sigma_seconds: 0.5    # 1σ ≈ good tolerance (0.5s), 2σ ≈ decent (1.5s)
+  heatmap_loss: bce             # bce (balanced) | focal (CenterNet penalty-reduced)
+  heatmap_pos_threshold: 0.1    # bce mode: frames with target>=this get up-weighted
+  heatmap_pos_weight: 20.0      # bce mode: near-boundary up-weight
+  heatmap_focal_alpha: 2.0      # focal mode
+  heatmap_focal_beta: 4.0       # focal mode
+  heatmap_cls_weight: 1.0
+  heatmap_start_weight: 1.0
+  heatmap_end_weight: 1.0
+  heatmap_decode_mode: hybrid   # hybrid (pointness-run + heatmap refine) | peakpair
+  heatmap_peak_threshold: 0.3   # peakpair mode: start/end peak threshold
+  heatmap_decode_window_frames: null  # null => 2*sigma_frames (soft-argmax refine window)
+  heatmap_nms_frames: null            # null => ceil(sigma_frames) (peak min-separation)
+  heatmap_min_duration_sec: 0.3
+  heatmap_max_duration_sec: 60.0
+  heatmap_pointness_gate: null  # peakpair mode; null disables
   segment_eval:
     low: 0.45
     high: 0.8

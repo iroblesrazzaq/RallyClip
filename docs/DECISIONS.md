@@ -317,3 +317,86 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   canonical first; old annotations+runs archived in
   sources/legacy_youtube/legacy_rallyclip_data_archive.tar.gz). Old-model
   benchmarking uses the bundled models/rallyclip_v0.3.1 artifact.
+
+## 2026-07-20 (session 3 — court fix, loader fix, court-vs-no-court results)
+
+- **Court detection was silently failing corpus-wide** and nobody noticed: base.yaml
+  points `yolo.model` at a manifest.json, `court.model_path: null` falls back to it,
+  and `_load_yolo` handed the manifest to ultralytics `YOLO()` → "not a supported
+  model format", caught → default/no mask. All 29→32 videos had been preprocessed
+  with NO court filtering. **Fix:** `_load_yolo` now resolves a manifest/dir via
+  `load_pose_backend(provider="cpu")` to the sha-verified ONNX on the CPU EP (court
+  touches only a few frames; dynamic-CPU is faithful and avoids the static-letterbox
+  concern). After fix: 30/32 detect; `abe49d12`, `e9a093a8` (both TRAIN videos) fail
+  all anchors → preprocessed without a mask, flagged loudly.
+- **Clean-frame extraction is now MIDDLE-anchored, outward-expanding** (user request).
+  Anchor at video midpoint (not 60 s), mask occluding players, walk outward in ~10 s
+  hops each way repainting still-occluded px from homography-aligned neighbours that
+  have nobody over the same spot; stop a side when quad-IoU(neighbour→base) < 0.6
+  (camera cut / pan-zoom) or video ends; stop entirely once no occluded px remain.
+  `court.target_time: null` = midpoint (threaded Optional through pipeline →
+  PreprocessConfig → fingerprint as "middle"); `CourtMaskCache` retries anchors
+  0.5/0.4/0.6/0.3/0.7 of duration; preprocess prints a court-health summary.
+  Inference path (`data_preprocessor`) made middle-first too.
+- **HDF5 dataset loader now loads to RAM once** (`Hdf5SequenceDataset`, 6 GB guard).
+  The dataset build writes features gzip-compressed with chunks (228,7,23) spanning
+  228 sequences, so per-item DataLoader reads decompressed hugely-overlapping data:
+  measured **~470 s/epoch** just in loading (800 random reads = 51.8 s) vs **2.35 s**
+  to bulk-load the whole 1 GB array. In-memory index → epochs 8 min → ~30 s, bit-
+  identical (verified). Root cause is the chunking; the in-mem load is the pragmatic
+  fix (rechunking the build to (1,100,362) would fix the lazy path too — deferred).
+- **Court filtering helps new_data, regresses legacy** (six-bin acceptable, each val-swept):
+  classic no-court 31.1% new_data / 49.0% legacy → classic+court **37.1% new_data** / 31.3% legacy.
+  Legacy loss is FN-driven. CONFOUNDED (court filtering AND +3 videos/retrain changed
+  together); user notes the masks were legacy-tuned so the drop is likely training-mix
+  + the middle-out frame shift, not mask over-aggression (Aditi masks more of frame
+  than 9/5/15 yet scores fine). **Left unresolved per user** — new_data is the target domain,
+  so this is a net win for the goal. Not committed to fixing the masks.
+- **e2e head underperforms classic and overfits early; longer patience doesn't help.**
+  e2e+court patience-5 (best ep2) 22.9% new_data / 34.0% legacy; patience-10 (best ep9,
+  user-requested to avoid "cutting off too soon") 19.3% / 10.2% — WORSE. Val loss
+  bottoms ~ep5 then climbs; the two runs differ mostly by MPS nondeterminism
+  (best-val 13.7% vs 9.1%), which swamps the patience effect. Conclusion: the
+  boundary-REGRESSION formulation is the ceiling (bad_seg still ~50%), not epoch
+  count → motivates the Gaussian startness/endness heatmap head (TODO §3c).
+- **Laptop sleep suspends training** (not kills): a run "died" 3× because macOS slept
+  and suspended the python process; on wake, restarts stacked into 4 concurrent
+  train.py clobbering the same run dir. Fix: wrap training in `caffeinate -ims`.
+
+## 2026-07-20 (session 4) — Boundary-heatmap head (e2e_heatmap) beats classic+court on both domains
+
+- **What:** added a third training head `train.head: e2e_heatmap` — twin per-frame
+  startness/endness Gaussian heatmaps (BSN family) alongside the retained pointness
+  head. New files only (no edits to seg_lstm/seg_loss/seg_loop/seg_evaluator):
+  `models/heatmap_lstm.py` (TennisPointHeatmapLSTM, same BiLSTM backbone, 3 logits),
+  `train/heatmap_loss.py` (E2EHeatmapLoss; soft Gaussian target from binary labels
+  via `boundary_markers`+`_dist_to_nearest`, nearest-boundary == union-of-Gaussians),
+  `eval/heatmap_evaluator.py`, `train/heatmap_loop.py`. Additive branches in
+  pipeline.py `_run_train`/`_run_eval` + a knobs block in base.yaml. Reused
+  `gt_segments_from_targets`, `compute_six_bin`, `_default_pos_weight`, the CPU-eval
+  and verified-checkpoint patterns.
+- **Result (val-swept, same 3 new_data + 3 legacy subsets as prior benches):**
+  heatmap+court = **42.2% new_data / 46.3% legacy** — new best on new_data (vs classic+court
+  37.1%) AND recovers most of the legacy regression (vs 31.3%). Only model strong on
+  both domains at once. FN low (new_data 1.4%, legacy 13.9%) — recall preserved.
+- **Why these choices (from a critical review of the first plan):**
+  - **Hybrid decode, not pure peak-pair.** Pointness runs define segments (one per
+    detected point → recall can't be lost to a missed boundary peak); start/end
+    heatmaps only *refine* each edge via soft-argmax. The sweep picked hybrid over
+    peakpair, confirming it. Pure peak-pick+greedy-pair was too fragile (a point
+    needs both peaks AND a valid pairing — three conjunctive failure points, exactly
+    the FN problem that sank e2e_seg). peakpair kept selectable for comparison.
+  - **Balanced-BCE on the soft Gaussian as default**, CenterNet penalty-reduced
+    focal as opt-in (`heatmap_loss: bce|focal`). BCE is simpler/harder to misconfig;
+    focal has more knobs. Both implemented + tested.
+  - Peak-NMS + final overlap-merge in the decoder (the first plan omitted both →
+    would emit duplicate/overlapping phantom segments from jittered adjacent peaks).
+- **Rejected / deferred:** soft-argmax *time* loss term (model is trained on heatmap
+  SHAPE only, never directly on boundary-time error — obvious next lever for the
+  still-~29% bad_seg); σ / focal hyperparameter sweep; production src/infer/ path
+  (e2e_seg lacks it too). serve-convention label fix (TODO §3b-ii) still poisons
+  boundary supervision for THIS head too — worth doing before trusting exact numbers.
+- **Caveat:** single MPS-nondeterministic run, best epoch = 2 (overfits early like
+  e2e_seg; patience-10 again burned 10 idle epochs). Ordering is clear + large but
+  wants a couple of seeds before the exact numbers are final. Run:
+  `runs/20260720_court_heatmap`; bench: `benchmarks/bench_court_heatmap.py`.
