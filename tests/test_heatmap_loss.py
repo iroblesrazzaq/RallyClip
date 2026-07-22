@@ -21,6 +21,7 @@ from training.train.heatmap_loss import (
     boundary_markers,
     build_heatmap_targets,
     gaussian_target,
+    soft_argmax_time_loss,
 )
 
 FPS = 5.0
@@ -100,7 +101,7 @@ def test_loss_runs_and_is_finite():
     e = torch.randn(2, 30)
     total, comps = loss_fn(p, s, e, targets)
     assert torch.isfinite(total)
-    assert set(comps) == {"loss_cls", "loss_start", "loss_end"}
+    assert set(comps) == {"loss_cls", "loss_start", "loss_end", "loss_time_start", "loss_time_end"}
     assert all(np.isfinite(v) for v in comps.values())
 
 
@@ -124,6 +125,58 @@ def test_loss_lower_for_correct_predictions(mode):
     bad = torch.zeros(1, 40)
     bad_total, _ = loss_fn(bad, bad.clone(), bad.clone(), targets)
     assert good.item() < bad_total.item()
+
+
+# ---- soft-argmax time loss --------------------------------------------------
+
+def test_time_loss_zero_when_peak_on_boundary():
+    # sharp startness peak exactly on the true boundary frame -> ~0 time loss
+    T = 20
+    logits = torch.full((1, T), -5.0)
+    logits[0, 8] = 10.0
+    marker = torch.zeros(1, T, dtype=torch.bool)
+    marker[0, 8] = True
+    loss = soft_argmax_time_loss(logits, marker, fps=FPS, window_frames=5)
+    assert loss.item() < 1e-3
+
+
+def test_time_loss_grows_and_gradient_pulls_peak_to_boundary():
+    T = 20
+    true = 8
+    marker = torch.zeros(1, T, dtype=torch.bool)
+    marker[0, true] = True
+    # soft peak placed 2 frames late -> nonzero loss (gentle logits so the
+    # soft-argmax gradient isn't saturated to ~0 by a one-hot softmax)
+    off = torch.zeros(1, T)
+    off[0, true + 2] = 2.0
+    loss_off = soft_argmax_time_loss(off, marker, fps=FPS, window_frames=5)
+    assert loss_off.item() > 0.01
+    # a gradient step on the logits should reduce the time loss
+    logits = off.clone().requires_grad_(True)
+    l = soft_argmax_time_loss(logits, marker, fps=FPS, window_frames=5)
+    l.backward()
+    stepped = (logits - 5.0 * logits.grad).detach()
+    l2 = soft_argmax_time_loss(stepped, marker, fps=FPS, window_frames=5)
+    assert l2.item() < loss_off.item()
+
+
+def test_time_loss_flat_window_is_centered():
+    # uniform logits over a window symmetric about the boundary -> soft-argmax == boundary
+    T = 21
+    logits = torch.zeros(1, T)
+    marker = torch.zeros(1, T, dtype=torch.bool)
+    marker[0, 10] = True
+    loss = soft_argmax_time_loss(logits, marker, fps=FPS, window_frames=5)
+    assert loss.item() < 1e-6
+
+
+def test_time_weight_adds_to_total():
+    targets = torch.zeros(1, 30)
+    targets[0, 8:20] = 1.0
+    p = torch.randn(1, 30); s = torch.randn(1, 30); e = torch.randn(1, 30)
+    base = E2EHeatmapLoss(HeatmapLossConfig(fps=FPS, time_weight=0.0))(p, s, e, targets)[0]
+    witht = E2EHeatmapLoss(HeatmapLossConfig(fps=FPS, time_weight=1.0))(p, s, e, targets)[0]
+    assert not torch.isclose(base, witht)  # time term changes the total when enabled
 
 
 # ---- decode -----------------------------------------------------------------

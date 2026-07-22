@@ -800,8 +800,11 @@ def _run_eval(config: Dict[str, Any]) -> None:
         backbone = str(train_cfg.get("heatmap_backbone", "lstm"))
         weight = state.get("gru.weight_ih_l0", state.get("lstm.weight_ih_l0"))
         input_size = int(weight.shape[1]) if weight is not None else 0
+        # weight_ih_l0 rows = gates*hidden (LSTM=4, GRU=3) -> recover hidden_size.
+        gates = 3 if backbone.lower() == "gru" else 4
+        hidden_size = int(weight.shape[0] // gates) if weight is not None else 128
         model = build_heatmap_model(
-            backbone, input_size, str(train_cfg.get("heatmap_head", "mlp"))
+            backbone, input_size, str(train_cfg.get("heatmap_head", "mlp")), hidden_size
         )
         model.load_state_dict(state)
         fps = float(preprocess_cfg.get("target_fps", 5))
@@ -818,6 +821,10 @@ def _run_eval(config: Dict[str, Any]) -> None:
             heatmap_pos_weight=float(train_cfg.get("heatmap_pos_weight", 20.0)),
             focal_alpha=float(train_cfg.get("heatmap_focal_alpha", 2.0)),
             focal_beta=float(train_cfg.get("heatmap_focal_beta", 4.0)),
+            time_weight=float(train_cfg.get("heatmap_time_weight", 0.0)),
+            time_window_frames=(None if train_cfg.get("heatmap_time_window_frames") is None
+                                else int(train_cfg["heatmap_time_window_frames"])),
+            time_temperature=float(train_cfg.get("heatmap_time_temperature", 1.0)),
         )
 
         def _opt(key):

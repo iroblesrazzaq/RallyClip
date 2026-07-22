@@ -400,3 +400,47 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   e2e_seg; patience-10 again burned 10 idle epochs). Ordering is clear + large but
   wants a couple of seeds before the exact numbers are final. Run:
   `runs/20260720_court_heatmap`; bench: `benchmarks/bench_court_heatmap.py`.
+
+## 2026-07-21 (session 5) — Optimization-side levers all neutral-or-worse; +4 videos (corpus 37)
+
+Batch of experiments on the leading heatmap head. **Meta-finding: every
+optimization-side knob came back neutral or worse — the boundary/quality ceiling is
+data/labels/metric, not optimization.** Do not re-run these:
+
+- **Capacity is not a quality lever (3 confirmations).** GRU backbone (−24% params):
+  underperforms LSTM (new_data 39.6 vs 42.2, legacy worse), and MPS has no fused GRU kernel
+  (10x slower → train GRU on CPU, which is also deterministic). Hidden-size sweep
+  (heatmap, matched decode): @128 42.2/48.3, @64 44.4/43.5, @32 41.1/40.1 — new_data flat
+  across 85% param reduction, legacy declines gently, bad_seg never improves.
+  **@64 is a free deployment win** (best new_data, 64% fewer params) but shrinking doesn't
+  fix the early-overfit. Classic hidden-sweep inconclusive (postproc-operating-point
+  confounded). GRU/backbone + hidden_size are config-switchable (heatmap_backbone,
+  hidden_size); default lstm/128.
+- **Soft-argmax time loss: NEGATIVE, shelved (opt-in, default off).** Added
+  `heatmap_time_weight` — collapse each boundary's heatmap to a predicted time via
+  soft-argmax, penalize squared time error (Gaussian NLL). It works on TRAIN (halved
+  train time-error) but HURTS test monotonically: λ=1 new_data 42→36, λ=10 new_data 42→26 (good
+  share collapsed 8.7→1.4%). Two reasons: (1) it optimizes the softmax MEAN while the
+  hybrid decode reads the PEAK — moving the mean skews the bump and corrupts the peak;
+  (2) boundary error is a generalization gap, not a train-fit gap. Kept in code
+  (`heatmap_time_weight: 0.0`) for reproducibility; not shipped.
+- **LR finder + cosine schedule: built, NEGATIVE for tuning.** New `lr_finder.py`
+  (Smith/fastai LR range test: per-batch exp ramp, smoothed TRAIN loss, suggest
+  min-loss-LR/10) + cosine scheduler (`lr_schedule: none|cosine`). Finder @128
+  suggested 1.45e-3 ≈ current 1e-3 (validated the default). Cosine @128 (peak 1.45e-3):
+  new_data 42→37, best ep1 (higher peak overfit faster). @64 finder suggested 6.28e-3 (flat
+  min basin) → cosine @64 COLLAPSED (new_data 44→20). **Caveat: min/10 is unreliable when the
+  finder curve has a flat minimum — it overshoots; use the steepest-descent elbow.**
+  Cosine can't help when the model best-epochs at ep1-3 (LR hasn't decayed yet).
+  Infra kept (default lr_schedule=none); not a lever here.
+- **+4 new_data videos → corpus 37** (2026-07-21): 46cd→val (23min, shortest), 729→test
+  (41min), f5f5+1e9d→train (42/76min, 2 longest). Split by duration (user). Court
+  detection FAILED on 729 (angled) + 46cd → 5/37 maskless; 1e9d passed despite angle.
+  Dataset `datasets/20260721_v37` (train25/val4/test8). Retrained the two leaders on
+  it: heatmap@64 41.1 new_data / 47.6 leg (orig 3+3), classic@128 29.6/21.8; new 729 test
+  video heatmap 35.7% vs classic 26.8%. Adding 2 train videos was within-noise neutral
+  on the stable subset — data-quality-limited, not quantity-limited. heatmap@64 still
+  leads. Runs: `20260721_heatmap64_v37`, `20260721_classic128_v37`.
+
+**Next (not optimization): serve-convention label fix (§3b-ii) + absolute-time metric
+(§3b-iii).** All the above dead ends point there.

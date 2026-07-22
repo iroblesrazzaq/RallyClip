@@ -29,13 +29,13 @@ from training.train.heatmap_loss import E2EHeatmapLoss, HeatmapLossConfig
 logger = logging.getLogger(__name__)
 
 
-def build_heatmap_model(backbone: str, input_size: int, head: str) -> torch.nn.Module:
+def build_heatmap_model(backbone: str, input_size: int, head: str, hidden_size: int = 128) -> torch.nn.Module:
     """Backbone selector for the heatmap head. lstm (default) | gru."""
     b = str(backbone).lower()
     if b == "lstm":
-        return TennisPointHeatmapLSTM(input_size=input_size, head=head)
+        return TennisPointHeatmapLSTM(input_size=input_size, hidden_size=hidden_size, head=head)
     if b == "gru":
-        return TennisPointHeatmapGRU(input_size=input_size, head=head)
+        return TennisPointHeatmapGRU(input_size=input_size, hidden_size=hidden_size, head=head)
     raise ValueError(f"Unknown heatmap_backbone: {backbone!r} (expected lstm | gru)")
 
 
@@ -65,7 +65,8 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
     device = _resolve_device(config.get("device"))
     head = str(config.get("heatmap_head", "mlp"))
     backbone = str(config.get("heatmap_backbone", "lstm"))
-    model = build_heatmap_model(backbone, train_ds.feature_dim, head).to(device)
+    hidden_size = int(config.get("hidden_size", 128))
+    model = build_heatmap_model(backbone, train_ds.feature_dim, head, hidden_size).to(device)
 
     if config.get("pos_weight") is None:
         from training.train.loop import _default_pos_weight
@@ -89,12 +90,27 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
         heatmap_pos_weight=float(config.get("heatmap_pos_weight", 20.0)),
         focal_alpha=float(config.get("heatmap_focal_alpha", 2.0)),
         focal_beta=float(config.get("heatmap_focal_beta", 4.0)),
+        time_weight=float(config.get("heatmap_time_weight", 0.0)),
+        time_window_frames=_opt_int(config, "heatmap_time_window_frames"),
+        time_temperature=float(config.get("heatmap_time_temperature", 1.0)),
     )
     criterion = E2EHeatmapLoss(loss_cfg).to(device)
     criterion_cpu = E2EHeatmapLoss(loss_cfg)  # for CPU-side artifact eval (see eval block)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=config.get("lr", 1e-3), weight_decay=config.get("weight_decay", 0.01)
     )
+    # Optional single-cycle cosine decay from the configured peak lr -> eta_min over
+    # all epochs (no warm restarts: with few epochs, cycling buys nothing). Stepped
+    # once per epoch. lr_schedule=none keeps the constant-lr behavior.
+    total_epochs = int(config.get("epochs", 30))
+    lr_schedule = str(config.get("lr_schedule", "none")).lower()
+    scheduler = None
+    if lr_schedule == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=total_epochs, eta_min=float(config.get("lr_eta_min", 0.0))
+        )
+    elif lr_schedule != "none":
+        raise ValueError(f"Unknown lr_schedule: {lr_schedule!r} (expected none | cosine)")
 
     batch_size = int(config.get("batch_size", 32))
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0)
@@ -134,7 +150,8 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
     for epoch in range(1, int(config.get("epochs", 30)) + 1):
         epoch_started = time.time()
         model.train()
-        running = {"loss": 0.0, "loss_cls": 0.0, "loss_start": 0.0, "loss_end": 0.0}
+        running = {"loss": 0.0, "loss_cls": 0.0, "loss_start": 0.0, "loss_end": 0.0,
+                   "loss_time_start": 0.0, "loss_time_end": 0.0}
         batches = 0
         for features, targets in train_loader:
             features = features.to(device)
@@ -156,7 +173,7 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
         # live model coexists in-process (documented at length in seg_loop.py). CPU
         # eval of the reloaded weights is exactly what ships.
         cpu_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-        eval_model = build_heatmap_model(backbone, train_ds.feature_dim, head)
+        eval_model = build_heatmap_model(backbone, train_ds.feature_dim, head, hidden_size)
         eval_model.load_state_dict(cpu_state)
         eval_model.eval()
         val_metrics, val_loss = evaluate_heatmap_model(
@@ -166,6 +183,7 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
 
         log_row = {
             "epoch": epoch,
+            "lr": float(optimizer.param_groups[0]["lr"]),
             **train_means,
             "val_loss": val_loss,
             **val_metrics,
@@ -207,6 +225,9 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
         if config.get("save_every_n") and epoch % int(config["save_every_n"]) == 0:
             _save_checkpoint(run_dir / "checkpoints" / f"epoch_{epoch}.pth", model, optimizer, epoch, log_row)
 
+        if scheduler is not None:
+            scheduler.step()
+
         if early_stopping_patience and epochs_without_improvement >= early_stopping_patience:
             logger.info(
                 "Early stopping at epoch %d (no %s improvement for %d epochs)",
@@ -228,6 +249,7 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
         total_seconds=time.time() - started_at,
         feature_dim=train_ds.feature_dim,
         backbone=backbone,
+        hidden_size=hidden_size,
     )
 
 
@@ -244,6 +266,7 @@ def write_run_manifest(
     total_seconds: float,
     feature_dim: int,
     backbone: str = "lstm",
+    hidden_size: int = 128,
 ) -> Path:
     dataset_manifest: Dict[str, Any] = {}
     manifest_path = dataset_dir / "dataset_manifest.json"
@@ -269,7 +292,7 @@ def write_run_manifest(
         "model": {
             "architecture": "TennisPointHeatmapGRU" if str(backbone).lower() == "gru" else "TennisPointHeatmapLSTM",
             "backbone": str(backbone).lower(),
-            "hidden_size": 128,
+            "hidden_size": hidden_size,
             "num_layers": 2,
             "bidirectional": True,
             "dropout": 0.2,

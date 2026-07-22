@@ -83,6 +83,8 @@ train:
   num_workers: 0
   epochs: 30
   lr: 0.001
+  lr_schedule: none    # none | cosine (single-cycle decay to lr_eta_min over epochs; heatmap head)
+  lr_eta_min: 0.0
   weight_decay: 0.01
   pos_weight: null  # null => derive from train positive rate
   device: mps
@@ -113,6 +115,9 @@ train:
   heatmap_cls_weight: 1.0
   heatmap_start_weight: 1.0
   heatmap_end_weight: 1.0
+  heatmap_time_weight: 0.0       # soft-argmax time loss (abs-seconds boundary error); 0 = off
+  heatmap_time_window_frames: null  # null => round(2*sigma_frames)
+  heatmap_time_temperature: 1.0
   heatmap_decode_mode: hybrid   # hybrid (pointness-run + heatmap refine) | peakpair
   heatmap_peak_threshold: 0.3   # peakpair mode: start/end peak threshold
   heatmap_decode_window_frames: null  # null => 2*sigma_frames (soft-argmax refine window)
