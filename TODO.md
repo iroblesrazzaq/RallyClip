@@ -156,7 +156,6 @@ Not included in the first Mac release:
 
 
 - test automating data collection with model self-dataset generation
-- SwingVision data generation: csv vs video matching from cut and whole video for csv generation?
 
 
 - improve postprocessing: train another model with IOU?
