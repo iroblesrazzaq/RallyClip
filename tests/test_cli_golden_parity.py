@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "golden_cli"
 CLIP = FIXTURE_DIR / "clip.mp4"
 GOLDEN_CSV = FIXTURE_DIR / "golden_segments.csv"
-ARTIFACT_DIR = REPO_ROOT / "models" / "rallyclip_v0.3.1"
+ARTIFACT_DIR = REPO_ROOT / "models" / "rallyclip_v0.4.0"
 
 pytestmark = pytest.mark.skipif(
     not (ARTIFACT_DIR / "model.onnx").is_file(),
