@@ -12,14 +12,16 @@ Fresh setup (if you need your own env):
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev,desktop]"        # core + pytest + pywebview; add [train] for torch/ultralytics
+pip install -e ".[dev,desktop]"        # core + pytest + pywebview + CPU onnxruntime; add [train] for torch/ultralytics
 pip install -e ".[e2e-ui]" && playwright install chromium   # browser e2e only
 pip install -e ".[pack]"               # PyInstaller packaging only
 ```
 
+Desktop-only Mac/CPU (no pytest): `pip install -e ".[desktop,cpu]"`.
+
 ### NVIDIA CUDA (Windows / Linux)
 
-Default install uses CPU `onnxruntime`. For CUDA pose (and LSTM when the EP is present), install the optional GPU extra — and uninstall the CPU wheel first so both packages are never present together (Python imports the CPU build first):
+`[cpu]` and `[gpu]` are mutually exclusive (`onnxruntime` vs `onnxruntime-gpu` — same import name; the CPU wheel wins if both are present). Uninstall both, then install **only** `[desktop,gpu]` (do not add `[cpu]` or `[dev]`, which pull the CPU wheel):
 
 ```bash
 pip uninstall -y onnxruntime onnxruntime-gpu
@@ -32,7 +34,7 @@ Verify:
 python -c "import onnxruntime as ort; print(ort.get_available_providers())"
 ```
 
-You should see `CUDAExecutionProvider`. Match `onnxruntime-gpu` to your installed CUDA toolkit/driver (mismatched versions drop the CUDA EP or fail session init). Mac packaging stays on CPU/CoreML `onnxruntime` — do not use `[gpu]` there.
+You should see `CUDAExecutionProvider`. Match `onnxruntime-gpu` to your installed CUDA toolkit/driver (mismatched versions drop the CUDA EP or fail session init). Mac packaging stays on `[desktop,cpu]` / CoreML — do not use `[gpu]` there.
 
 From a checkout without editable install, prefix commands with `PYTHONPATH=src:tests`.
 

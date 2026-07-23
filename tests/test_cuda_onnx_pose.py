@@ -6,6 +6,7 @@ No NVIDIA hardware required: cuda_pose_available and OnnxYOLO are mocked.
 from __future__ import annotations
 
 import shutil
+import types
 from pathlib import Path
 
 import pytest
@@ -96,3 +97,34 @@ def test_pose_extractor_cuda_passes_providers_to_runner(tmp_path, monkeypatch):
     assert extractor.batch_size == 8
     assert captured["providers"] == ["CUDAExecutionProvider", "CPUExecutionProvider"]
     assert Path(captured["model_path"]).name == DYNAMIC_ONNX.name
+
+
+def test_pose_extractor_pt_cuda_degrades_without_torch_cuda(tmp_path, monkeypatch):
+    """Explicit cuda + .pt with no torch CUDA must land on cpu (batch=1)."""
+    import runtime.device as device_mod
+
+    monkeypatch.setattr(device_mod, "torch_cuda_available", lambda: False)
+    pt_path = tmp_path / "yolov8n-pose.pt"
+    pt_path.write_bytes(b"fake")
+
+    class FakeUltraYOLO:
+        def __init__(self, path):
+            self.path = path
+
+        def to(self, device):
+            raise RuntimeError(f"no CUDA for {device}")
+
+    fake_ultra = types.ModuleType("ultralytics")
+    fake_ultra.YOLO = FakeUltraYOLO
+    fake_utils = types.ModuleType("ultralytics.utils")
+    fake_utils.SETTINGS = {}
+    monkeypatch.setitem(__import__("sys").modules, "ultralytics", fake_ultra)
+    monkeypatch.setitem(__import__("sys").modules, "ultralytics.utils", fake_utils)
+
+    extractor = PoseExtractor(
+        model_dir=str(tmp_path),
+        model_path=pt_path.name,
+        device="cuda",
+    )
+    assert extractor.device == "cpu"
+    assert extractor.batch_size == 1

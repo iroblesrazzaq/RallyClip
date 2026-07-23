@@ -97,6 +97,17 @@ class PoseExtractor:
                 # CoreML rides the ONNX runner; ultralytics .pt weights can't use it.
                 logging.warning("POSE: coreml requires ONNX weights; using cpu for %s.", yolo_arg)
                 self.device = "cpu"
+            elif self.device == "cuda":
+                from runtime.device import torch_cuda_available
+
+                # ORT CUDA must not drive Ultralytics — needs a real torch CUDA build.
+                if not torch_cuda_available():
+                    logging.warning(
+                        "POSE: cuda requested for .pt weights but torch CUDA is "
+                        "unavailable; using cpu for %s.",
+                        yolo_arg,
+                    )
+                    self.device = "cpu"
             from ultralytics import YOLO
             from ultralytics.utils import SETTINGS
 
@@ -109,8 +120,18 @@ class PoseExtractor:
             self.model = YOLO(yolo_arg)
             try:
                 self.model.to(self.device)
-            except Exception:
-                pass
+            except Exception as exc:
+                if self.device != "cpu":
+                    logging.warning(
+                        "POSE: model.to(%s) failed (%s); using cpu.",
+                        self.device,
+                        exc,
+                    )
+                    self.device = "cpu"
+                    try:
+                        self.model.to("cpu")
+                    except Exception:
+                        pass
         if self.device != requested_device and not batch_from_env:
             # CUDA (batch=8) / other accelerated picks must not keep a large
             # batch after falling back to the CPU path (per-frame streaming).

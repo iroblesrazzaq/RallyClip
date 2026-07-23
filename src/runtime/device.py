@@ -45,9 +45,10 @@ def coreml_pose_available() -> bool:
 def cuda_pose_available() -> bool:
     """CUDA EP usable for pose/LSTM: onnxruntime built with CUDAExecutionProvider.
 
-    Stock installs ship CPU `onnxruntime`; NVIDIA users need the optional
-    `[gpu]` extra (`onnxruntime-gpu`). Detects the EP independently of torch so
-    the torch-free runtime can still auto-pick CUDA.
+    Stock installs ship CPU `onnxruntime` via the `[cpu]` / `[dev]` extras;
+    NVIDIA users need `[gpu]` (`onnxruntime-gpu`) instead — never both.
+    Detects the EP independently of torch so the torch-free runtime can still
+    auto-pick CUDA for ONNX weights.
     """
     try:
         import onnxruntime as ort  # noqa: WPS433 — optional at import time
@@ -56,20 +57,27 @@ def cuda_pose_available() -> bool:
     return "CUDAExecutionProvider" in ort.get_available_providers()
 
 
+def torch_cuda_available() -> bool:
+    """True when torch is installed and reports a usable CUDA device."""
+    if not _torch_available():
+        return False
+    import torch
+
+    return bool(torch.cuda.is_available())
+
+
 def detect_available_devices() -> list[DeviceName]:
     """Return acceleration backends available on this machine, in priority order."""
     available: list[DeviceName] = []
     has_torch = _torch_available()
-    torch_cuda = False
     mps_available = False
     if has_torch:
         import torch
 
-        torch_cuda = bool(torch.cuda.is_available())
         mps_available = bool(
             getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
         )
-    if cuda_pose_available() or torch_cuda:
+    if cuda_pose_available() or torch_cuda_available():
         available.append("cuda")
     if coreml_pose_available():
         available.append("coreml")
@@ -120,6 +128,23 @@ def prefer_cpu_over_mps_for_pose(device: DeviceName, model_path: str, *, warn: b
     return device
 
 
+def prefer_cpu_over_ort_cuda_for_pt(
+    device: DeviceName, model_path: str, *, warn: bool = True
+) -> DeviceName:
+    """ORT-only CUDA must not auto-drive Ultralytics `.pt` weights (needs torch CUDA)."""
+    if device != "cuda" or not str(model_path).lower().endswith(".pt"):
+        return device
+    if torch_cuda_available():
+        return device
+    if warn:
+        logging.warning(
+            "POSE: defaulting to cpu for .pt weights — CUDA came from onnxruntime "
+            "only; Ultralytics needs torch CUDA. Use ONNX weights or install a "
+            "CUDA-enabled torch build."
+        )
+    return "cpu"
+
+
 def apply_pose_device(
     explicit: Optional[str] = None,
     *,
@@ -133,6 +158,7 @@ def apply_pose_device(
     device = resolve_pose_device(explicit, read_env=use_env)
     if not user_explicit:
         device = prefer_cpu_over_mps_for_pose(device, model_path)
+        device = prefer_cpu_over_ort_cuda_for_pt(device, model_path)
     if set_env:
         os.environ["POSE_DEVICE"] = device
     return device

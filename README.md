@@ -76,16 +76,16 @@ These aren't necessarily features per se, but things I want to try implementing 
 ```bash
 git clone https://github.com/iroblesrazzaq/RallyClip.git
 cd RallyClip
-pip install .
+pip install ".[cpu]"
 ```
 
 ### Desktop app
 ```bash
-pip install ".[desktop]"
+pip install ".[desktop,cpu]"   # Mac / CPU-only; use ".[desktop,gpu]" on NVIDIA (see docs/ENVIRONMENT.md)
 rallyclip-desktop
 ```
 
-The desktop app bundles the local Flask backend in a native window. Device selection defaults to **Auto** (`CUDA > CoreML > MPS > CPU`) and can be overridden in Advanced settings. CUDA for the torch-free ONNX pose path needs the optional `[gpu]` extra (`onnxruntime-gpu`); see `docs/ENVIRONMENT.md`.
+The desktop app bundles the local Flask backend in a native window. Device selection defaults to **Auto** (`CUDA > CoreML > MPS > CPU`) and can be overridden in Advanced settings. CUDA for the torch-free ONNX pose path needs the optional `[gpu]` extra (`onnxruntime-gpu`); never combine `[cpu]` and `[gpu]` — see `docs/ENVIRONMENT.md`.
 
 ### Browser GUI (development)
 ```bash
@@ -174,7 +174,7 @@ notarization, stapling, DMG creation, and release upload.
 
 To cut a release locally:
 ```bash
-pip install ".[desktop,pack]"
+pip install ".[desktop,pack,cpu]"
 pyinstaller --noconfirm RallyClip.spec
 ```
 

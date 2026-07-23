@@ -184,3 +184,40 @@ def test_cuda_pose_available_reads_ort_providers(monkeypatch):
     )
     monkeypatch.setitem(__import__("sys").modules, "onnxruntime", fake_ort_cpu)
     assert device_mod.cuda_pose_available() is False
+
+
+def test_apply_pose_device_auto_pt_demotes_ort_only_cuda(monkeypatch):
+    """Auto + .pt must not keep CUDA when only ORT exposes the EP (no torch CUDA)."""
+    import os
+
+    import runtime.device as device_mod
+
+    monkeypatch.setattr(device_mod, "coreml_pose_available", lambda: False)
+    monkeypatch.setattr(device_mod, "cuda_pose_available", lambda: True)
+    monkeypatch.setattr(device_mod, "torch_cuda_available", lambda: False)
+    monkeypatch.setattr(device_mod, "_torch_available", lambda: False)
+    monkeypatch.delenv("POSE_DEVICE", raising=False)
+
+    device = device_mod.apply_pose_device(None, model_path="yolov8n-pose.pt")
+    assert device == "cpu"
+    assert os.environ["POSE_DEVICE"] == "cpu"
+
+
+def test_apply_pose_device_explicit_cuda_kept_for_pt_resolver(monkeypatch):
+    """Explicit cuda is still returned from apply; PoseExtractor degrades at load."""
+    import runtime.device as device_mod
+
+    monkeypatch.setattr(device_mod, "torch_cuda_available", lambda: False)
+    monkeypatch.delenv("POSE_DEVICE", raising=False)
+    assert device_mod.apply_pose_device("cuda", model_path="yolov8n-pose.pt") == "cuda"
+
+
+def test_apply_pose_device_auto_onnx_keeps_ort_cuda(monkeypatch):
+    import runtime.device as device_mod
+
+    monkeypatch.setattr(device_mod, "coreml_pose_available", lambda: False)
+    monkeypatch.setattr(device_mod, "cuda_pose_available", lambda: True)
+    monkeypatch.setattr(device_mod, "torch_cuda_available", lambda: False)
+    monkeypatch.setattr(device_mod, "_torch_available", lambda: False)
+    monkeypatch.delenv("POSE_DEVICE", raising=False)
+    assert device_mod.apply_pose_device(None, model_path="yolov8n-pose.onnx") == "cuda"
