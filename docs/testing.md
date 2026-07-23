@@ -16,7 +16,7 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-07-04, feat/pywebview-shell): **202 passed, 1 skipped, 38 deselected, ~24s** (2 sklearn warnings, benign). In a torch-free venv the torch-gated training units skip (213 passed on feat/onnx-pose-runner).
+Last known (2026-07-23, fix/windows-cuda-ort): **227 passed, 48 deselected, ~39s** (2 sklearn warnings, benign).
 
 ## Compile gate (cheap, run with the default gate)
 

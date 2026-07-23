@@ -85,7 +85,7 @@ pip install ".[desktop]"
 rallyclip-desktop
 ```
 
-The desktop app bundles the local Flask backend in a native window. Device selection defaults to **Auto** (`CUDA > MPS > CPU`) and can be overridden in Advanced settings.
+The desktop app bundles the local Flask backend in a native window. Device selection defaults to **Auto** (`CUDA > CoreML > MPS > CPU`) and can be overridden in Advanced settings. CUDA for the torch-free ONNX pose path needs the optional `[gpu]` extra (`onnxruntime-gpu`); see `docs/ENVIRONMENT.md`.
 
 ### Browser GUI (development)
 ```bash

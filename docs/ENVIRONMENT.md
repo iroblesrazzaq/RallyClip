@@ -17,6 +17,23 @@ pip install -e ".[e2e-ui]" && playwright install chromium   # browser e2e only
 pip install -e ".[pack]"               # PyInstaller packaging only
 ```
 
+### NVIDIA CUDA (Windows / Linux)
+
+Default install uses CPU `onnxruntime`. For CUDA pose (and LSTM when the EP is present), install the optional GPU extra — and uninstall the CPU wheel first so both packages are never present together (Python imports the CPU build first):
+
+```bash
+pip uninstall -y onnxruntime onnxruntime-gpu
+pip install -e ".[desktop,gpu]"
+```
+
+Verify:
+
+```bash
+python -c "import onnxruntime as ort; print(ort.get_available_providers())"
+```
+
+You should see `CUDAExecutionProvider`. Match `onnxruntime-gpu` to your installed CUDA toolkit/driver (mismatched versions drop the CUDA EP or fail session init). Mac packaging stays on CPU/CoreML `onnxruntime` — do not use `[gpu]` there.
+
 From a checkout without editable install, prefix commands with `PYTHONPATH=src:tests`.
 
 ## Run commands

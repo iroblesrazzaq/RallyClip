@@ -34,6 +34,12 @@ train = [
   "torch",
   "ultralytics",
 ]
+# NVIDIA CUDA pose/LSTM via onnxruntime's CUDA EP. Replaces the CPU
+# onnxruntime wheel — do not install both (the CPU package wins on import).
+# Match the wheel to your CUDA toolkit/driver; see docs/ENVIRONMENT.md.
+gpu = [
+  "onnxruntime-gpu",
+]
 dev = [
   "pytest",
   "requests",

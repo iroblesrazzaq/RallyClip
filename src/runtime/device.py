@@ -19,7 +19,7 @@ _VALID_DEVICES = frozenset({"cuda", "mps", "coreml", "cpu"})
 
 def _torch_available() -> bool:
     try:
-        import torch  # noqa: WPS433 — optional at import time for tests
+        import torch  # noqa: F401, WPS433 — optional at import time for tests
     except ImportError:
         return False
     return True
@@ -42,15 +42,31 @@ def coreml_pose_available() -> bool:
     return "CoreMLExecutionProvider" in ort.get_available_providers()
 
 
+def cuda_pose_available() -> bool:
+    """CUDA EP usable for pose/LSTM: onnxruntime built with CUDAExecutionProvider.
+
+    Stock installs ship CPU `onnxruntime`; NVIDIA users need the optional
+    `[gpu]` extra (`onnxruntime-gpu`). Detects the EP independently of torch so
+    the torch-free runtime can still auto-pick CUDA.
+    """
+    try:
+        import onnxruntime as ort  # noqa: WPS433 — optional at import time
+    except ImportError:
+        return False
+    return "CUDAExecutionProvider" in ort.get_available_providers()
+
+
 def detect_available_devices() -> list[DeviceName]:
     """Return acceleration backends available on this machine, in priority order."""
     available: list[DeviceName] = []
     has_torch = _torch_available()
+    torch_cuda = False
     if has_torch:
         import torch
 
-        if torch.cuda.is_available():
-            available.append("cuda")
+        torch_cuda = bool(torch.cuda.is_available())
+    if cuda_pose_available() or torch_cuda:
+        available.append("cuda")
     if coreml_pose_available():
         available.append("coreml")
     if has_torch:
@@ -63,7 +79,7 @@ def detect_available_devices() -> list[DeviceName]:
 
 
 def resolve_auto_device() -> DeviceName:
-    """Pick the best device: CUDA, then MPS, then CPU."""
+    """Pick the best device: CUDA, then CoreML, then MPS, then CPU."""
     devices = detect_available_devices()
     for name in _DEVICE_ORDER:
         if name in devices:

@@ -91,9 +91,14 @@ class PoseExtractor:
             except Exception as exc:
                 if providers is None:
                     raise  # the CPU reference path failing is a real error
-                # CoreML session/compile failures (rare: OS/driver quirks)
-                # must degrade to the CPU path, not kill the analysis.
-                logging.warning("POSE: CoreML session failed (%s); using cpu.", exc)
+                # Accelerated EP session/compile failures (CoreML OS quirks,
+                # CUDA driver/toolkit mismatches) must degrade to CPU, not kill
+                # the analysis.
+                logging.warning(
+                    "POSE: %s session failed (%s); using cpu.",
+                    self.device,
+                    exc,
+                )
                 self.device = "cpu"
                 self.model = OnnxYOLO(yolo_arg)
         else:
@@ -116,11 +121,11 @@ class PoseExtractor:
             except Exception:
                 pass
         if (
-            requested_device == "coreml"
-            and self.device != "coreml"
-            and os.environ.get("POSE_DEVICE", "").strip().lower() == "coreml"
+            requested_device in {"coreml", "cuda"}
+            and self.device != requested_device
+            and os.environ.get("POSE_DEVICE", "").strip().lower() == requested_device
         ):
-            # The coreml request degraded to CPU: sync the env so later
+            # Accelerated request degraded to CPU: sync the env so later
             # extractors in this process don't retry (and re-warn about) the
             # same unavailable path.
             os.environ["POSE_DEVICE"] = self.device
@@ -132,8 +137,10 @@ class PoseExtractor:
         reference path. Opt-in device "coreml": the static-shape sibling export
         (*-static.onnx next to the dynamic model) on the CoreML EP, ~8x pose
         throughput on Apple silicon (docs/perf/coreml-spike/) — dynamic axes
-        block the Neural Engine, hence the separate static file. Any missing
-        piece degrades to the CPU path with a warning instead of failing.
+        block the Neural Engine, hence the separate static file. Opt-in "cuda":
+        the same dynamic export on CUDAExecutionProvider when onnxruntime-gpu
+        is installed. Any missing piece degrades to the CPU path with a warning
+        instead of failing.
         """
         if self.device == "coreml":
             from runtime.device import coreml_pose_available
@@ -151,6 +158,16 @@ class PoseExtractor:
                     ("CoreMLExecutionProvider", {"ModelFormat": "MLProgram", "MLComputeUnits": "ALL"}),
                     "CPUExecutionProvider",
                 ]
+        elif self.device == "cuda":
+            from runtime.device import cuda_pose_available
+
+            if cuda_pose_available():
+                return dynamic_path, ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            logging.warning(
+                "POSE: cuda requested but CUDAExecutionProvider is unavailable; "
+                "install the [gpu] extra (onnxruntime-gpu) and ensure the CUDA "
+                "toolkit matches. Using cpu."
+            )
         self.device = "cpu"
         return dynamic_path, None
 
