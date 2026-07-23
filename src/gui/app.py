@@ -1495,7 +1495,7 @@ def _resolve_yolo_weights(cfg: Dict[str, Any]) -> str:
         None,
         env_var="RALLYCLIP_YOLO_MODEL_PATH",
         relatives=[
-            f"models/rallyclip_v0.3.1/{FIXED_YOLO_MODEL}",
+            f"models/rallyclip_v0.4.0/{FIXED_YOLO_MODEL}",
             f"models/{FIXED_YOLO_MODEL}",
             FIXED_YOLO_MODEL,
         ],
@@ -1509,7 +1509,7 @@ def _resolve_model_paths(cfg: Dict[str, Any]) -> tuple[Path, Path]:
         cfg.get("model_path"),
         env_var="RALLYCLIP_MODEL_PATH",
         relatives=[
-            "models/rallyclip_v0.3.1/model.onnx",
+            "models/rallyclip_v0.4.0/model.onnx",
             "models/lstm_300_v0.1.pth",
             "checkpoints/seq_len300/best_model.pth",
         ],
@@ -1519,7 +1519,7 @@ def _resolve_model_paths(cfg: Dict[str, Any]) -> tuple[Path, Path]:
         cfg.get("scaler_path"),
         env_var="RALLYCLIP_SCALER_PATH",
         relatives=[
-            "models/rallyclip_v0.3.1/scaler.json",
+            "models/rallyclip_v0.4.0/scaler.json",
             "models/scaler_300_v0.1.joblib",
             "data/seq_len_300/scaler.joblib",
         ],

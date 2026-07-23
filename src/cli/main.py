@@ -198,13 +198,13 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
     model_path = _resolve_asset(
         model_path_raw,
         env_var="RALLYCLIP_MODEL_PATH",
-        relatives=["models/rallyclip_v0.3.1/model.onnx"],
+        relatives=["models/rallyclip_v0.4.0/model.onnx"],
         description="RallyClip model artifact (ONNX)",
     )
     scaler_path = _resolve_asset(
         scaler_path_raw,
         env_var="RALLYCLIP_SCALER_PATH",
-        relatives=["models/rallyclip_v0.3.1/scaler.json"],
+        relatives=["models/rallyclip_v0.4.0/scaler.json"],
         description="RallyClip scaler artifact (JSON)",
     )
     manifest_path = Path(manifest_path_raw).expanduser().resolve() if manifest_path_raw else None

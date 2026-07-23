@@ -1,0 +1,138 @@
+{
+  "artifact": {
+    "artifact_id": "044fbfdd1b2db853fbce9639ddf1e7cbf8d5e403e972c3d54b5a52e72b6ed136",
+    "created_at_iso": "2026-07-21T00:00:00Z",
+    "created_at_unix": 1784000000,
+    "model_version": "rallyclip_v0.4.0"
+  },
+  "data": {
+    "split_strategy": "by_video",
+    "video_count": 37,
+    "splits": {
+      "train": [
+        "09c89596f1f499db5b7962b83b558863579787718e8493856d0c3e4fa58bdab2.mp4",
+        "123e45e6f65b649cff89e0ef6f2e8423248175fdc58536459214a1871d624088.mp4",
+        "1e9d623d77f012770200f71014d8850cfa7d84191dcaf3d4a44a21ba40ca6f83.mp4",
+        "31980d806ab8c99dfc17bfea5d9b4e98e3babefe77e941bb3e5f4aef74daf0ad.mp4",
+        "3e5fd6a83bed3894f9576261ff81b3896414a4c56602422927febef6413bb94b.mp4",
+        "47201e7c08a98d59eb63db6dbb468990e2613fa149273e0aade3d181c7e78286.mp4",
+        "59f28ea62a8a2aca4aef77ceee369db500b9bd0fa871955ed6a303bb91038435.mp4",
+        "6a3448004279f570d709088423c3e999066a5191074bc73d9f6f6da535b0ce2b.mp4",
+        "Brady Knackstedt (Blue Shirt\u29f8Black Shorts)(4.0 UTR) Unedited Match Play vs. opponent (5.54 UTR)_utr5_genM_courtH_IN_angleMED_zoomMED.mp4",
+        "Holly Schlatter \uff5c 2021 Australian Tennis Recruit  - Match Play Footage_utr7_genF_courtH_OUT_angleHIGH_zoomOUT.mp4",
+        "Otto Friedlein - unedited matchplay_utr12_genM_courtH_IN_angleHIGH_zoomOUT.mp4",
+        "Ryan Parkins - Unedited matchplay_utr11_genM_courtH_IN_angleHIGH_zoomOUT.mp4",
+        "Set (2) Play Uncut Derek vs. Alex_utr5_genM_courtH_OUT_angleMED_zoomIN.mp4",
+        "Unedited Matchplay vs UTR 9.8_utr9_genF_courtH_OUT_angleHIGH_zoomMED.mp4",
+        "Verified UTR Match Play\uff1a Hai Pham 4.63 vs. Tuan Anh (Unrated)_utr4_genM_courtH_IN_angleHIGH_zoomMED.mp4",
+        "abe49d12ce83a1c8634589d80a57169288318e2f31914ecd323e4eb74b0236c3.mp4",
+        "b566d8dfbd5488cfa2129719a223273a5f2331faa7c700dc967cf29f17b8ee55.mp4",
+        "b7009388a75ef27cac77c32988c3b9a80171de1018ef8aae17b9269eaa931300.mp4",
+        "b70cca55f01a65cbaa449263b09f5c849c16572c446121eef87ff610a292802a.mp4",
+        "d47c94774d0a981f4edc14bf464ffbe63e546d97194a88e400cc470794ef68b6.mp4",
+        "d5ac3da3cd8a8f525a58bbfe375aebc735d4887ac6de1477cc33546e092cb135.mp4",
+        "e9a093a863f11ee5f563f26e717294b8df109cc611d1ea28cd6c7b019d38593b.mp4",
+        "ef87ad84623dcb203935a79cb11edc5f5bb9452ff71da8ff2c4a8ce13fb53886.mp4",
+        "f096e86011c6e270c9c8ed00441d21794bfe0930d7cd56877d86b2ee10400d75.mp4",
+        "f5f5dc396537b3752f3e06bd5eeeccd24fc94c64745a366e78f18baf709a041b.mp4"
+      ],
+      "val": [
+        "46cd4d2ecd3a94992304069127b68ac731e74e89fd757ebe58b69769cff312c1.mp4",
+        "Monica Greene unedited tennis match play_utr7_genF_courtH_OUT_angleHIGH_zoomIN.mp4",
+        "b34d1a7011c50f98bc459ae619ce55a59d8b487e4b4c797e0cf5bc3642ca3f09.mp4",
+        "ba240bbdab57f37a1b3a3d8456feded7e8de058fa8dc83b4511a90bdb18560d9.mp4"
+      ],
+      "test": [
+        "133663e79e61f2a612dc77c4c8687f3b40142412a77e904e7f4aef6ecdd99bba.mp4",
+        "2a78f52697780c3f7fd27962a96e730298e9c15fb2167028ec0e094b58f033b9.mp4",
+        "729efeb6f27341d3623816323ddeef681073e7b1ee5d14409121c28a4b3beff5.mp4",
+        "9\u29f85\u29f815 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN.mp4",
+        "Aditi Narayan \uff5c Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED.mp4",
+        "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN.mp4",
+        "a86df9f2c0ea7de59aff9fec703ca178afd4def34303293a3fa2498480c0a952.mp4",
+        "a9051e17933a58a0fb86f4799bea43de0673210ebec63ad04035a170bc4dcdc9.mp4"
+      ]
+    }
+  },
+  "feature_pipeline": {
+    "conf": 0.25,
+    "feature_dim": 362,
+    "feature_set": "v1",
+    "imgsz": 960.0,
+    "num_keypoints": 17,
+    "sample_fps": 5.0,
+    "sampling_mode": null,
+    "screen_height": 720,
+    "screen_width": 1280,
+    "target_fps": 5.0,
+    "yolo_model": "yolov8n-pose-960-dynamic.onnx"
+  },
+  "files": {
+    "manifest_file": "manifest.json",
+    "model_file": "model.onnx",
+    "model_sha256": "044fbfdd1b2db853fbce9639ddf1e7cbf8d5e403e972c3d54b5a52e72b6ed136",
+    "pose_model_file": "yolov8n-pose-960-dynamic.onnx",
+    "pose_model_sha256": "4a3fe0de63042b3a48a458d4f4358615417b58c56471a6e1da53b249f5ec0011",
+    "scaler_file": "scaler.json",
+    "scaler_sha256": "2d4f86ebf7bca27fd1cf37854a7a4b4edd8b130f6a045b33fe73f98d1f3fe9f2"
+  },
+  "inference": {
+    "input_name": "features",
+    "input_shape": [
+      1,
+      100,
+      362
+    ],
+    "onnx_opset": 17,
+    "output_name": "logits",
+    "overlap_frames": 50,
+    "overlap_seconds": 10.0,
+    "seq_len_frames": 100,
+    "seq_len_seconds": 20.0,
+    "threshold": 0.5
+  },
+  "manifest_version": 1,
+  "metrics": {
+    "selected_epoch_metrics": {
+      "epoch": 3,
+      "train_loss": 0.45399580991990984,
+      "val_loss": 0.3861147812266144,
+      "accuracy": 0.896429215509468,
+      "balanced_accuracy": 0.8843176459900304,
+      "f1": 0.8533939192811375,
+      "auroc": 0.9370107909332481,
+      "segment_precision": 0.5653742110009017,
+      "segment_recall": 0.5554553651938684,
+      "segment_f1": 0.5566576495341148,
+      "mean_iou": 0.4938486763550396,
+      "coverage": 0.5769061785495913,
+      "specificity": 0.8602322299064183
+    },
+    "split_note": "val metrics use split_strategy=by_video (fully held-out videos); v0.3.1's manifest metrics used within_video splits (same videos, different windows), so the two manifests' val numbers are not comparable. Cross-model comparison on the common held-out benchmark: six-bin good 30.7% (v0.4.0) vs 14.3% (v0.3.1)."
+  },
+  "model": {
+    "architecture": "TennisPointLSTM",
+    "bidirectional": true,
+    "dropout": 0.2,
+    "hidden_size": 128,
+    "num_layers": 2
+  },
+  "postprocess": {
+    "method": "hysteresis",
+    "params": {
+      "high": 0.65,
+      "low": 0.5,
+      "min_dur_sec": 0.5,
+      "sigma": 1.5
+    }
+  },
+  "source_run": {
+    "checkpoint_path": "/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/training_data/runs/20260721_classic128_v37/checkpoints/best.pth",
+    "git_branch": "release/v0.4.0-classic",
+    "git_commit": "6ac59731ae5afc7d3d55415ec897233c7b256740",
+    "run_id": "20260721_classic128_v37",
+    "scaler_path": "/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/training_data/datasets/20260721_v37/scaler.joblib",
+    "selected_checkpoint": "best",
+    "selection_reason": "best val checkpoint, hysteresis swept on v37 val (30.5% acceptable vs 23.9% at v0.3.1 params)"
+  }
+}
