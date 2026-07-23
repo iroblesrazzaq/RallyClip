@@ -61,19 +61,20 @@ def detect_available_devices() -> list[DeviceName]:
     available: list[DeviceName] = []
     has_torch = _torch_available()
     torch_cuda = False
+    mps_available = False
     if has_torch:
         import torch
 
         torch_cuda = bool(torch.cuda.is_available())
+        mps_available = bool(
+            getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
+        )
     if cuda_pose_available() or torch_cuda:
         available.append("cuda")
     if coreml_pose_available():
         available.append("coreml")
-    if has_torch:
-        import torch
-
-        if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-            available.append("mps")
+    if mps_available:
+        available.append("mps")
     available.append("cpu")
     return available
 

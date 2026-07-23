@@ -67,6 +67,7 @@ def test_pose_extractor_cuda_falls_back_when_ep_missing(tmp_path, monkeypatch):
         device="cuda",
     )
     assert extractor.device == "cpu"
+    assert extractor.batch_size == 1
     assert os.environ["POSE_DEVICE"] == "cpu"
 
 
@@ -92,5 +93,6 @@ def test_pose_extractor_cuda_passes_providers_to_runner(tmp_path, monkeypatch):
         device="cuda",
     )
     assert extractor.device == "cuda"
+    assert extractor.batch_size == 8
     assert captured["providers"] == ["CUDAExecutionProvider", "CPUExecutionProvider"]
     assert Path(captured["model_path"]).name == DYNAMIC_ONNX.name

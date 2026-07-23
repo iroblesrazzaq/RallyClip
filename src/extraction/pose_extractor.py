@@ -56,20 +56,11 @@ class PoseExtractor:
                 os.environ["POSE_DEVICE"] = self.device
 
         env_bs = os.environ.get("POSE_BATCH_SIZE", "").strip()
-        if env_bs.isdigit():
+        batch_from_env = env_bs.isdigit()
+        if batch_from_env:
             self.batch_size = int(env_bs)
         else:
-            if profile == "mvp":
-                self.batch_size = 1 if self.device == "cpu" else 16
-            else:
-                if self.device == "mps":
-                    self.batch_size = 2
-                elif self.device == "cpu":
-                    self.batch_size = 1
-                elif self.device == "cuda":
-                    self.batch_size = 8
-                else:
-                    self.batch_size = 1
+            self.batch_size = self._default_batch_size(self.device, profile)
 
         # Prefer local file if model_dir provided and file exists; otherwise let
         # Ultralytics handle download from model name (e.g., "yolov8s-pose.pt").
@@ -120,6 +111,10 @@ class PoseExtractor:
                 self.model.to(self.device)
             except Exception:
                 pass
+        if self.device != requested_device and not batch_from_env:
+            # CUDA (batch=8) / other accelerated picks must not keep a large
+            # batch after falling back to the CPU path (per-frame streaming).
+            self.batch_size = self._default_batch_size(self.device, profile)
         if (
             requested_device in {"coreml", "cuda"}
             and self.device != requested_device
@@ -129,6 +124,16 @@ class PoseExtractor:
             # extractors in this process don't retry (and re-warn about) the
             # same unavailable path.
             os.environ["POSE_DEVICE"] = self.device
+
+    @staticmethod
+    def _default_batch_size(device: str, profile: str) -> int:
+        if profile == "mvp":
+            return 1 if device == "cpu" else 16
+        if device == "mps":
+            return 2
+        if device == "cuda":
+            return 8
+        return 1
 
     def _resolve_onnx_session(self, dynamic_path: str):
         """Pick the ONNX file + ORT providers for the requested device.
