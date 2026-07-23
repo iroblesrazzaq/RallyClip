@@ -86,10 +86,24 @@ def test_decode_hybrid_single_point_recovers_boundaries():
     start_prob[5] = 0.9
     end_prob = np.zeros(n)
     end_prob[10] = 0.9
+    # Run spans 5 frames @ 5fps = 1.0s > default min_duration_sec 0.3
     cfg = HeatmapDecodeConfig(mode="hybrid", threshold=0.5)
     segs = decode_hybrid(pointness, start_prob, end_prob, ts, cfg)
     assert len(segs) == 1
     assert segs[0] == pytest.approx((ts[5], ts[10]))
+
+
+def test_decode_hybrid_drops_below_min_duration():
+    n = 20
+    ts = _timestamps(n)
+    pointness = np.full(n, 0.1)
+    pointness[5:7] = 0.9  # 2 frames @ 5fps = 0.2s
+    start_prob = np.zeros(n)
+    start_prob[5] = 0.9
+    end_prob = np.zeros(n)
+    end_prob[6] = 0.9
+    cfg = HeatmapDecodeConfig(mode="hybrid", threshold=0.5, min_duration_sec=0.3)
+    assert decode_hybrid(pointness, start_prob, end_prob, ts, cfg) == []
 
 
 def test_decode_hybrid_two_points_no_cross_pairing():
@@ -104,7 +118,7 @@ def test_decode_hybrid_two_points_no_cross_pairing():
     end_prob = np.zeros(n)
     end_prob[5] = 0.9
     end_prob[17] = 0.9
-    cfg = HeatmapDecodeConfig(mode="hybrid", threshold=0.5)
+    cfg = HeatmapDecodeConfig(mode="hybrid", threshold=0.5, min_duration_sec=0.0)
     segs = decode_hybrid(pointness, start_prob, end_prob, ts, cfg)
     assert len(segs) == 2
     assert segs[0] == pytest.approx((ts[3], ts[5]))
@@ -165,6 +179,30 @@ def test_decode_peakpair_rejects_pairs_over_max_duration():
     assert decode_peakpair(pointness, start_prob, end_prob, ts, cfg) == []
 
 
+def test_decode_peakpair_gate_does_not_consume_end_on_reject():
+    # First start+end pair fails the pointness gate; that end must remain
+    # available for a later start that passes the gate.
+    n = 40
+    ts = _timestamps(n)
+    pointness = np.full(n, 0.1)
+    pointness[20:30] = 0.9  # only the second interval has pointness mass
+    start_prob = np.zeros(n)
+    start_prob[4] = 0.9
+    start_prob[20] = 0.9
+    end_prob = np.zeros(n)
+    end_prob[12] = 0.9
+    end_prob[28] = 0.9
+    cfg = HeatmapDecodeConfig(
+        mode="peakpair",
+        peak_threshold=0.3,
+        min_duration_sec=0.3,
+        pointness_gate=0.5,
+    )
+    segs = decode_peakpair(pointness, start_prob, end_prob, ts, cfg)
+    assert len(segs) == 1
+    assert segs[0] == pytest.approx((ts[20], ts[28]))
+
+
 def test_decode_dispatch_unknown_mode_raises():
     n = 10
     ts = _timestamps(n)
@@ -182,9 +220,10 @@ def test_order_heatmap_outputs_by_name():
     assert _order_heatmap_outputs(names) == [1, 2, 0]
 
 
-def test_order_heatmap_outputs_positional_fallback():
-    names = ["out0", "out1", "out2"]  # uninformative -> declared order
-    assert _order_heatmap_outputs(names) == [0, 1, 2]
+def test_order_heatmap_outputs_rejects_uninformative_names():
+    names = ["out0", "out1", "out2"]
+    with pytest.raises(ValueError, match="missing a name containing"):
+        _order_heatmap_outputs(names)
 
 
 def test_order_heatmap_outputs_rejects_ambiguous_names():
