@@ -498,16 +498,20 @@ _HEATMAP_TRACK_ORDER = ("point", "start", "end")
 def _order_heatmap_outputs(output_names: List[str]) -> List[int]:
     """Index order mapping ONNX outputs to [pointness, start, end].
 
-    Prefers name matching ('point'/'start'/'end' substrings) so export-order does
-    not silently swap tracks; falls back to the model's declared output order when
-    names are uninformative.
+    Requires each of 'point'/'start'/'end' to appear in an output name so
+    export-order cannot silently swap tracks. Uninformative names (e.g. out0)
+    fail loudly rather than assuming declaration order.
     """
     lowered = [name.lower() for name in output_names]
     order: List[int] = []
     for key in _HEATMAP_TRACK_ORDER:
         match = next((i for i, nm in enumerate(lowered) if key in nm), None)
         if match is None:
-            return list(range(len(output_names)))  # positional fallback
+            raise ValueError(
+                f"Heatmap ONNX outputs {output_names} missing a name containing "
+                f"{key!r}; expected distinct names for {_HEATMAP_TRACK_ORDER} so "
+                f"tracks cannot be silently mis-ordered."
+            )
         order.append(match)
     if len(set(order)) != len(order):
         # Two keys resolved to the same output (e.g. a name containing both

@@ -134,8 +134,12 @@ def decode_hybrid(
         # Refinement must not invert or escape the detected run's rough span.
         if e <= s:
             s, e = float(timestamps[i]), float(timestamps[j])
-        if e > s:
-            segments.append((s, e))
+        if e <= s:
+            continue
+        dur = e - s
+        if dur < cfg.min_duration_sec or dur > cfg.max_duration_sec:
+            continue
+        segments.append((s, e))
     return _merge_intervals(segments)
 
 
@@ -165,14 +169,15 @@ def decode_peakpair(
         et = end_times[k]
         if et - st > cfg.max_duration_sec:
             continue
-        used[k] = True
-        ei = k + 1
         if cfg.pointness_gate is not None:
             lo = np.searchsorted(timestamps, st)
             hi = np.searchsorted(timestamps, et)
             span = pointness[lo:hi + 1]
             if span.size and float(span.mean()) < cfg.pointness_gate:
+                # Do not consume the end event: a later start may pair with it.
                 continue
+        used[k] = True
+        ei = k + 1
         segments.append((st, et))
     return _merge_intervals(segments)
 
