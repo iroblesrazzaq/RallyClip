@@ -107,7 +107,8 @@
       "mean_iou": 0.4938486763550396,
       "coverage": 0.5769061785495913,
       "specificity": 0.8602322299064183
-    }
+    },
+    "split_note": "val metrics use split_strategy=by_video (fully held-out videos); v0.3.1's manifest metrics used within_video splits (same videos, different windows), so the two manifests' val numbers are not comparable. Cross-model comparison on the common held-out benchmark: six-bin good 30.7% (v0.4.0) vs 14.3% (v0.3.1)."
   },
   "model": {
     "architecture": "TennisPointLSTM",
