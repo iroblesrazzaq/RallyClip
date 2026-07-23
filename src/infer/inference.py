@@ -509,6 +509,15 @@ def _order_heatmap_outputs(output_names: List[str]) -> List[int]:
         if match is None:
             return list(range(len(output_names)))  # positional fallback
         order.append(match)
+    if len(set(order)) != len(order):
+        # Two keys resolved to the same output (e.g. a name containing both
+        # 'start' and 'end'): mapping is ambiguous, and silently feeding one
+        # track to two decode inputs would corrupt boundaries undetectably.
+        raise ValueError(
+            f"Ambiguous heatmap ONNX output names {output_names}: keys "
+            f"{_HEATMAP_TRACK_ORDER} map to indices {order}. Rename the export's "
+            "outputs so each contains exactly one of 'point'/'start'/'end'."
+        )
     return order
 
 
