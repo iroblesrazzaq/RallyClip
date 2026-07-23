@@ -360,10 +360,12 @@ class HeatmapHybridModel(AnalysisModel):
         progress_callback: Optional[ProgressCallback],
         cancel_check: Optional[CancelCheck],
     ):
-        from infer import run_multitrack_windowed_inference_onnx_stream
-
         request = self.request
         deps = self.deps
+        run_multitrack = deps.run_multitrack_windowed_inference_onnx_stream
+        if run_multitrack is None:  # pre-existing deps constructions (CLI/GUI/tests)
+            from infer import run_multitrack_windowed_inference_onnx_stream as run_multitrack
+
         if request.model_path.suffix.lower() != ".onnx":
             raise UnsupportedPipelineError(
                 "The 'frame_startend_heatmap' runtime supports ONNX models only (got "
@@ -400,7 +402,7 @@ class HeatmapHybridModel(AnalysisModel):
         def infer_progress(frac: float) -> None:
             _emit(progress_callback, "inference", int(5 + max(0.0, min(1.0, frac)) * 90))
 
-        tracks = run_multitrack_windowed_inference_onnx_stream(
+        tracks = run_multitrack(
             str(request.model_path),
             scaled_feature_rows(),
             sequence_length=int(request.seq_len),
@@ -414,14 +416,18 @@ class HeatmapHybridModel(AnalysisModel):
         return tracks
 
     def _decode_config(self):
-        from infer import HeatmapDecodeConfig
+        config_cls = self.deps.heatmap_decode_config_cls
+        if config_cls is None:  # pre-existing deps constructions (CLI/GUI/tests)
+            from infer import HeatmapDecodeConfig as config_cls
 
-        valid = set(HeatmapDecodeConfig.__dataclass_fields__)
+        valid = set(config_cls.__dataclass_fields__)
         params = {k: v for k, v in (self.spec.params or {}).items() if k in valid and v is not None}
-        return HeatmapDecodeConfig(**params)
+        return config_cls(**params)
 
     def postprocess(self, model_output) -> List[Interval]:
-        from infer import decode_heatmap_segments
+        decode = self.deps.decode_heatmap_segments
+        if decode is None:  # pre-existing deps constructions (CLI/GUI/tests)
+            from infer import decode_heatmap_segments as decode
 
         np = self.deps.np
         pointness = np.asarray(model_output[0], dtype=np.float64)
@@ -429,7 +435,7 @@ class HeatmapHybridModel(AnalysisModel):
         end_prob = np.asarray(model_output[2], dtype=np.float64)
         num_frames = int(pointness.shape[0])
         timestamps = np.arange(num_frames, dtype=np.float64) / float(self.request.fps)
-        return decode_heatmap_segments(pointness, start_prob, end_prob, timestamps, self._decode_config())
+        return decode(pointness, start_prob, end_prob, timestamps, self._decode_config())
 
 
 class StartEndAttentionVotingModel(AnalysisModel):

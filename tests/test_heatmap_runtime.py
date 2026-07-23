@@ -240,6 +240,47 @@ def test_heatmap_model_segments_video_from_intervals(tmp_path, monkeypatch):
     assert intervals == result.intervals_sec == [pytest.approx((4 / FPS, 8 / FPS))]
 
 
+def test_heatmap_model_uses_injected_deps_over_module_import(tmp_path, monkeypatch):
+    # When RuntimeDeps carries the heatmap slots (as the engine's default loader
+    # wires them), the model must use them -- not the bare `infer` module import.
+    n = 20
+    point = np.full(n, 0.1, dtype=np.float32)
+    point[5:11] = 0.9
+    start = np.zeros(n, dtype=np.float32)
+    start[5] = 0.9
+    end = np.zeros(n, dtype=np.float32)
+    end[10] = 0.9
+    tracks = np.stack([point, start, end], axis=0)
+
+    monkeypatch.setattr(
+        engine_models, "build_feature_stream",
+        lambda request, deps, pcb, ccb: [(np.zeros(4, dtype=np.float32), 0) for _ in range(n)],
+    )
+    # Deliberately do NOT patch the infer module: if the model bypassed deps and
+    # imported the real runner, it would choke on the fake model bytes.
+    from dataclasses import replace as dc_replace
+
+    from infer import HeatmapDecodeConfig, decode_heatmap_segments
+
+    ran_via_deps = []
+
+    def fake_runner(*a, **k):
+        ran_via_deps.append(True)
+        return tracks
+
+    deps = _fake_deps()
+    deps.run_multitrack_windowed_inference_onnx_stream = fake_runner
+    deps.decode_heatmap_segments = decode_heatmap_segments
+    deps.heatmap_decode_config_cls = HeatmapDecodeConfig
+
+    request = _make_request(tmp_path, write_csv=False)
+    model = build_analysis_model(request, _spec(tmp_path), deps)
+    result = model.run()
+
+    assert ran_via_deps == [True]
+    assert result.intervals_sec == [pytest.approx((5 / FPS, 10 / FPS))]
+
+
 def test_heatmap_model_rejects_non_onnx(tmp_path, monkeypatch):
     _install_fakes(monkeypatch, np.zeros((3, 12), dtype=np.float32))
     from rallyclip_core.contracts import UnsupportedPipelineError

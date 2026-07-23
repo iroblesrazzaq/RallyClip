@@ -187,6 +187,15 @@ def test_order_heatmap_outputs_positional_fallback():
     assert _order_heatmap_outputs(names) == [0, 1, 2]
 
 
+def test_order_heatmap_outputs_rejects_ambiguous_names():
+    # 'start_end_scores' contains both 'start' and 'end' -> two keys resolve to
+    # the same output; silently aliasing tracks would corrupt boundaries, so the
+    # mapping must fail loudly instead.
+    names = ["pointness", "start_end_scores", "aux"]
+    with pytest.raises(ValueError, match="Ambiguous heatmap ONNX output names"):
+        _order_heatmap_outputs(names)
+
+
 # ------------------------------------------------ multi-track windowed inference
 
 

@@ -119,3 +119,8 @@ class RuntimeDeps:
     write_segments_csv: Callable[..., Any]
     segment_video: Callable[..., Any]
     apply_pose_device: Optional[Callable[..., Any]] = None
+    # Heatmap pipeline (optional: engine falls back to lazy `infer` imports when
+    # unset, so pre-existing RuntimeDeps constructions keep working unchanged).
+    run_multitrack_windowed_inference_onnx_stream: Optional[Callable[..., Any]] = None
+    decode_heatmap_segments: Optional[Callable[..., Any]] = None
+    heatmap_decode_config_cls: Optional[Any] = None
