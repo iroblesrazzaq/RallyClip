@@ -56,20 +56,11 @@ class PoseExtractor:
                 os.environ["POSE_DEVICE"] = self.device
 
         env_bs = os.environ.get("POSE_BATCH_SIZE", "").strip()
-        if env_bs.isdigit():
+        batch_from_env = env_bs.isdigit()
+        if batch_from_env:
             self.batch_size = int(env_bs)
         else:
-            if profile == "mvp":
-                self.batch_size = 1 if self.device == "cpu" else 16
-            else:
-                if self.device == "mps":
-                    self.batch_size = 2
-                elif self.device == "cpu":
-                    self.batch_size = 1
-                elif self.device == "cuda":
-                    self.batch_size = 8
-                else:
-                    self.batch_size = 1
+            self.batch_size = self._default_batch_size(self.device, profile)
 
         # Prefer local file if model_dir provided and file exists; otherwise let
         # Ultralytics handle download from model name (e.g., "yolov8s-pose.pt").
@@ -91,9 +82,14 @@ class PoseExtractor:
             except Exception as exc:
                 if providers is None:
                     raise  # the CPU reference path failing is a real error
-                # CoreML session/compile failures (rare: OS/driver quirks)
-                # must degrade to the CPU path, not kill the analysis.
-                logging.warning("POSE: CoreML session failed (%s); using cpu.", exc)
+                # Accelerated EP session/compile failures (CoreML OS quirks,
+                # CUDA driver/toolkit mismatches) must degrade to CPU, not kill
+                # the analysis.
+                logging.warning(
+                    "POSE: %s session failed (%s); using cpu.",
+                    self.device,
+                    exc,
+                )
                 self.device = "cpu"
                 self.model = OnnxYOLO(yolo_arg)
         else:
@@ -101,6 +97,17 @@ class PoseExtractor:
                 # CoreML rides the ONNX runner; ultralytics .pt weights can't use it.
                 logging.warning("POSE: coreml requires ONNX weights; using cpu for %s.", yolo_arg)
                 self.device = "cpu"
+            elif self.device == "cuda":
+                from runtime.device import torch_cuda_available
+
+                # ORT CUDA must not drive Ultralytics — needs a real torch CUDA build.
+                if not torch_cuda_available():
+                    logging.warning(
+                        "POSE: cuda requested for .pt weights but torch CUDA is "
+                        "unavailable; using cpu for %s.",
+                        yolo_arg,
+                    )
+                    self.device = "cpu"
             from ultralytics import YOLO
             from ultralytics.utils import SETTINGS
 
@@ -113,17 +120,41 @@ class PoseExtractor:
             self.model = YOLO(yolo_arg)
             try:
                 self.model.to(self.device)
-            except Exception:
-                pass
+            except Exception as exc:
+                if self.device != "cpu":
+                    logging.warning(
+                        "POSE: model.to(%s) failed (%s); using cpu.",
+                        self.device,
+                        exc,
+                    )
+                    self.device = "cpu"
+                    try:
+                        self.model.to("cpu")
+                    except Exception:
+                        pass
+        if self.device != requested_device and not batch_from_env:
+            # CUDA (batch=8) / other accelerated picks must not keep a large
+            # batch after falling back to the CPU path (per-frame streaming).
+            self.batch_size = self._default_batch_size(self.device, profile)
         if (
-            requested_device == "coreml"
-            and self.device != "coreml"
-            and os.environ.get("POSE_DEVICE", "").strip().lower() == "coreml"
+            requested_device in {"coreml", "cuda"}
+            and self.device != requested_device
+            and os.environ.get("POSE_DEVICE", "").strip().lower() == requested_device
         ):
-            # The coreml request degraded to CPU: sync the env so later
+            # Accelerated request degraded to CPU: sync the env so later
             # extractors in this process don't retry (and re-warn about) the
             # same unavailable path.
             os.environ["POSE_DEVICE"] = self.device
+
+    @staticmethod
+    def _default_batch_size(device: str, profile: str) -> int:
+        if profile == "mvp":
+            return 1 if device == "cpu" else 16
+        if device == "mps":
+            return 2
+        if device == "cuda":
+            return 8
+        return 1
 
     def _resolve_onnx_session(self, dynamic_path: str):
         """Pick the ONNX file + ORT providers for the requested device.
@@ -132,8 +163,10 @@ class PoseExtractor:
         reference path. Opt-in device "coreml": the static-shape sibling export
         (*-static.onnx next to the dynamic model) on the CoreML EP, ~8x pose
         throughput on Apple silicon (docs/perf/coreml-spike/) — dynamic axes
-        block the Neural Engine, hence the separate static file. Any missing
-        piece degrades to the CPU path with a warning instead of failing.
+        block the Neural Engine, hence the separate static file. Opt-in "cuda":
+        the same dynamic export on CUDAExecutionProvider when onnxruntime-gpu
+        is installed. Any missing piece degrades to the CPU path with a warning
+        instead of failing.
         """
         if self.device == "coreml":
             from runtime.device import coreml_pose_available
@@ -151,6 +184,16 @@ class PoseExtractor:
                     ("CoreMLExecutionProvider", {"ModelFormat": "MLProgram", "MLComputeUnits": "ALL"}),
                     "CPUExecutionProvider",
                 ]
+        elif self.device == "cuda":
+            from runtime.device import cuda_pose_available
+
+            if cuda_pose_available():
+                return dynamic_path, ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            logging.warning(
+                "POSE: cuda requested but CUDAExecutionProvider is unavailable; "
+                "install the [gpu] extra (onnxruntime-gpu) and ensure the CUDA "
+                "toolkit matches. Using cpu."
+            )
         self.device = "cpu"
         return dynamic_path, None
 

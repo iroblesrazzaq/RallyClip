@@ -31,7 +31,7 @@ ultralytics.
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -266,7 +266,7 @@ class YOLO:
             else None
         )
 
-    def to(self, device) -> "YOLO":  # parity with ultralytics API; CPU EP only
+    def to(self, device) -> "YOLO":  # parity with ultralytics API; providers set at init
         return self
 
     def predict(
@@ -276,7 +276,7 @@ class YOLO:
         imgsz: int = DEFAULT_IMGSZ,
         iou: float = DEFAULT_IOU,
         max_det: int = DEFAULT_MAX_DET,
-        device: Optional[str] = None,   # accepted, CPU EP only for now
+        device: Optional[str] = None,   # accepted; EP chosen at session create
         batch: Optional[int] = None,    # accepted; inference is per-frame
         verbose: bool = False,          # accepted for signature parity
         **_ignored,
