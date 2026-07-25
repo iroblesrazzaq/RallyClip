@@ -292,3 +292,89 @@ def test_multitrack_raises_when_video_too_short():
 
     with pytest.raises(ValueError, match="too short"):
         run_multitrack_windowed_inference_stream(list(rows), win_k, 10, 5, num_tracks=3)
+
+
+# --- hybrid false-positive filtering (smoothing + post-merge duration floor) ---
+# Mirrors tests/test_heatmap_tcn.py on the training side; these two decodes must
+# stay behaviourally identical for the offline six-bin numbers to transfer.
+
+
+def _fp_tracks(n: int = 60):
+    """Two real point runs plus a short spurious burst between them.
+
+    The burst is 3 frames (0.6s), not 1: a single-frame run collapses to s == e
+    and is already dropped by the `e > s` guard, so it would never exercise the
+    duration floor.
+    """
+    point = np.zeros(n, dtype=np.float32)
+    point[5:20] = 0.9
+    point[30:33] = 0.9
+    point[40:55] = 0.9
+    start = np.zeros(n, dtype=np.float32)
+    start[[5, 30, 40]] = 1.0
+    end = np.zeros(n, dtype=np.float32)
+    end[[19, 32, 54]] = 1.0
+    ts = np.arange(n, dtype=np.float64) / 5.0
+    return point, start, end, ts
+
+
+def _fp_cfg(**kw):
+    base = dict(mode="hybrid", threshold=0.5, sigma_frames=2.5,
+                min_duration_sec=0.3, max_duration_sec=60.0)
+    base.update(kw)
+    return HeatmapDecodeConfig(**base)
+
+
+def test_fp_filters_default_to_no_ops():
+    """Defaults must reproduce the previous hybrid behaviour, so results
+    measured before these knobs existed remain valid."""
+    cfg = _fp_cfg()
+    assert cfg.smooth_sigma_frames is None
+    assert cfg.hybrid_min_duration_sec == 0.0
+    point, start, end, ts = _fp_tracks()
+    assert len(decode_hybrid(point, start, end, ts, cfg)) == 3
+
+
+def test_duration_floor_drops_short_burst_keeps_real_points():
+    point, start, end, ts = _fp_tracks()
+    segs = decode_hybrid(point, start, end, ts, _fp_cfg(hybrid_min_duration_sec=1.0))
+    assert len(segs) == 2
+    assert all((e - s) >= 1.0 for s, e in segs)
+
+
+def test_smoothing_suppresses_isolated_burst():
+    point, start, end, ts = _fp_tracks()
+    assert len(decode_hybrid(point, start, end, ts, _fp_cfg(smooth_sigma_frames=2.5))) == 2
+
+
+def test_duration_floor_applies_after_merging():
+    """Adjacent fragments of one point must not be dropped individually."""
+    n = 40
+    point = np.zeros(n, dtype=np.float32)
+    point[10:20] = 0.9
+    start = np.zeros(n, dtype=np.float32)
+    start[10] = 1.0
+    end = np.zeros(n, dtype=np.float32)
+    end[19] = 1.0
+    ts = np.arange(n, dtype=np.float64) / 5.0
+    assert len(decode_hybrid(point, start, end, ts, _fp_cfg(hybrid_min_duration_sec=1.5))) == 1
+
+
+def test_gaussian_smooth_is_identity_for_non_positive_sigma():
+    from infer.heatmap_decode import _gaussian_smooth
+
+    data = np.array([0.0, 1.0, 0.0, 0.5], dtype=np.float32)
+    assert np.array_equal(_gaussian_smooth(data, 0.0), data)
+    assert _gaussian_smooth(data, 0.0) is not data  # must be a copy
+
+
+def test_gaussian_smooth_preserves_length_and_mass():
+    from infer.heatmap_decode import _gaussian_smooth
+
+    data = np.zeros(50, dtype=np.float32)
+    data[20:30] = 1.0
+    out = _gaussian_smooth(data, 2.0)
+    assert out.shape == data.shape
+    assert out.max() <= 1.0 + 1e-6
+    assert out[25] > 0.9  # plateau centre survives
+    assert out[10] < 0.05  # far field stays near zero
