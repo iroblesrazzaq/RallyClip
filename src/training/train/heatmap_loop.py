@@ -24,19 +24,38 @@ from training.eval.heatmap_evaluator import HeatmapDecodeConfig, evaluate_heatma
 from training.metrics.segments6 import SixBinConfig
 from training.models.heatmap_gru import TennisPointHeatmapGRU
 from training.models.heatmap_lstm import TennisPointHeatmapLSTM
+from training.models.heatmap_tcn import TennisPointHeatmapTCN
 from training.train.heatmap_loss import E2EHeatmapLoss, HeatmapLossConfig
 
 logger = logging.getLogger(__name__)
 
 
-def build_heatmap_model(backbone: str, input_size: int, head: str, hidden_size: int = 128) -> torch.nn.Module:
-    """Backbone selector for the heatmap head. lstm (default) | gru."""
+def build_heatmap_model(
+    backbone: str,
+    input_size: int,
+    head: str,
+    hidden_size: int = 128,
+    tcn_levels: int = 5,
+    tcn_kernel_size: int = 3,
+) -> torch.nn.Module:
+    """Backbone selector for the heatmap head. lstm (default) | gru | tcn.
+
+    tcn_* are ignored by the recurrent backbones.
+    """
     b = str(backbone).lower()
     if b == "lstm":
         return TennisPointHeatmapLSTM(input_size=input_size, hidden_size=hidden_size, head=head)
     if b == "gru":
         return TennisPointHeatmapGRU(input_size=input_size, hidden_size=hidden_size, head=head)
-    raise ValueError(f"Unknown heatmap_backbone: {backbone!r} (expected lstm | gru)")
+    if b == "tcn":
+        return TennisPointHeatmapTCN(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            levels=tcn_levels,
+            kernel_size=tcn_kernel_size,
+            head=head,
+        )
+    raise ValueError(f"Unknown heatmap_backbone: {backbone!r} (expected lstm | gru | tcn)")
 
 
 def _opt_int(config: Dict[str, Any], key: str):
@@ -66,7 +85,11 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
     head = str(config.get("heatmap_head", "mlp"))
     backbone = str(config.get("heatmap_backbone", "lstm"))
     hidden_size = int(config.get("hidden_size", 128))
-    model = build_heatmap_model(backbone, train_ds.feature_dim, head, hidden_size).to(device)
+    tcn_levels = int(config.get("heatmap_tcn_levels", 5))
+    tcn_kernel_size = int(config.get("heatmap_tcn_kernel_size", 3))
+    model = build_heatmap_model(
+        backbone, train_ds.feature_dim, head, hidden_size, tcn_levels, tcn_kernel_size
+    ).to(device)
 
     if config.get("pos_weight") is None:
         from training.train.loop import _default_pos_weight
@@ -78,9 +101,11 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
 
     fps = float(config.get("fps", 5.0))
     sigma_seconds = float(config.get("heatmap_sigma_seconds", 0.5))
+    sigma_out = config.get("heatmap_sigma_out_seconds")
     loss_cfg = HeatmapLossConfig(
         fps=fps,
         sigma_seconds=sigma_seconds,
+        sigma_out_seconds=float(sigma_out) if sigma_out is not None else None,
         pos_weight=pos_weight_value,
         cls_weight=float(config.get("heatmap_cls_weight", 1.0)),
         start_weight=float(config.get("heatmap_start_weight", 1.0)),
@@ -173,7 +198,9 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
         # live model coexists in-process (documented at length in seg_loop.py). CPU
         # eval of the reloaded weights is exactly what ships.
         cpu_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-        eval_model = build_heatmap_model(backbone, train_ds.feature_dim, head, hidden_size)
+        eval_model = build_heatmap_model(
+            backbone, train_ds.feature_dim, head, hidden_size, tcn_levels, tcn_kernel_size
+        )
         eval_model.load_state_dict(cpu_state)
         eval_model.eval()
         val_metrics, val_loss = evaluate_heatmap_model(

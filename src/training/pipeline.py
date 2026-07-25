@@ -29,7 +29,7 @@ from training.eval.evaluator import SegmentEvalConfig
 from training.features.builder import FeatureBuildConfig, FeatureBuilder
 from training.io.config import resolve_court_model_path
 from training.io.videos import resolve_videos
-from training.normalize.normalize import NormalizeConfig, normalize_video
+from training.normalize.normalize import CANONICAL_HEIGHT, CANONICAL_WIDTH, NormalizeConfig, normalize_video
 from training.paths import (
     annotations_dir,
     datasets_dir,
@@ -521,6 +521,7 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
 
     ct = court_cfg.get("target_time")
     court_target_time = int(ct) if ct is not None else None  # None => midpoint anchor
+    normalize_cfg = config.get("normalize", {}) if isinstance(config.get("normalize"), dict) else {}
     preprocessor = Hdf5Preprocessor(
         PreprocessConfig(
             target_fps=fps,
@@ -528,6 +529,9 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
             court_model_path=court_model_path,
             court_target_time=court_target_time,
             court_force=bool(court_cfg.get("force", False)),
+            court_enabled=bool(court_cfg.get("enabled", True)),
+            expect_width=int(normalize_cfg.get("width", CANONICAL_WIDTH)),
+            expect_height=int(normalize_cfg.get("height", CANONICAL_HEIGHT)),
         )
     )
 
@@ -571,6 +575,11 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
     # Court-detection health check: a silent court failure means a video was
     # preprocessed with NO court filtering (bystanders / adjacent-court people
     # pollute features). Surface it loudly per run instead of burying it.
+    if not bool(court_cfg.get("enabled", True)):
+        logger.info("Court filtering disabled by config (court.enabled: false)")
+        if summary["processed"] == 0 and summary["skipped_existing"] == 0:
+            raise RuntimeError(f"Preprocess produced no outputs: {summary}")
+        return
     courts_dir = pose_courts_dir(data_root)
     court_fail = []
     for video in videos:
@@ -632,11 +641,14 @@ def _run_features(config: Dict[str, Any]) -> None:
 
     overwrite = bool(config.get("overwrite_all") or features_cfg.get("overwrite", False))
 
+    normalize_cfg = config.get("normalize", {}) if isinstance(config.get("normalize"), dict) else {}
     builder = FeatureBuilder(
         FeatureBuildConfig(
             feature_set=feature_set,
             target_fps=fps,
             overwrite=overwrite,
+            screen_width=int(normalize_cfg.get("width", 1280)),
+            screen_height=int(normalize_cfg.get("height", 720)),
         )
     )
 
@@ -796,15 +808,30 @@ def _run_eval(config: Dict[str, Any]) -> None:
 
         ckpt = torch.load(str(checkpoint_path), map_location="cpu")
         state = ckpt.get("model_state_dict", ckpt)
-        # Backbone key differs (lstm.weight_ih_l0 vs gru.weight_ih_l0); infer from state.
+        # Backbone key differs (lstm.weight_ih_l0 / gru.weight_ih_l0 / the TCN's
+        # input_proj conv); infer shapes from whichever the checkpoint carries.
         backbone = str(train_cfg.get("heatmap_backbone", "lstm"))
-        weight = state.get("gru.weight_ih_l0", state.get("lstm.weight_ih_l0"))
-        input_size = int(weight.shape[1]) if weight is not None else 0
-        # weight_ih_l0 rows = gates*hidden (LSTM=4, GRU=3) -> recover hidden_size.
-        gates = 3 if backbone.lower() == "gru" else 4
-        hidden_size = int(weight.shape[0] // gates) if weight is not None else 128
+        tcn_levels = int(train_cfg.get("heatmap_tcn_levels", 5))
+        tcn_kernel_size = int(train_cfg.get("heatmap_tcn_kernel_size", 3))
+        if backbone.lower() == "tcn":
+            weight = state.get("input_proj.weight")  # (channels, input_size, 1)
+            input_size = int(weight.shape[1]) if weight is not None else 0
+            hidden_size = int(weight.shape[0]) if weight is not None else 64
+            # Trust the checkpoint over config for depth.
+            block_ids = {
+                int(k.split(".")[1]) for k in state if k.startswith("blocks.") and ".conv1." in k
+            }
+            if block_ids:
+                tcn_levels = max(block_ids) + 1
+        else:
+            weight = state.get("gru.weight_ih_l0", state.get("lstm.weight_ih_l0"))
+            input_size = int(weight.shape[1]) if weight is not None else 0
+            # weight_ih_l0 rows = gates*hidden (LSTM=4, GRU=3) -> recover hidden_size.
+            gates = 3 if backbone.lower() == "gru" else 4
+            hidden_size = int(weight.shape[0] // gates) if weight is not None else 128
         model = build_heatmap_model(
-            backbone, input_size, str(train_cfg.get("heatmap_head", "mlp")), hidden_size
+            backbone, input_size, str(train_cfg.get("heatmap_head", "mlp")), hidden_size,
+            tcn_levels, tcn_kernel_size,
         )
         model.load_state_dict(state)
         fps = float(preprocess_cfg.get("target_fps", 5))

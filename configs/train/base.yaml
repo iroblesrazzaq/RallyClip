@@ -104,9 +104,15 @@ train:
   diou_weight: 0.25
   decode_vote: mean
   # e2e_heatmap knobs (ignored by classic/e2e_seg heads)
-  heatmap_backbone: lstm        # lstm | gru (gru = ~25% fewer recurrent params)
+  heatmap_backbone: lstm        # lstm | gru (~25% fewer recurrent params) | tcn
+  # tcn knobs (ignored by lstm/gru). Non-causal dilated convnet; hidden_size is
+  # the channel width. Receptive field = 1 + 2*(k-1)*(2**levels - 1) frames;
+  # defaults give 125 frames = 25s @5fps, covering the 20s training window.
+  heatmap_tcn_levels: 5
+  heatmap_tcn_kernel_size: 3
   heatmap_head: mlp             # mlp | linear
   heatmap_sigma_seconds: 0.5    # 1σ ≈ good tolerance (0.5s), 2σ ≈ decent (1.5s)
+  heatmap_sigma_out_seconds: null  # asymmetric target: outside-the-point sigma (null = symmetric)
   heatmap_loss: bce             # bce (balanced) | focal (CenterNet penalty-reduced)
   heatmap_pos_threshold: 0.1    # bce mode: frames with target>=this get up-weighted
   heatmap_pos_weight: 20.0      # bce mode: near-boundary up-weight

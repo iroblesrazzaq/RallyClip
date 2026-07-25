@@ -44,6 +44,15 @@ class HeatmapDecodeConfig:
     min_duration_sec: float = 0.3
     max_duration_sec: float = 60.0
     pointness_gate: Optional[float] = None  # peakpair mode; None disables
+    # --- hybrid-mode false-positive filtering (both default to no-ops, so
+    # existing hybrid results reproduce bit-for-bit) ---
+    # Gaussian-smooth pointness before run detection. The classic decode has
+    # always smoothed (sigma 1.5); hybrid never did, which penalises backbones
+    # with noisier per-frame output (e.g. the TCN vs the naturally-smoothed LSTM).
+    smooth_sigma_frames: Optional[float] = None
+    # Drop decoded segments shorter than this. `min_duration_sec` above is only
+    # consulted by peakpair's pairing loop; hybrid had no duration filter at all.
+    hybrid_min_duration_sec: float = 0.0
 
     def _refine_window(self) -> int:
         return int(self.refine_window_frames if self.refine_window_frames is not None
@@ -119,6 +128,19 @@ def _runs_above(prob: np.ndarray, threshold: float) -> List[Tuple[int, int]]:
     return runs
 
 
+def _gaussian_smooth(data: np.ndarray, sigma: float) -> np.ndarray:
+    """1D Gaussian filter, numpy-only. Kept identical to infer.inference's
+    gaussian_filter1d so training and the shipped runtime stay in parity."""
+    if sigma <= 0:
+        return data.copy()
+    radius = int(3 * sigma + 0.5)
+    x = np.arange(-radius, radius + 1)
+    kernel = np.exp(-0.5 * (x / sigma) ** 2)
+    kernel = kernel / kernel.sum()
+    padded = np.pad(data, radius, mode="edge")
+    return np.convolve(padded, kernel, mode="valid").astype(data.dtype)
+
+
 def decode_hybrid(
     pointness: np.ndarray,
     start_prob: np.ndarray,
@@ -127,8 +149,14 @@ def decode_hybrid(
     cfg: HeatmapDecodeConfig,
 ) -> List[Interval]:
     window = cfg._refine_window()
+    # Run detection sees the (optionally) smoothed track; the start/end heatmaps
+    # are left raw so boundary refinement keeps its sub-frame sharpness.
+    detect_track = (
+        pointness if cfg.smooth_sigma_frames is None
+        else _gaussian_smooth(pointness, float(cfg.smooth_sigma_frames))
+    )
     segments: List[Interval] = []
-    for i, j in _runs_above(pointness, cfg.threshold):
+    for i, j in _runs_above(detect_track, cfg.threshold):
         s = _soft_argmax_time(start_prob, timestamps, i, window)
         e = _soft_argmax_time(end_prob, timestamps, j, window)
         # Refinement must not invert or escape the detected run's rough span.
@@ -136,7 +164,12 @@ def decode_hybrid(
             s, e = float(timestamps[i]), float(timestamps[j])
         if e > s:
             segments.append((s, e))
-    return _merge_intervals(segments)
+    merged = _merge_intervals(segments)
+    # Duration floor applied AFTER merging, so adjacent fragments that together
+    # form a real point are not discarded individually.
+    if cfg.hybrid_min_duration_sec > 0:
+        merged = [(s, e) for s, e in merged if (e - s) >= cfg.hybrid_min_duration_sec]
+    return merged
 
 
 def decode_peakpair(

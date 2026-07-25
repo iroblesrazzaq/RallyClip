@@ -1,0 +1,5 @@
+# Dataset rebuild after legacy serve-fault merge (2026-07-23):
+# 11 legacy annotation files had first-serve fault cuts (duration<6s,
+# gap-to-next<15s) merged into the following cut — 247 merges, 689->442 segs.
+# Originals preserved in training_data/annotations_legacy_split_serve/.
+run_id: 20260723_v37sm
