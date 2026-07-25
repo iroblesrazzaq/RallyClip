@@ -50,8 +50,12 @@ class HeatmapDecodeConfig:
     # always smoothed (sigma 1.5); hybrid never did, which penalises backbones
     # with noisier per-frame output (e.g. the TCN vs the naturally-smoothed LSTM).
     smooth_sigma_frames: Optional[float] = None
-    # Drop decoded segments shorter than this. `min_duration_sec` above is only
-    # consulted by peakpair's pairing loop; hybrid had no duration filter at all.
+    # Drop decoded segments shorter than this, applied AFTER merging.
+    # Distinct from `min_duration_sec` above, which this runtime's hybrid mode
+    # applies per-segment BEFORE merging (and which peakpair uses for pairing).
+    # NOTE: the training decode does NOT apply min/max_duration_sec in hybrid at
+    # all -- a known parity gap between the two implementations, tracked
+    # separately. This knob behaves identically on both sides.
     hybrid_min_duration_sec: float = 0.0
 
     def _refine_window(self) -> int:
