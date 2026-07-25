@@ -1,0 +1,36 @@
+# 1080p experiment (2026-07-23): new-data only (26 SwingVision videos, no
+# legacy), no court filtering, norm 1920x1080@5fps, same shipped YOLO@960.
+# Isolated data root so the 720p contract tree is untouched.
+# Split mirrors holdout.yaml's new-data subset (legacy videos dropped).
+data_root: /Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/training_data_1080p
+run_id: 20260723_hm64_1080p
+
+normalize:
+  width: 1920
+  height: 1080
+  fps: 5
+
+court:
+  enabled: false
+
+dataset:
+  split:
+    strategy: by_video
+    seed: 67
+    val_ratio: 0.0
+    test_ratio: 0.0
+    test_videos:
+      - "2a78f52697780c3f7fd27962a96e730298e9c15fb2167028ec0e094b58f033b9.mp4"
+      - "a9051e17933a58a0fb86f4799bea43de0673210ebec63ad04035a170bc4dcdc9.mp4"
+      - "a86df9f2c0ea7de59aff9fec703ca178afd4def34303293a3fa2498480c0a952.mp4"
+      - "133663e79e61f2a612dc77c4c8687f3b40142412a77e904e7f4aef6ecdd99bba.mp4"
+      - "729efeb6f27341d3623816323ddeef681073e7b1ee5d14409121c28a4b3beff5.mp4"
+    val_videos:
+      - "b34d1a7011c50f98bc459ae619ce55a59d8b487e4b4c797e0cf5bc3642ca3f09.mp4"
+      - "ba240bbdab57f37a1b3a3d8456feded7e8de058fa8dc83b4511a90bdb18560d9.mp4"
+      - "46cd4d2ecd3a94992304069127b68ac731e74e89fd757ebe58b69769cff312c1.mp4"
+
+train:
+  head: e2e_heatmap
+  hidden_size: 64
+  early_stopping_patience: 10

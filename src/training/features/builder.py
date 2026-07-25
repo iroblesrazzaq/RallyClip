@@ -24,6 +24,8 @@ class FeatureBuildConfig:
     feature_set: str
     target_fps: float
     overwrite: bool = False
+    screen_width: int = 1280
+    screen_height: int = 720
 
 
 class FeatureBuilder:
@@ -52,7 +54,7 @@ class FeatureBuilder:
             logger.warning("Existing features file is stale/invalid; regenerating: %s", output_path)
 
         builder_cls = self.registry.get(self.cfg.feature_set)
-        builder = builder_cls()
+        builder = builder_cls(screen_width=self.cfg.screen_width, screen_height=self.cfg.screen_height)
 
         with h5py.File(preproc_h5, "r") as h5f:
             targets = h5f["targets"][:]
