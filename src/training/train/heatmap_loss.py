@@ -33,6 +33,13 @@ import torch.nn.functional as F
 class HeatmapLossConfig:
     fps: float = 5.0
     sigma_seconds: float = 0.5  # 1σ ≈ "good" tol (0.5s), 2σ ≈ "decent" tol (1.5s)
+    # Asymmetric boundary targets: sigma for the OUTSIDE-the-point side (before a
+    # start / after an end). None => symmetric (sigma_seconds both sides). A fatter
+    # outside tail biases the soft-argmax decode outward — cutting into the point
+    # (late start / early end) ruins a clip, while over-including dead time is
+    # nearly free; the val pad sweep measured a systematic ~0.5s late-start bias
+    # this is designed to absorb in a learned, per-boundary way.
+    sigma_out_seconds: Optional[float] = None
     pos_weight: float = 3.0  # pointness BCE (same default as e2e_seg)
     cls_weight: float = 1.0
     start_weight: float = 1.0
@@ -74,12 +81,12 @@ def boundary_markers(targets: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]
     return start_marker, end_marker
 
 
-def _dist_to_nearest(marker: torch.Tensor) -> torch.Tensor:
-    """Per frame: distance in frames to the nearest True in `marker`, either
-    direction. Frames with no marker anywhere get a large sentinel distance.
-    Vectorized: distance-to-nearest-on-the-left via a forward cummax over marked
-    indices, distance-to-nearest-on-the-right via the same on the flipped tensor,
-    then elementwise min."""
+def _dist_to_nearest_directional(marker: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Per frame: (dist_after, dist_before) in frames — distance to the nearest
+    True at-or-before the frame (frame is AFTER that marker) and to the nearest
+    True at-or-after it (frame is BEFORE that marker). Frames with no marker on a
+    side get a large sentinel. Vectorized via forward cummax over marked indices
+    (and the same on the flipped tensor for the other direction)."""
     batch, length = marker.shape
     device = marker.device
     idx = torch.arange(length, device=device).unsqueeze(0).expand(batch, length)
@@ -91,10 +98,19 @@ def _dist_to_nearest(marker: torch.Tensor) -> torch.Tensor:
         last = torch.cummax(marked_idx, dim=1).values
         return idx - last  # huge where no marker seen yet
 
-    left = dist_left(marker)
-    right = dist_left(marker.flip(1)).flip(1)
-    dist = torch.minimum(left, right)
-    return dist.clamp(max=big).to(torch.float32)
+    after = dist_left(marker)
+    before = dist_left(marker.flip(1)).flip(1)
+    return (
+        after.clamp(max=big).to(torch.float32),
+        before.clamp(max=big).to(torch.float32),
+    )
+
+
+def _dist_to_nearest(marker: torch.Tensor) -> torch.Tensor:
+    """Per frame: distance in frames to the nearest True in `marker`, either
+    direction (min of the two directional distances)."""
+    after, before = _dist_to_nearest_directional(marker)
+    return torch.minimum(after, before)
 
 
 def gaussian_target(dist_frames: torch.Tensor, sigma_frames: float) -> torch.Tensor:
@@ -108,11 +124,30 @@ def gaussian_target(dist_frames: torch.Tensor, sigma_frames: float) -> torch.Ten
 def build_heatmap_targets(
     targets: torch.Tensor, cfg: HeatmapLossConfig
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """(start_heatmap, end_heatmap) soft Gaussian targets in [0, 1], shape [B, T]."""
+    """(start_heatmap, end_heatmap) soft Gaussian targets in [0, 1], shape [B, T].
+
+    Symmetric by default. With sigma_out_seconds set, the OUTSIDE-the-point side
+    (before a start / after an end) uses sigma_out and the inside uses
+    sigma_seconds — the peak stays at the labeled boundary (target==1 there), but
+    the fatter outside tail pulls the soft-argmax refinement outward."""
     start_marker, end_marker = boundary_markers(targets)
-    sigma_frames = cfg.sigma_seconds * cfg.fps
-    start_t = gaussian_target(_dist_to_nearest(start_marker), sigma_frames)
-    end_t = gaussian_target(_dist_to_nearest(end_marker), sigma_frames)
+    sigma_in = cfg.sigma_seconds * cfg.fps
+    if cfg.sigma_out_seconds is None:
+        start_t = gaussian_target(_dist_to_nearest(start_marker), sigma_in)
+        end_t = gaussian_target(_dist_to_nearest(end_marker), sigma_in)
+        return start_t, end_t
+
+    sigma_out = cfg.sigma_out_seconds * cfg.fps
+    # start marker: frames AFTER it are inside the point, frames BEFORE it outside.
+    s_after, s_before = _dist_to_nearest_directional(start_marker)
+    start_t = torch.maximum(
+        gaussian_target(s_after, sigma_in), gaussian_target(s_before, sigma_out)
+    )
+    # end marker: frames AFTER it are outside the point, frames BEFORE it inside.
+    e_after, e_before = _dist_to_nearest_directional(end_marker)
+    end_t = torch.maximum(
+        gaussian_target(e_after, sigma_out), gaussian_target(e_before, sigma_in)
+    )
     return start_t, end_t
 
 

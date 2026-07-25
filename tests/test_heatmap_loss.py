@@ -243,3 +243,32 @@ def test_decode_peakpair_max_duration_rejects():
                               min_duration_sec=0.3, max_duration_sec=5.0)
     segs = decode_heatmap_segments(pointness, start_p, end_p, ts, cfg)
     assert segs == []
+
+
+def test_asymmetric_targets_fatten_outside_only():
+    """sigma_out fattens the outside-the-point tail (before starts / after ends);
+    the peak stays 1.0 at the boundary and the inside slope is unchanged, so the
+    symmetric path (sigma_out=None) is a strict special case."""
+    import torch
+    from training.train.heatmap_loss import HeatmapLossConfig, build_heatmap_targets
+
+    t = torch.zeros(1, 20)
+    t[0, 5:11] = 1.0  # one point: frames 5..10
+
+    sym_cfg = HeatmapLossConfig(fps=5.0, sigma_seconds=0.5)
+    asym_cfg = HeatmapLossConfig(fps=5.0, sigma_seconds=0.5, sigma_out_seconds=1.0)
+    s_sym, e_sym = build_heatmap_targets(t, sym_cfg)
+    s_asym, e_asym = build_heatmap_targets(t, asym_cfg)
+
+    # peaks stay exactly at the labeled boundaries
+    assert s_asym[0, 5] == 1.0
+    assert e_asym[0, 10] == 1.0
+    # start: frames BEFORE the start (outside) get more mass; inside unchanged
+    # (atol: the no-next-marker sentinel distance leaks a ~1e-4 floor through the
+    # fat outside sigma in this tiny 20-frame window; at real seq_len=100 the
+    # sentinel term is exp(-204) == 0.)
+    assert torch.all(s_asym[0, :5] > s_sym[0, :5])
+    assert torch.allclose(s_asym[0, 6:], s_sym[0, 6:], atol=2e-4)
+    # end: frames AFTER the end (outside) get more mass; inside unchanged
+    assert torch.all(e_asym[0, 11:] > e_sym[0, 11:])
+    assert torch.allclose(e_asym[0, :10], e_sym[0, :10], atol=2e-4)
