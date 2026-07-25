@@ -277,6 +277,8 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
         feature_dim=train_ds.feature_dim,
         backbone=backbone,
         hidden_size=hidden_size,
+        tcn_levels=tcn_levels,
+        tcn_kernel_size=tcn_kernel_size,
     )
 
 
@@ -294,6 +296,8 @@ def write_run_manifest(
     feature_dim: int,
     backbone: str = "lstm",
     hidden_size: int = 128,
+    tcn_levels: int = 5,
+    tcn_kernel_size: int = 3,
 ) -> Path:
     dataset_manifest: Dict[str, Any] = {}
     manifest_path = dataset_dir / "dataset_manifest.json"
@@ -317,14 +321,27 @@ def write_run_manifest(
             "model_type": "e2e_heatmap",
         },
         "model": {
-            "architecture": "TennisPointHeatmapGRU" if str(backbone).lower() == "gru" else "TennisPointHeatmapLSTM",
+            "architecture": {
+                "gru": "TennisPointHeatmapGRU",
+                "tcn": "TennisPointHeatmapTCN",
+            }.get(str(backbone).lower(), "TennisPointHeatmapLSTM"),
             "backbone": str(backbone).lower(),
             "hidden_size": hidden_size,
-            "num_layers": 2,
-            "bidirectional": True,
             "dropout": 0.2,
             "input_size": feature_dim,
             "outputs": ["pointness_logit", "start_heatmap_logit", "end_heatmap_logit"],
+            # Depth/context fields are backbone-specific: num_layers/bidirectional
+            # describe the recurrent stacks, levels/kernel/receptive_field the TCN.
+            # Reporting the other backbone's fields would misdescribe the artifact.
+            **(
+                {
+                    "tcn_levels": tcn_levels,
+                    "tcn_kernel_size": tcn_kernel_size,
+                    "receptive_field_frames": 1 + 2 * (tcn_kernel_size - 1) * (2 ** tcn_levels - 1),
+                }
+                if str(backbone).lower() == "tcn"
+                else {"num_layers": 2, "bidirectional": True}
+            ),
         },
         "loss": _to_jsonable(asdict(loss_cfg)),
         "training": {
