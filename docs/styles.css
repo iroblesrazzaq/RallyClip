@@ -249,7 +249,8 @@ tr:last-child td {
     border-bottom: 0;
 }
 
-ul {
+ul,
+ol {
     max-width: 760px;
     margin: 16px 0;
     padding-left: 22px;
