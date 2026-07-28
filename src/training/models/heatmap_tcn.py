@@ -77,6 +77,7 @@ class TennisPointHeatmapTCN(nn.Module):
         kernel_size: int = 3,
         dropout: float = 0.2,
         head: str = "mlp",
+        stem_hidden: int | None = None,
     ) -> None:
         super().__init__()
         self.input_size = input_size
@@ -84,10 +85,24 @@ class TennisPointHeatmapTCN(nn.Module):
         self.levels = levels
         self.kernel_size = kernel_size
         self.head = head
+        self.stem_hidden = stem_hidden
 
-        # 1x1 conv projects features to the trunk width; keeps the residual
-        # stack at constant channels so every block can use an identity skip.
-        self.input_proj = nn.Conv1d(input_size, hidden_size, kernel_size=1)
+        # Projection from features to the trunk width; keeps the residual stack
+        # at constant channels so every block can use an identity skip.
+        #
+        # stem_hidden=None (default): a single 1x1 conv, i.e. one affine map per
+        # frame. With stem_hidden=S: two 1x1 convs with ReLU between, so the
+        # per-frame projection becomes nonlinear (input -> S -> hidden_size).
+        # Both are pointwise -- no temporal mixing happens before the blocks.
+        if stem_hidden is None:
+            self.input_proj = nn.Conv1d(input_size, hidden_size, kernel_size=1)
+        else:
+            self.input_proj = nn.Sequential(
+                nn.Conv1d(input_size, stem_hidden, kernel_size=1),
+                nn.ReLU(),
+                nn.Conv1d(stem_hidden, hidden_size, kernel_size=1),
+                nn.ReLU(),
+            )
         self.blocks = nn.ModuleList(
             [_TemporalBlock(hidden_size, kernel_size, 2 ** i, dropout) for i in range(levels)]
         )

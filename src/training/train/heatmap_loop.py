@@ -37,6 +37,8 @@ def build_heatmap_model(
     hidden_size: int = 128,
     tcn_levels: int = 5,
     tcn_kernel_size: int = 3,
+    dropout: float = 0.2,
+    tcn_stem_hidden: int | None = None,
 ) -> torch.nn.Module:
     """Backbone selector for the heatmap head. lstm (default) | gru | tcn.
 
@@ -44,16 +46,20 @@ def build_heatmap_model(
     """
     b = str(backbone).lower()
     if b == "lstm":
-        return TennisPointHeatmapLSTM(input_size=input_size, hidden_size=hidden_size, head=head)
+        return TennisPointHeatmapLSTM(input_size=input_size, hidden_size=hidden_size, head=head,
+                                      dropout=dropout)
     if b == "gru":
-        return TennisPointHeatmapGRU(input_size=input_size, hidden_size=hidden_size, head=head)
+        return TennisPointHeatmapGRU(input_size=input_size, hidden_size=hidden_size, head=head,
+                                     dropout=dropout)
     if b == "tcn":
         return TennisPointHeatmapTCN(
             input_size=input_size,
             hidden_size=hidden_size,
             levels=tcn_levels,
             kernel_size=tcn_kernel_size,
+            dropout=dropout,
             head=head,
+            stem_hidden=tcn_stem_hidden,
         )
     raise ValueError(f"Unknown heatmap_backbone: {backbone!r} (expected lstm | gru | tcn)")
 
@@ -87,8 +93,11 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
     hidden_size = int(config.get("hidden_size", 128))
     tcn_levels = int(config.get("heatmap_tcn_levels", 5))
     tcn_kernel_size = int(config.get("heatmap_tcn_kernel_size", 3))
+    tcn_stem_hidden = _opt_int(config, "heatmap_tcn_stem_hidden")
+    dropout = float(config.get("dropout", 0.2))
     model = build_heatmap_model(
-        backbone, train_ds.feature_dim, head, hidden_size, tcn_levels, tcn_kernel_size
+        backbone, train_ds.feature_dim, head, hidden_size, tcn_levels, tcn_kernel_size, dropout,
+        tcn_stem_hidden,
     ).to(device)
 
     if config.get("pos_weight") is None:
@@ -199,7 +208,8 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
         # eval of the reloaded weights is exactly what ships.
         cpu_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         eval_model = build_heatmap_model(
-            backbone, train_ds.feature_dim, head, hidden_size, tcn_levels, tcn_kernel_size
+            backbone, train_ds.feature_dim, head, hidden_size, tcn_levels, tcn_kernel_size, dropout,
+            tcn_stem_hidden,
         )
         eval_model.load_state_dict(cpu_state)
         eval_model.eval()
@@ -327,7 +337,7 @@ def write_run_manifest(
             }.get(str(backbone).lower(), "TennisPointHeatmapLSTM"),
             "backbone": str(backbone).lower(),
             "hidden_size": hidden_size,
-            "dropout": 0.2,
+            "dropout": float(config.get("dropout", 0.2)),
             "input_size": feature_dim,
             "outputs": ["pointness_logit", "start_heatmap_logit", "end_heatmap_logit"],
             # Depth/context fields are backbone-specific: num_layers/bidirectional

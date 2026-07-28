@@ -31,6 +31,7 @@ def build_preprocess_fingerprint(
     target_fps: float,
     court_model_path: str,
     court_target_time: Optional[int],
+    crop_h5_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     return {
         "kind": "preprocess_v1",
@@ -40,6 +41,10 @@ def build_preprocess_fingerprint(
         "court_model_path": str(court_model_path),
         # None => midpoint anchor; keep it distinct from any int in the hash.
         "court_target_time": ("middle" if court_target_time is None else int(court_target_time)),
+        # None => no far-crop side-car. Including its hash means adding or
+        # regenerating crop poses invalidates the preprocessed cache.
+        "crop_h5_sha256": (file_sha256(crop_h5_path)
+                           if crop_h5_path is not None and Path(crop_h5_path).exists() else None),
     }
 
 

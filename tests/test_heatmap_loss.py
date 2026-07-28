@@ -272,3 +272,26 @@ def test_asymmetric_targets_fatten_outside_only():
     # end: frames AFTER the end (outside) get more mass; inside unchanged
     assert torch.all(e_asym[0, 11:] > e_sym[0, 11:])
     assert torch.allclose(e_asym[0, :10], e_sym[0, :10], atol=2e-4)
+
+
+def test_tcn_stem_roundtrips_through_the_model_factory():
+    """A 2-layer stem turns input_proj into a Sequential, renaming its state-dict
+    keys. Every build site must pass stem_hidden through or load_state_dict fails
+    -- which is exactly how the first stem run died (the CPU eval_model was built
+    without it)."""
+    import torch
+    from training.train.heatmap_loop import build_heatmap_model
+
+    src = build_heatmap_model("tcn", 362, "mlp", 32, 5, 3, 0.2, 128)
+    dst = build_heatmap_model("tcn", 362, "mlp", 32, 5, 3, 0.2, 128)
+    dst.load_state_dict({k: v.clone() for k, v in src.state_dict().items()})
+    assert "input_proj.0.weight" in src.state_dict()
+    assert sum(p.numel() for p in src.parameters()) == 86787
+    # default (no stem) must be untouched
+    plain = build_heatmap_model("tcn", 362, "mlp", 64, 5, 3)
+    assert "input_proj.weight" in plain.state_dict()
+    assert sum(p.numel() for p in plain.parameters()) == 156675
+    src.eval(); dst.eval()
+    x = torch.randn(2, 40, 362)
+    with torch.no_grad():
+        assert torch.allclose(src(x)[0], dst(x)[0], atol=1e-6)

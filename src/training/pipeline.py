@@ -34,6 +34,7 @@ from training.paths import (
     annotations_dir,
     datasets_dir,
     pose_courts_dir,
+    pose_data_dir,
     pose_features_dir,
     pose_preprocessed_dir,
     pose_raw_dir,
@@ -552,6 +553,14 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
         annotations_path = ann_dir / f"{video_path.name}.json"
         output_path = output_root / f"{video_path.stem}__fps{fps}.h5"
         existed = output_path.exists() and not overwrite
+        # Far-crop side-car, if scripts/extract_crop_poses.py has been run for
+        # this video. Absent => crop slots are simply not written, and the
+        # feature builder fills them with the sentinel.
+        crop_h5 = (
+            pose_data_dir(data_root) / "crop_raw" / f"yolo={model_tag}" / f"conf={conf_tag}"
+            / f"imgsz={imgsz}" / _raw_h5_filename(video_path.stem, start_time, duration,
+                                                  sampling_mode, sample_fps)
+        )
         result = preprocessor.preprocess(
             data_root=data_root,
             raw_h5_path=raw_h5,
@@ -559,6 +568,7 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
             annotations_path=annotations_path,
             output_path=output_path,
             overwrite=overwrite,
+            crop_h5_path=crop_h5 if crop_h5.exists() else None,
         )
         if result is None:
             if not annotations_path.exists():
@@ -597,8 +607,8 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
             court_fail.append(stem)
     if court_fail:
         logger.warning(
-            "Court detection did NOT succeed for %d/%d videos (preprocessed WITHOUT "
-            "court filtering): %s",
+            "Court detection did NOT succeed for %d/%d videos (preprocessed with the "
+            "DEFAULT court mask): %s",
             len(court_fail), len(videos), ", ".join(s[:12] for s in court_fail),
         )
     else:
@@ -813,10 +823,20 @@ def _run_eval(config: Dict[str, Any]) -> None:
         backbone = str(train_cfg.get("heatmap_backbone", "lstm"))
         tcn_levels = int(train_cfg.get("heatmap_tcn_levels", 5))
         tcn_kernel_size = int(train_cfg.get("heatmap_tcn_kernel_size", 3))
+        tcn_stem_hidden = None
         if backbone.lower() == "tcn":
-            weight = state.get("input_proj.weight")  # (channels, input_size, 1)
-            input_size = int(weight.shape[1]) if weight is not None else 0
-            hidden_size = int(weight.shape[0]) if weight is not None else 64
+            # A 2-layer stem makes input_proj a Sequential (input_proj.0/.2), so
+            # read both widths off the checkpoint rather than assuming one conv.
+            stem_first = state.get("input_proj.0.weight")
+            if stem_first is not None:
+                weight = state.get("input_proj.2.weight")
+                input_size = int(stem_first.shape[1])
+                tcn_stem_hidden = int(stem_first.shape[0])
+                hidden_size = int(weight.shape[0])
+            else:
+                weight = state.get("input_proj.weight")  # (channels, input_size, 1)
+                input_size = int(weight.shape[1]) if weight is not None else 0
+                hidden_size = int(weight.shape[0]) if weight is not None else 64
             # Trust the checkpoint over config for depth.
             block_ids = {
                 int(k.split(".")[1]) for k in state if k.startswith("blocks.") and ".conv1." in k
@@ -831,7 +851,7 @@ def _run_eval(config: Dict[str, Any]) -> None:
             hidden_size = int(weight.shape[0] // gates) if weight is not None else 128
         model = build_heatmap_model(
             backbone, input_size, str(train_cfg.get("heatmap_head", "mlp")), hidden_size,
-            tcn_levels, tcn_kernel_size,
+            tcn_levels, tcn_kernel_size, float(train_cfg.get("dropout", 0.2)), tcn_stem_hidden,
         )
         model.load_state_dict(state)
         fps = float(preprocess_cfg.get("target_fps", 5))
