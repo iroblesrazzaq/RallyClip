@@ -44,6 +44,10 @@ class HeatmapDecodeConfig:
     min_duration_sec: float = 0.3
     max_duration_sec: float = 60.0
     pointness_gate: Optional[float] = None  # peakpair mode; None disables
+    # pairdp: per-segment cost subtracted from each segment's log-odds score. A
+    # prior on how many segments exist -- without it the DP admits every pair that
+    # scores positive and over-segments (878 preds for 460 GT at lambda=0).
+    pair_penalty: float = 0.0
     # --- hybrid-mode false-positive filtering (both default to no-ops, so
     # existing hybrid results reproduce bit-for-bit) ---
     # Gaussian-smooth pointness before run detection. The classic decode has
@@ -210,6 +214,104 @@ def decode_peakpair(
     return _merge_intervals(segments)
 
 
+def _logit(p: float, eps: float = 1e-6) -> float:
+    p = min(max(float(p), eps), 1.0 - eps)
+    return math.log(p / (1.0 - p))
+
+
+def decode_pairdp(
+    pointness: np.ndarray,
+    start_prob: np.ndarray,
+    end_prob: np.ndarray,
+    timestamps: np.ndarray,
+    cfg: HeatmapDecodeConfig,
+) -> List[Interval]:
+    """Globally optimal start->end pairing by dynamic programming.
+
+    `decode_peakpair` walks starts left to right and takes the first unused end
+    that clears min_duration. That commits irrevocably: one bad match shifts every
+    later pairing, which is why its recall collapsed to 8.9% despite the model
+    scoring 0.85 on true boundaries and 0.18 on background.
+
+    Here the segmentation is chosen jointly. Score a candidate segment by the sum
+    of boundary LOG-ODDS:
+
+        score(s, e) = logit(start_prob[s]) + logit(end_prob[e])
+
+    which is self-calibrating -- a boundary with p > 0.5 contributes positively and
+    one with p < 0.5 contributes negatively, so the optimiser decides how many
+    segments to emit instead of a threshold deciding for it. Maximising the total
+    over all valid segmentations (strictly alternating, non-overlapping, duration
+    within [min, max]) is a shortest-path problem on a DAG, solved exactly here in
+    O(m*n) over peak candidates.
+
+    peak_threshold is only a candidate filter (keep it low); the log-odds objective
+    does the real selection.
+    """
+    nms = cfg._nms()
+    window = cfg._refine_window()
+    s_idx = sorted(_pick_peaks(start_prob, cfg.peak_threshold, nms))
+    e_idx = sorted(_pick_peaks(end_prob, cfg.peak_threshold, nms))
+    if not s_idx or not e_idx:
+        return []
+
+    s_time = [_soft_argmax_time(start_prob, timestamps, i, window) for i in s_idx]
+    e_time = [_soft_argmax_time(end_prob, timestamps, i, window) for i in e_idx]
+    s_score = [_logit(start_prob[i]) for i in s_idx]
+    e_score = [_logit(end_prob[i]) for i in e_idx]
+    m, n = len(s_idx), len(e_idx)
+
+    # best_closed[j] = best total score using ends up to (and including) j, all
+    # segments closed. best_closed_before(t) is the running prefix max.
+    NEG = float("-inf")
+    best_closed = [0.0] * (n + 1)      # best_closed[j] = best score using ends[:j]
+    back = [None] * (n + 1)            # (prev_j, start_i) that produced best_closed[j]
+
+    for j in range(1, n + 1):
+        # option A: do not close a segment at end j
+        best_closed[j] = best_closed[j - 1]
+        back[j] = (j - 1, None)
+        # option B: close a segment at end j, opened at some start i
+        et = e_time[j - 1]
+        cand, cand_i, cand_pj = NEG, None, None
+        for i in range(m):
+            dur = et - s_time[i]
+            if dur < cfg.min_duration_sec:
+                break                                    # s_time ascending -> no later i qualifies
+            if dur > cfg.max_duration_sec:
+                continue
+            # the previous segment must close strictly before this start
+            pj = _last_end_before(e_time, s_time[i], j - 1)
+            val = best_closed[pj] + s_score[i] + e_score[j - 1] - cfg.pair_penalty
+            if val > cand:
+                cand, cand_i, cand_pj = val, i, pj
+        if cand_i is not None and cand > best_closed[j]:
+            best_closed[j] = cand
+            back[j] = (cand_pj, cand_i)
+
+    segments: List[Interval] = []
+    j = n
+    while j > 0:
+        prev_j, i = back[j]
+        if i is not None:
+            segments.append((s_time[i], e_time[j - 1]))
+        j = prev_j
+    segments.reverse()
+    return _merge_intervals(segments)
+
+
+def _last_end_before(e_time: List[float], t: float, upto: int) -> int:
+    """Count of ends strictly before time t, capped at `upto` (index into best_closed)."""
+    lo, hi = 0, upto
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if e_time[mid] < t:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
 def decode_heatmap_segments(
     pointness: np.ndarray,
     start_prob: np.ndarray,
@@ -221,7 +323,9 @@ def decode_heatmap_segments(
         return decode_hybrid(pointness, start_prob, end_prob, timestamps, cfg)
     if cfg.mode == "peakpair":
         return decode_peakpair(pointness, start_prob, end_prob, timestamps, cfg)
-    raise ValueError(f"Unknown decode mode: {cfg.mode!r} (expected hybrid | peakpair)")
+    if cfg.mode == "pairdp":
+        return decode_pairdp(pointness, start_prob, end_prob, timestamps, cfg)
+    raise ValueError(f"Unknown decode mode: {cfg.mode!r} (expected hybrid | peakpair | pairdp)")
 
 
 def _stitch_videos_heatmap(

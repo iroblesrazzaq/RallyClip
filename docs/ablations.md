@@ -104,3 +104,55 @@ split, and target boundary precision (bad_seg) rather than player visibility.
 - `scripts/extract_crop_poses.py` now uses the manifest pose backend
   (`load_pose_backend(..., provider="coreml")`), so both passes run identical weights.
   Verified parity vs ultralytics `.pt`: 17,591 vs 17,575 detections (0.09%).
+
+### Boundary-only objective + DP pairing decode, 2026-07-29
+
+**Question.** Train the TCN on startness/endness only (no pointness objective),
+and pair start->end at decode. Two sub-questions turned out to be entangled.
+
+**Setup.** 37-video 720p corpus, v1 362-dim features, TCN c64 L5 k3, cosine 1e-4.
+`heatmap_cls_weight: 0.0` removes the pointness term (note: the loss reads
+`heatmap_cls_weight`, NOT `cls_weight`). sigma 0.7s. selection_metric: f1 (added
+this session -- `acceptable` is recall-only, which under peak-pairing rewards
+emitting more peaks since nothing bounds the segment count).
+
+**Results** (val-tuned decode, test-reported, ranked on F1 over good+decent):
+
+| model | decoder | test F1 | prec | rec |
+|---|---|---|---|---|
+| champion (with pointness) | hybrid | **41.5%** | 38.8% | **44.6%** |
+| boundary-only, DP-selected ckpt | DP lambda=3 | 33.6% | 38.6% | 29.8% |
+| boundary-only, blind-selected ckpt | DP lambda=3 | 29.1% | 38.4% | 23.5% |
+| champion | DP lambda=2 | 28.6% | 32.2% | 25.7% |
+| boundary-only | greedy peakpair | 14.2% | 24.5% | 10.0% |
+| champion | greedy peakpair | 6.9% | 14.3% | 4.6% |
+
+**1. The decoder was worth +21.7 F1** (6.9 -> 28.6 on an identical checkpoint).
+Greedy peakpair walks starts left to right and takes the first free end, so one
+bad match cascades. `decode_pairdp` scores a segmentation by summed boundary
+log-odds `logit(p_start) + logit(p_end) - lambda` and maximises exactly over all
+valid segmentations (alternating, non-overlapping, duration-bounded) by DP.
+The lambda term is half the win: at lambda=0 the DP over-segments (782 preds for
+460 GT, 17.2% F1) because every positive-scoring pair gets admitted.
+
+**2. Checkpoint selection through a broken decoder cost +4.5 F1** (29.1 -> 33.6).
+The first run selected via greedy peakpair at peak_threshold 0.3, where 16% of
+frames clear threshold against 0.9% true boundaries -- every epoch scored ~1%
+good+decent, so "best.pth" was arbitrary. Wiring the tuned DP decode into
+training fixed selection without touching the model.
+
+**3. The objective comparison was unmeasurable until the decoder worked.**
+Boundary-only vs pointness-trained read +5.9 F1 under greedy, +0.5 under DP
+lambda=0, and +5.0 under tuned DP. Single split, and CV std on this corpus is
+~10 F1. NOT settled -- do not cite a number for this.
+
+**Where hybrid still wins: recall, not precision.** 38.6 vs 38.8 precision (a
+dead heat) against 29.8 vs 44.6 recall. Two boundary heatmaps underdetermine HOW
+MANY points exist; DP guesses with a scalar lambda while hybrid reads it off the
+pointness track. Pointness earns its keep in the DECODER, not the loss.
+
+**Next.** DP pairing with pointness informing the segment prior (e.g. add mean
+pointness over [s,e] to the segment score in place of a constant lambda) --
+keeps DP's boundary precision and hybrid's recall. Diagnostic supporting this:
+the boundary-only model predicts 0.85 at true boundary frames vs 0.18
+background, so boundary localisation is not the limitation.

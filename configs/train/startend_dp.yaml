@@ -1,0 +1,40 @@
+# Boundary-only training, with the DP pairing decoder wired into TRAINING.
+#
+# The first startness/endness run (20260728_startend_only) selected its checkpoint
+# through greedy peakpair at peak_threshold=0.3 -- a decoder that generated ~18x
+# too many candidates, so every epoch scored ~1% good+decent and "best.pth"
+# (epoch 16) was effectively chosen at random. Re-decoding that same checkpoint
+# with DP + penalty gave 29.1% test F1, so the model was always fine; the
+# selector was blind.
+#
+# Here the training-time decode is the tuned one, so early stopping and
+# checkpoint selection see the metric we actually care about:
+#   pairdp, peak_threshold 0.05 (candidate filter only), pair_penalty 3.0
+#   (val-tuned on the previous run's checkpoint), min_duration 3.0.
+run_id: 20260729_startend_dp
+train:
+  head: e2e_heatmap
+  heatmap_backbone: tcn
+  hidden_size: 64
+  heatmap_tcn_levels: 5
+  heatmap_tcn_kernel_size: 3
+  dropout: 0.2
+  lr: 0.0001
+  lr_schedule: cosine
+  lr_eta_min: 0.0
+  epochs: 30
+  early_stopping_patience: 30
+
+  # boundary-only objective (loss reads heatmap_cls_weight, not cls_weight)
+  heatmap_cls_weight: 0.0
+  heatmap_start_weight: 1.0
+  heatmap_end_weight: 1.0
+  heatmap_sigma_seconds: 0.7
+
+  # DP pairing decode, tuned
+  heatmap_decode_mode: pairdp
+  heatmap_peak_threshold: 0.05
+  heatmap_pair_penalty: 3.0
+  heatmap_min_duration_sec: 3.0
+  heatmap_pointness_gate: null
+  selection_metric: f1

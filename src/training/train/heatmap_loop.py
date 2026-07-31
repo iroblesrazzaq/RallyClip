@@ -64,6 +64,23 @@ def build_heatmap_model(
     raise ValueError(f"Unknown heatmap_backbone: {backbone!r} (expected lstm | gru | tcn)")
 
 
+def _acceptable_f1(metrics: Dict[str, float]) -> float:
+    """F1 over the (good + decent) set: harmonic mean of precision and recall.
+
+    `acceptable` (the historical default) is (good+decent)/n_gt -- recall with no
+    precision term, so a model that floods the timeline with predictions scores
+    well on it. That is safe-ish under hybrid decode, where pointness runs bound
+    how many segments can appear, but not under peakpair, where every extra peak
+    pair is another segment. Selecting on F1 makes over-prediction cost something.
+    """
+    ok = float(metrics.get("n_good", 0.0)) + float(metrics.get("n_decent", 0.0))
+    n_gt = float(metrics.get("n_gt", 0.0))
+    n_pred = float(metrics.get("n_pred", 0.0))
+    recall = ok / n_gt if n_gt else 0.0
+    precision = ok / n_pred if n_pred else 0.0
+    return 2.0 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+
+
 def _opt_int(config: Dict[str, Any], key: str):
     v = config.get(key)
     return None if v is None else int(v)
@@ -159,12 +176,13 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
         min_duration_sec=float(config.get("heatmap_min_duration_sec", 0.3)),
         max_duration_sec=float(config.get("heatmap_max_duration_sec", 60.0)),
         pointness_gate=_opt_float(config, "heatmap_pointness_gate"),
+        pair_penalty=float(config.get("heatmap_pair_penalty", 0.0)),
     )
     six_bin_cfg = SixBinConfig()
     early_stopping_patience = max(0, int(config.get("early_stopping_patience", 0)))
     early_stopping_min_delta = float(config.get("early_stopping_min_delta", 0.0))
     selection_metric = str(config.get("selection_metric", "acceptable"))
-    if selection_metric not in ("val_loss", "acceptable", "good_weighted"):
+    if selection_metric not in ("val_loss", "acceptable", "good_weighted", "f1"):
         raise ValueError(f"Unknown selection_metric: {selection_metric}")
 
     best_score = float("-inf")
@@ -248,6 +266,8 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
             score = -val_loss
         elif selection_metric == "good_weighted":
             score = 2.0 * float(val_metrics.get("share_good", 0.0)) + float(val_metrics.get("share_decent", 0.0))
+        elif selection_metric == "f1":
+            score = _acceptable_f1(val_metrics)
         else:
             score = float(val_metrics.get("share_good", 0.0)) + float(val_metrics.get("share_decent", 0.0))
 

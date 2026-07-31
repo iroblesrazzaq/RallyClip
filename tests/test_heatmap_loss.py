@@ -295,3 +295,20 @@ def test_tcn_stem_roundtrips_through_the_model_factory():
     x = torch.randn(2, 40, 362)
     with torch.no_grad():
         assert torch.allclose(src(x)[0], dst(x)[0], atol=1e-6)
+
+
+def test_f1_selection_metric_penalises_over_prediction():
+    """`acceptable` is recall-only: doubling n_pred with no extra hits leaves it
+    unchanged. F1 must drop. This is why the startness/endness run selects on F1 --
+    peakpair decode has no pointness run to bound how many segments it emits."""
+    from training.train.heatmap_loop import _acceptable_f1
+
+    lean = {"n_good": 40.0, "n_decent": 60.0, "n_gt": 200.0, "n_pred": 200.0}
+    spammy = {"n_good": 40.0, "n_decent": 60.0, "n_gt": 200.0, "n_pred": 400.0}
+    acceptable = lambda m: (m["n_good"] + m["n_decent"]) / m["n_gt"]  # noqa: E731
+
+    assert acceptable(lean) == acceptable(spammy) == 0.5, "recall-only is blind to n_pred"
+    assert _acceptable_f1(lean) == pytest.approx(0.5)
+    assert _acceptable_f1(spammy) == pytest.approx(1 / 3)
+    assert _acceptable_f1(spammy) < _acceptable_f1(lean)
+    assert _acceptable_f1({"n_good": 0.0, "n_decent": 0.0, "n_gt": 10.0, "n_pred": 0.0}) == 0.0
