@@ -10,7 +10,6 @@ This repo ships:
 
 
 ## Features coming soon (in rough order)
-- Retrain on scaled data
 - iOS mobile app beta coming soon
 
 
@@ -40,30 +39,11 @@ branch handoff and test commands.
 ## Features down the road
 In no particular order,
 - OPTIMIZE TF OUTTA THE MODELS TO MAKE THEM FASTER AND BETTER!!!!
-- Find best inference setup (YOLO batching, etc) – mostly for deployed app by also will release open source :)
+- Mobile app (once I can scale data more to push down model size by expanding the repertoire of architectures I can use, particularly in training more complex deep learning models from scratch)
 - Doubles support (need to label + train on doubles data)
 - Open dataset (once deployed, opt-in for publicly available dataset for open-source community to use)
 - Match scoring
-- Mobile app (once I can scale data more to push down model size by expanding the repertoire of architectures I can use, particularly in training more complex deep learning models from scratch)
 - Better resolution support: 720p, 1080p, 1440p, 4K. Training models for each, finding out best yolo params etc for them, given that YOLO downscales regardless it might not matter, but will look into. 
-
-## Optimizations/things I'm thinking about
-These aren't necessarily features per se, but things I want to try implementing for better + more efficient models
-- Training postprocessing model (thinking a 1d-CNN for now on the LSTM outputs)
-- Adding some lower-dimensional visual representation of the court to the postprocessing model
-  - maybe some trained/fine-tuned vision conv net to extract features missed in the pose model
-- Training frame-probability objective and post-process objective simultaneously
-  - The way I envision this is either:
-    1. Just one loss term of a combo of IoU over frames + weighted MSE distance of endpoints biased towards longer points rather than underestimating lengths, as well as losses for false positives or false negatives
-    2. Two loss terms, one being the frame-level probability objective used before, and the other is the loss term described above, the frame level loss would only impact LSTM backbone, the segment loss would backprop over entire net
-- Low confidence moments for manual review (idea right now is to train the model on an additional loss term for confidence, likely both in LSTM frame backbone and output postprocess
-- Fine tune YOLO? One option is to fine-tune YOLO nano on YOLO Large outputs for all match footage. Or some other less naive approach with the models in mind, potentially including YOLO outputs in backprop (attaching YOLO directly to LSTM model as a CNN input transformation, then doing LoRA or last 2 layers adaptation only)
-- exploring different model architectures - maybe LSTM with attention
-- Fine-tune YOLO models to only capture 1 of: near player, far player, or the ball itself.
-- Adding audio modality (is clear, helpful signal sometimes, very unhelpful other times)
-  - would need different models if audio doesn't exist, as well as audio preprocessing pipeline. Need to train to be robust to noise.
-- More data augmentaion - currently only doing mirror video
-- Feature engineering - experiment more. 
 
 
 
