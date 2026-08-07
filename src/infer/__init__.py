@@ -9,7 +9,16 @@ from .inference import (
     run_windowed_inference_average_stream,
     run_windowed_inference_average_onnx_stream,
     run_windowed_inference_average_torch_stream,
+    run_multitrack_windowed_inference_stream,
+    run_multitrack_windowed_inference_onnx_stream,
+    run_multitrack_windowed_inference_torch_stream,
     write_segments_csv,
+)
+from .heatmap_decode import (
+    HeatmapDecodeConfig,
+    decode_heatmap_segments,
+    decode_hybrid,
+    decode_peakpair,
 )
 
 __all__ = [
@@ -24,7 +33,14 @@ __all__ = [
     "run_windowed_inference_average_stream",
     "run_windowed_inference_average_onnx_stream",
     "run_windowed_inference_average_torch_stream",
+    "run_multitrack_windowed_inference_stream",
+    "run_multitrack_windowed_inference_onnx_stream",
+    "run_multitrack_windowed_inference_torch_stream",
     "write_segments_csv",
+    "HeatmapDecodeConfig",
+    "decode_heatmap_segments",
+    "decode_hybrid",
+    "decode_peakpair",
 ]
 
 
