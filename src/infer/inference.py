@@ -402,6 +402,209 @@ def run_windowed_inference_average_torch_stream(
     )
 
 
+def run_multitrack_windowed_inference_stream(
+    feature_rows,
+    run_window: Callable[[np.ndarray], np.ndarray],
+    sequence_length: int,
+    overlap: int,
+    num_tracks: int,
+    progress_callback: Optional[Callable[[float], None]] = None,
+    total_windows: Optional[int] = None,
+) -> np.ndarray:
+    """Windowed-average inference producing ``num_tracks`` per-frame probability
+    tracks (e.g. pointness / startness / endness) in a single pass.
+
+    Identical windowing and float32 slice-accumulation to
+    :func:`run_windowed_inference_average_stream`, generalised from one track to
+    ``num_tracks``. ``run_window`` maps a ``(sequence_length, F)`` window to a
+    ``(num_tracks, sequence_length)`` probability array. Returns a
+    ``(num_tracks, num_frames)`` float32 array of per-frame averages. Peak feature
+    memory stays O(seq_len); only the (num_tracks, num_frames) accumulator is
+    O(num_frames).
+    """
+    from collections import deque
+
+    L = int(sequence_length)
+    K = int(num_tracks)
+    if L <= 0:
+        raise ValueError("sequence_length must be > 0")
+    if overlap < 0 or overlap >= L:
+        raise ValueError("overlap must be in [0, sequence_length-1]")
+    if K <= 0:
+        raise ValueError("num_tracks must be > 0")
+    step = L - overlap
+
+    ring: deque = deque(maxlen=L)
+    cap = max(L, 1024)
+    summed = np.zeros((K, cap), dtype=np.float32)
+    counts = np.zeros(cap, dtype=np.int32)
+    n = 0
+    next_start = 0
+    fired = 0
+
+    def _grow(size: int) -> None:
+        nonlocal summed, counts, cap
+        if size <= cap:
+            return
+        new_cap = cap
+        while new_cap < size:
+            new_cap *= 2
+        new_s = np.zeros((K, new_cap), dtype=np.float32)
+        new_s[:, : summed.shape[1]] = summed
+        new_c = np.zeros(new_cap, dtype=np.int32)
+        new_c[: counts.size] = counts
+        summed, counts, cap = new_s, new_c, new_cap
+
+    def _fire(start: int) -> None:
+        nonlocal fired
+        window = np.stack(tuple(ring)).astype(np.float32)
+        probs = np.asarray(run_window(window), dtype=np.float32)
+        if probs.shape != (K, L):
+            raise ValueError(
+                f"window output shape mismatch: got {probs.shape}, expected {(K, L)}. "
+                "Check num_tracks / seq_len against model manifest."
+            )
+        summed[:, start:start + L] += probs
+        counts[start:start + L] += 1
+        fired += 1
+        if progress_callback is not None and total_windows:
+            try:
+                progress_callback(fired / float(total_windows))
+            except Exception:
+                pass
+
+    for row in feature_rows:
+        ring.append(np.asarray(row, dtype=np.float32))
+        n += 1
+        _grow(n)
+        if next_start + L <= n:
+            _fire(next_start)
+            next_start += step
+
+    if n < L:
+        raise ValueError("input video too short for the chosen sequence_length")
+    # End-anchored tail window, appended only when it does not coincide with the
+    # last regular start -- matches the single-track path's trailing append.
+    if (next_start - step) + L < n:
+        _fire(n - L)
+
+    denom = np.maximum(counts[:n], 1)
+    return (summed[:, :n] / denom).astype(np.float32)
+
+
+_HEATMAP_TRACK_ORDER = ("point", "start", "end")
+
+
+def _order_heatmap_outputs(output_names: List[str]) -> List[int]:
+    """Index order mapping ONNX outputs to [pointness, start, end].
+
+    Requires each of 'point'/'start'/'end' to appear in an output name so
+    export-order cannot silently swap tracks. Uninformative names (e.g. out0)
+    fail loudly rather than assuming declaration order.
+    """
+    lowered = [name.lower() for name in output_names]
+    order: List[int] = []
+    for key in _HEATMAP_TRACK_ORDER:
+        match = next((i for i, nm in enumerate(lowered) if key in nm), None)
+        if match is None:
+            raise ValueError(
+                f"Heatmap ONNX outputs {output_names} missing a name containing "
+                f"{key!r}; expected distinct names for {_HEATMAP_TRACK_ORDER} so "
+                f"tracks cannot be silently mis-ordered."
+            )
+        order.append(match)
+    if len(set(order)) != len(order):
+        # Two keys resolved to the same output (e.g. a name containing both
+        # 'start' and 'end'): mapping is ambiguous, and silently feeding one
+        # track to two decode inputs would corrupt boundaries undetectably.
+        raise ValueError(
+            f"Ambiguous heatmap ONNX output names {output_names}: keys "
+            f"{_HEATMAP_TRACK_ORDER} map to indices {order}. Rename the export's "
+            "outputs so each contains exactly one of 'point'/'start'/'end'."
+        )
+    return order
+
+
+def run_multitrack_windowed_inference_onnx_stream(
+    model_path: str,
+    feature_rows,
+    sequence_length: int,
+    overlap: int,
+    progress_callback: Optional[Callable[[float], None]] = None,
+    total_windows: Optional[int] = None,
+) -> np.ndarray:
+    """Streaming 3-track (pointness/start/end) windowed-average inference for the
+    boundary-heatmap ONNX model. Returns a ``(3, num_frames)`` float32 array of
+    sigmoid-activated probabilities."""
+    if ort is None:
+        raise RuntimeError(
+            "ONNX model requested but onnxruntime is not installed. "
+            "Install dependencies with `pip install .`."
+        )
+    providers = [p for p in ort.get_available_providers() if p in {"CPUExecutionProvider", "CUDAExecutionProvider"}]
+    if not providers:
+        providers = ["CPUExecutionProvider"]
+    session = ort.InferenceSession(model_path, providers=providers)
+    input_name = session.get_inputs()[0].name
+    output_names = [o.name for o in session.get_outputs()]
+    if len(output_names) != 3:
+        raise ValueError(
+            "heatmap ONNX model must expose 3 outputs (pointness/start/end); "
+            f"got {len(output_names)}: {output_names}"
+        )
+    order = _order_heatmap_outputs(output_names)
+    ordered_names = [output_names[i] for i in order]
+
+    def run_window(window: np.ndarray) -> np.ndarray:
+        seq_np = window.astype(np.float32)[None, ...]
+        outs = session.run(ordered_names, {input_name: seq_np})
+        tracks = []
+        for out in outs:
+            arr = np.asarray(out, dtype=np.float32).squeeze()
+            if arr.ndim != 1:
+                arr = arr.reshape(-1)
+            tracks.append(_sigmoid(arr))
+        return np.stack(tracks, axis=0)
+
+    return run_multitrack_windowed_inference_stream(
+        feature_rows, run_window, sequence_length, overlap, num_tracks=3,
+        progress_callback=progress_callback, total_windows=total_windows,
+    )
+
+
+def run_multitrack_windowed_inference_torch_stream(
+    model,
+    device,
+    feature_rows,
+    sequence_length: int,
+    overlap: int,
+    progress_callback: Optional[Callable[[float], None]] = None,
+    total_windows: Optional[int] = None,
+) -> np.ndarray:
+    """Streaming 3-track windowed-average inference for a torch heatmap checkpoint.
+
+    The model's forward must return a 3-tuple of ``[1, seq_len]`` logits
+    (pointness, start, end). Returns a ``(3, num_frames)`` float32 array. Useful
+    for validating the runtime path against a checkpoint before ONNX export."""
+    import torch
+
+    def run_window(window: np.ndarray) -> np.ndarray:
+        seq_tensor = torch.from_numpy(window).unsqueeze(0).to(device)
+        with torch.no_grad():
+            p_logits, s_logits, e_logits = model(seq_tensor)
+        tracks = [
+            torch.sigmoid(p_logits).squeeze().detach().cpu().numpy().astype(np.float32),
+            torch.sigmoid(s_logits).squeeze().detach().cpu().numpy().astype(np.float32),
+            torch.sigmoid(e_logits).squeeze().detach().cpu().numpy().astype(np.float32),
+        ]
+        return np.stack(tracks, axis=0)
+
+    return run_multitrack_windowed_inference_stream(
+        feature_rows, run_window, sequence_length, overlap, num_tracks=3,
+        progress_callback=progress_callback, total_windows=total_windows,
+    )
+
+
 def extract_segments_from_binary(pred: np.ndarray) -> List[Tuple[int, int]]:
     segments: List[Tuple[int, int]] = []
     n = len(pred)
