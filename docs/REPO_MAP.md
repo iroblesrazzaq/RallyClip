@@ -21,9 +21,9 @@ dir is not a git repo; this table is the authoritative summary):
 |---|---|
 | `src/` | The Python package (8 subpackages, see seams below). `package-dir = src`. |
 | `tests/` | Pytest suites + `tests/fixtures/` (court goldens ~11MB, golden CLI clip, quality GT) + `tests/helpers/`. |
-| `scripts/` | Training/data tooling + `scripts/perf/` benchmarks + `scripts/release/sign_macos_app.sh`. Not shipped. |
+| `scripts/` | Training/data tooling + `scripts/export_heatmap_model.py` (TCN ONNX export) + `scripts/perf/` benchmarks + `scripts/release/sign_macos_app.sh`. Not shipped. |
 | `configs/` | Training YAMLs (`configs/train/base.yaml`, `configs/extract/*`). |
-| `models/` | Tracked inference artifacts: `rallyclip_v0.3.1/{model.onnx,scaler.json,manifest.json}` (+ v0.1.0_legacy). Weights (`*.pt`, `*.pth`) present locally but gitignored. |
+| `models/` | Tracked inference artifacts: `rallyclip_v0.5.0/` (default TCN heatmap) + `rallyclip_v0.4.0/` (classic LSTM fallback) + `rallyclip_v0.3.1/` + `rallyclip_v0.1.0_legacy/`. Weights (`*.pt`, `*.pth`) present locally but gitignored. |
 | `docs/` | This harness + plans (Tier 3) + `docs/perf/` (streaming-perf loop journal) + `docs/training.md`. |
 | `packaging/`, `RallyClip.spec` | PyInstaller/macOS packaging. |
 | `.github/workflows/` | `ci.yml` (3 OS × unit/e2e), `release.yml`. |
@@ -34,7 +34,8 @@ dir is not a git repo; this table is the authoritative summary):
 
 ## By task — read Y, nothing else
 
-- **Analysis pipeline behavior / segments wrong** → `src/rallyclip_engine/models.py` (AnalysisModel ABC + pipeline impls), `src/rallyclip_core/pipelines.py`, `models/rallyclip_v0.3.1/manifest.json`, then `src/rallyclip_core/intervals.py`.
+- **Analysis pipeline behavior / segments wrong** → `src/rallyclip_engine/models.py` (AnalysisModel ABC + pipeline impls), `src/rallyclip_core/pipelines.py`, `models/rallyclip_v0.5.0/manifest.json`, then `src/rallyclip_core/intervals.py`.
+- **Heatmap TCN ship / decode** → `scripts/export_heatmap_model.py`, `src/training/models/heatmap_tcn.py`, `models/rallyclip_v0.5.0/manifest.json`, `src/infer/heatmap_decode.py`, `src/rallyclip_engine/models.py` (`HeatmapHybridModel`).
 - **CLI** → `src/cli/main.py` (single file; `main()` at :337), `tests/test_cli_config_contract.py`, `tests/test_cli_json_output.py`.
 - **GUI/backend HTTP API** → `src/gui/app.py` (Flask, module-global config — see seams), `src/rallyclip_api/services.py`, `tests/test_api_route_contracts.py`, `tests/test_api_job_lifecycle.py`.
 - **Desktop shell / playback** → `src/gui/desktop.py` (pywebview shell), `src/rallyclip_core/playback.py`, `tests/test_native_playback.py` (server-side proxy/descriptor only; the Qt native player was deleted 2026-07-04). Viewer streams `/api/library/<id>/source` directly (Range/206); WebM preview windows are the codec fallback.
@@ -50,8 +51,8 @@ dir is not a git repo; this table is the authoritative summary):
 
 - `src/rallyclip_core/` — pure contracts (`RunRequest`→`RunResult`, ProgressEvent, SavedMatchStore, playback scheduling). **Rule: no heavy imports here** (torch/ultralytics/av/cv2/numpy); `tests/test_gui_startup_imports.py` enforces it.
 - `src/rallyclip_engine/runtime.py:27` — `RuntimeDeps` default binds `PoseExtractor`; the dependency-injection seam (the ONNX pose swap was validated through it before landing as the default).
-- `src/rallyclip_core/pipelines.py:14` — `pipeline_id_from_manifest_values`: the model artifact's manifest (not code) selects the pipeline. Shipped: `frame_probability_hysteresis`; `start_end_attention_voting` is a stub.
-- `models/rallyclip_v0.3.1/manifest.json` — the model contract: imgsz 960, conf 0.25, fps 5, seq_len 100. Don't hardcode these in code.
+- `src/rallyclip_core/pipelines.py:14` — `pipeline_id_from_manifest_values`: the model artifact's manifest (not code) selects the pipeline. Shipped default: `frame_startend_heatmap` (TCN 3-head hybrid decode); `frame_probability_hysteresis` remains on `models/rallyclip_v0.4.0/`; `start_end_attention_voting` is a stub.
+- `models/rallyclip_v0.5.0/manifest.json` — the model contract: imgsz 960, conf 0.25, fps 5, seq_len 100, pipeline `frame_startend_heatmap`. Don't hardcode these in code.
 - `src/rallyclip_api/services.py:10` — `RallyClipServices` facade; CLI and Flask GUI are both thin clients of it. Desktop app = pywebview (WKWebView/WebView2) → local Flask; **all behavior is `/api/*` HTTP**, no private channel.
 - `src/extraction/pose_extractor.py` `_flush_batch` — the predict surface (4 arrays per result) that `yolo_onnx_runner.YOLO` replicates; `.pt` weights still route to lazily-imported ultralytics (`[train]` extra).
 - `src/gui/app.py:86-226` — config is module globals (`PREFERENCES_PATH`, `JOBS_DIR`, …). E2E harness `tests/helpers/e2e_backend.py` must redirect ALL of them; config-object refactor planned (`docs/runtime-config-refactor-plan.md`).

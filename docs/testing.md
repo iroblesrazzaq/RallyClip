@@ -16,7 +16,7 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-07-23, fix/windows-cuda-ort Greptile P1s): **231 passed, 48 deselected, ~38s** (2 sklearn warnings, benign).
+Last known (2026-08-24, feat/v0.5.0-tcn default swap): **267 passed, 48 deselected, ~38s** (2 sklearn warnings, benign).
 
 ## Compile gate (cheap, run with the default gate)
 
