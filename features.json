@@ -10,28 +10,35 @@
       "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
-      "evidence": "2026-07-04: 202 passed, 1 skipped, 38 deselected (23.5s) on feat/pywebview-shell (tennis_env); 213 passed in a torch-free venv on feat/onnx-pose-runner."
+      "evidence": "2026-08-24: 267 passed, 48 deselected, 2 warnings (~38s) on feat/v0.5.0-tcn (heatmap runtime + TCN default swap)."
     },
     {
       "id": "golden-cli-parity",
       "name": "CLI end-to-end golden parity on committed fixture clip (0.25s boundary tolerance)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_cli_golden_parity.py",
-      "evidence": "2026-07-04: 1 passed; byte-equal via cmp on this machine, including from the frozen bundle and a torch-free venv."
+      "evidence": "2026-08-24: 1 passed after regenerating tests/fixtures/golden_cli/golden_segments.csv for TCN hybrid decode (two segments 3.753-11.964 and 13.040-23.449 vs classic v0.4.0 one 3.800-24.000)."
     },
     {
       "id": "compileall",
       "name": "src+tests byte-compile cleanly",
       "status": "passing",
       "verification": "$PY -m compileall -q src tests",
-      "evidence": "2026-07-03: exit 0, no output"
+      "evidence": "2026-08-24: exit 0 on feat/v0.5.0-tcn"
+    },
+    {
+      "id": "tcn-v050-default",
+      "name": "Ship TCN heatmap hybrid as default artifact (rallyclip_v0.5.0)",
+      "status": "passing",
+      "verification": "PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_heatmap_decode.py tests/test_heatmap_runtime.py tests/test_runtime_api_engine.py tests/test_cli_golden_parity.py",
+      "evidence": "2026-08-24: heatmap+pipeline tests 43 passed; golden CLI 1 passed; resolve_pipeline_spec(v0.5.0)=frame_startend_heatmap; v0.4.0 still hysteresis. Export parity max |torch-onnx|=1.88e-06."
     },
     {
       "id": "e2e-suite",
       "name": "Full e2e set: L1 backend golden jobs, L2 playwright UI, quality harness, court e2e (44 tests)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m e2e -p no:cacheprovider",
-      "evidence": "2026-07-04: 15 passed, 24 skipped locally (skips are footage/playwright-gated); CI e2e green on 3 OSes for PRs #26 and #27."
+      "evidence": "2026-08-24 (feat/v0.5.0-tcn): L1 GUI e2e 5 passed (health, config, default_job completes/monotonic/no-library on synthetic clip). Playwright 2 passed: welcome dismiss + new-match upload->progress->library (20.8s). Golden-footage L1 tests still skip without data/e2e/aditi_5pts."
     },
     {
       "id": "onnx-pose-swap",
@@ -55,5 +62,5 @@
       "evidence": "2026-07-04 (PR #27): gui/native_player.py + QWebChannel bridge deleted (frontend already fell back to HTML5 when the bridge was absent); WKWebView probe: canplay 1280x720, seek over ranges, playback advances, H.264+HEVC canPlayType 'probably', native file input. Bundle 765MB->266MB. CI 6/6 green."
     }
   ],
-  "active": null
+  "active": "tcn-v050-default"
 }

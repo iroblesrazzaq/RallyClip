@@ -2,8 +2,8 @@
 
 RallyClip turns full tennis match videos into point-only segments (condensed video +
 CSV timestamps), locally: Python 3.11, YOLOv8 pose on ONNX Runtime (torch-free
-runtime; torch/ultralytics only in the `[train]` extra) → LSTM (ONNX) → hysteresis
-postprocessing; PyAV decode; CLI + Flask GUI + pywebview desktop shell (WKWebView on
+runtime; torch/ultralytics only in the `[train]` extra) → TCN heatmap (ONNX) →
+hybrid decode; PyAV decode; CLI + Flask GUI + pywebview desktop shell (WKWebView on
 macOS, WebView2 on Windows); PyInstaller Mac packaging. This checkout is a git
 worktree (active topic branch — see docs/PROGRESS.md); sibling checkouts are
 described in docs/REPO_MAP.md.

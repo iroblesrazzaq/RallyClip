@@ -12,7 +12,7 @@ for the desktop UI — only the native window chrome differs.
 
 Marked ``e2e``+``slow``. Needs the e2e-ui extra + a browser:
     pip install ".[dev,e2e-ui]" && playwright install chromium
-Self-skips cleanly when Playwright or the v0.3.1 ONNX artifact is absent.
+Self-skips cleanly when Playwright or the v0.5.0 ONNX artifact is absent.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
-MODEL_ONNX = REPO_ROOT / "models" / "rallyclip_v0.3.1" / "model.onnx"
+MODEL_ONNX = REPO_ROOT / "models" / "rallyclip_v0.5.0" / "model.onnx"
 
 pytest.importorskip("playwright.sync_api")
 pytest.importorskip("requests")
@@ -43,7 +43,7 @@ pytestmark = [
     pytest.mark.slow,
     pytest.mark.skipif(
         not MODEL_ONNX.exists(),
-        reason="shipped v0.3.1 ONNX artifact missing (models/rallyclip_v0.3.1/model.onnx)",
+        reason="shipped v0.5.0 ONNX artifact missing (models/rallyclip_v0.5.0/model.onnx)",
     ),
 ]
 

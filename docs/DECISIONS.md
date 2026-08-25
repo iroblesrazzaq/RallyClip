@@ -119,3 +119,20 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   precedence is easier to corrupt — an interrupted write loses the original);
   edits in meta.json (two sources of truth for point times); save-on-Done only
   (drag sessions lose work on crash; autosave matches the iPhone-Photos model).
+
+## 2026-08-24 — Ship the champion TCN as default (v0.5.0); keep classic LSTM as fallback
+
+- **What:** Export `TennisPointHeatmapTCN` (run `20260724_tcn64_cos1e4`) to
+  `models/rallyclip_v0.5.0/` with three named logit outputs and
+  `pipeline.id=frame_startend_heatmap`. Point CLI/GUI/packaging at that bundle.
+  Keep `models/rallyclip_v0.4.0/` in-tree. Bake hybrid decode knobs into the
+  ship manifest; dummy hysteresis keys (`sigma`/`low`/`high`/`min_dur_sec`) stay
+  in `postprocess.params` so CLI/GUI `_resolve_mutable` / `build_gui_defaults`
+  still resolve. GUI jobs resolve pipeline from the artifact unless the client
+  explicitly sends `pipeline_id`.
+- **Why:** Champion hybrid decode is ~43.9% test acceptable vs classic v0.4.0
+  ~30.7% six-bin good. No extra training. Mac/CLI runtime already exists.
+- **Rejected:** shipping heatmap LSTM (~31.5% ≈ classic); start/end-only or
+  pair-DP as default decode; chasing bit-identical train-wt metrics (min-duration
+  is applied at slightly different stages); `rallyclip serve` / Win-Linux freeze
+  in the same change.

@@ -73,7 +73,7 @@ rallyclip gui
 ```
 
 ## Model assets
-RallyClip model artifacts live under `models/rallyclip_v0.3.1/`:
+RallyClip model artifacts live under `models/rallyclip_v0.5.0/`:
 - `model.onnx`
 - `scaler.json`
 - `manifest.json`
@@ -121,7 +121,7 @@ yolo_model = "nano"                        # nano | small | medium | large
 yolo_device = "mps"                        # cpu | cuda | mps | coreml
 
 # Optional artifact overrides:
-# artifact_dir = "models/rallyclip_v0.3.1"
+# artifact_dir = "models/rallyclip_v0.5.0"
 
 # Postprocessing / inference parameters
 low = 0.45
@@ -129,7 +129,7 @@ high = 0.7
 sigma = 1.0
 min_dur_sec = 1.0
 
-# Temporal settings for v0.3.1 defaults
+# Temporal settings for v0.5.0 defaults
 fps = 5.0
 seq_len = 100
 overlap = 50
@@ -159,7 +159,7 @@ pyinstaller --noconfirm RallyClip.spec
 ```
 
 The runtime is torch-free: pose inference runs on the ONNX bundled in
-`models/rallyclip_v0.3.1/` via onnxruntime (`extraction/yolo_onnx_runner.py`).
+`models/rallyclip_v0.5.0/` via onnxruntime (`extraction/yolo_onnx_runner.py`).
 Training and the legacy .pt path need `pip install ".[train]"`.
 
 ### Headless mode

@@ -2,11 +2,10 @@
 
 Runs the real shipped pipeline (CPU, no fakes) on a small committed fixture
 clip and asserts the segments CSV matches the committed golden: identical
-segment count, boundaries within one 0.2s hysteresis hop (CPU inference
-differs across platforms/BLAS backends by up to one frame-probability hop;
-byte-exact only holds on the platform the golden was generated on). This
-locks in the analysis output of the frame_probability_hysteresis pipeline
-across refactors.
+segment count, boundaries within 0.25s (CPU inference differs across
+platforms/BLAS backends by up to one frame hop; byte-exact only holds on
+the platform the golden was generated on). This locks in the analysis
+output of the frame_startend_heatmap pipeline across refactors.
 
 Regenerate the golden (only after a deliberate model/pipeline change):
 
@@ -34,7 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "golden_cli"
 CLIP = FIXTURE_DIR / "clip.mp4"
 GOLDEN_CSV = FIXTURE_DIR / "golden_segments.csv"
-ARTIFACT_DIR = REPO_ROOT / "models" / "rallyclip_v0.4.0"
+ARTIFACT_DIR = REPO_ROOT / "models" / "rallyclip_v0.5.0"
 
 pytestmark = pytest.mark.skipif(
     not (ARTIFACT_DIR / "model.onnx").is_file(),
