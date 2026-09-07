@@ -314,17 +314,16 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
     # after the Qt-native player, which drew its own, was deleted).
     expect(page.locator(".viewer-point-segment").first).to_be_visible()
 
-    # macOS Chromium decodes the fixture as H.264 and keeps playing. Live
-    # timeupdate handlers then react to the synthetic interval/duration
-    # mutations below and can clear matchVideo.src before the skip checks.
+    # macOS Chromium keeps playing the H.264 fixture. Mute live timeupdate
+    # while the synthetic interval/duration mutations run so those handlers
+    # cannot clear matchVideo.src. Do not pause the element: later skip-button
+    # checks pass autoplay from !matchVideo.paused.
     page.evaluate(
         """() => {
             const app = window.rallyClipApp;
-            app.directPlayback = false;
+            app._originalHandleViewerTimeUpdate = app.handleViewerTimeUpdate.bind(app);
+            app.handleViewerTimeUpdate = () => {};
             app.directWatcherActive = false;
-            app.directStandby = null;
-            app.matchVideo?.pause();
-            app.matchVideoBuffer?.pause();
         }"""
     )
 
@@ -383,6 +382,10 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
     default_skip = page.evaluate(
         """() => {
             const app = window.rallyClipApp;
+            if (app._originalHandleViewerTimeUpdate) {
+                app.handleViewerTimeUpdate = app._originalHandleViewerTimeUpdate;
+                delete app._originalHandleViewerTimeUpdate;
+            }
             if (!app.matchVideo.src && app.primaryMatchVideo?.src) app.matchVideo = app.primaryMatchVideo;
             if (!app.matchVideo.src) throw new Error("viewer matchVideo.src is empty");
             const video = app.matchVideo;
@@ -542,6 +545,16 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
         }"""
     )
     assert manual_gap_bridge == [{"time": 10, "autoplay": True}]
+
+    page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            if (app._originalHandleViewerTimeUpdate) {
+                app.handleViewerTimeUpdate = app._originalHandleViewerTimeUpdate;
+                delete app._originalHandleViewerTimeUpdate;
+            }
+        }"""
+    )
 
     bridge_continues_across_chunks = page.evaluate(
         """() => {
