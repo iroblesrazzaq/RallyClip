@@ -17,7 +17,7 @@ Marked ``e2e``+``slow``; deselected from the default run. Run explicitly:
 
     pytest -m e2e tests/test_gui_e2e.py
 
-Skips cleanly when runtime deps or the shipped v0.3.1 ONNX artifact are absent.
+Skips cleanly when runtime deps or the shipped v0.5.0 ONNX artifact are absent.
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
-MODEL_ONNX = REPO_ROOT / "models" / "rallyclip_v0.3.1" / "model.onnx"
+MODEL_ONNX = REPO_ROOT / "models" / "rallyclip_v0.5.0" / "model.onnx"
 
 pytest.importorskip("requests")
 pytest.importorskip("cv2")
@@ -62,7 +62,7 @@ pytestmark = [
     pytest.mark.slow,
     pytest.mark.skipif(
         not MODEL_ONNX.exists(),
-        reason="shipped v0.3.1 ONNX artifact missing (models/rallyclip_v0.3.1/model.onnx)",
+        reason="shipped v0.5.0 ONNX artifact missing (models/rallyclip_v0.5.0/model.onnx)",
     ),
 ]
 

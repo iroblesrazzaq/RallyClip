@@ -12,8 +12,8 @@ def resolve_default_artifacts(
 ) -> tuple[Path, Path, Path]:
     """Resolve bundled ONNX artifact paths for GUI defaults."""
     artifact_path = Path(artifact_dir).expanduser().resolve() if artifact_dir else None
-    model_relatives = ["models/rallyclip_v0.4.0/model.onnx"]
-    scaler_relatives = ["models/rallyclip_v0.4.0/scaler.json"]
+    model_relatives = ["models/rallyclip_v0.5.0/model.onnx"]
+    scaler_relatives = ["models/rallyclip_v0.5.0/scaler.json"]
     if artifact_path is not None:
         model_path = artifact_path / "model.onnx"
         scaler_path = artifact_path / "scaler.json"

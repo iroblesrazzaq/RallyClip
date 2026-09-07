@@ -9,11 +9,14 @@ def load_runtime_deps() -> RuntimeDeps:
     from extraction.pose_extractor import PoseExtractor  # noqa: WPS433
     from features.feature_engineer import FeatureEngineer  # noqa: WPS433
     from infer import (  # noqa: WPS433
+        HeatmapDecodeConfig,
+        decode_heatmap_segments,
         extract_segments_from_binary,
         gaussian_filter1d,
         hysteresis_threshold,
         load_model_from_checkpoint,
         load_scaler_asset,
+        run_multitrack_windowed_inference_onnx_stream,
         run_windowed_inference_average_onnx_stream,
         run_windowed_inference_average_torch_stream,
         write_segments_csv,
@@ -37,4 +40,7 @@ def load_runtime_deps() -> RuntimeDeps:
         write_segments_csv=write_segments_csv,
         segment_video=segment_video,
         apply_pose_device=apply_pose_device,
+        run_multitrack_windowed_inference_onnx_stream=run_multitrack_windowed_inference_onnx_stream,
+        decode_heatmap_segments=decode_heatmap_segments,
+        heatmap_decode_config_cls=HeatmapDecodeConfig,
     )

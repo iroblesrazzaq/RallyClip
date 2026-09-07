@@ -52,11 +52,11 @@ jobs:
       - name: Verify RallyClip model artifacts
         shell: bash
         run: |
-          # Artifacts are tracked in git under models/rallyclip_v0.3.1/
-          test -f models/rallyclip_v0.3.1/model.onnx
-          test -f models/rallyclip_v0.3.1/scaler.json
-          test -f models/rallyclip_v0.3.1/manifest.json
-          test -f models/rallyclip_v0.3.1/yolov8n-pose-960-dynamic.onnx
+          # Artifacts are tracked in git under models/rallyclip_v0.5.0/
+          test -f models/rallyclip_v0.5.0/model.onnx
+          test -f models/rallyclip_v0.5.0/scaler.json
+          test -f models/rallyclip_v0.5.0/manifest.json
+          test -f models/rallyclip_v0.5.0/yolov8n-pose-960-dynamic.onnx
           test -f src/preprocessing/default_court_mask.png
           test -f docs/rallyclip.icns
           test -f docs/rallyclip_favicon_transparent2.png
@@ -85,7 +85,7 @@ jobs:
             --exclude-module=shiboken6 \
             --exclude-module=openvino \
             --add-data "src/gui/frontend${SEP}gui/frontend" \
-            --add-data "models/rallyclip_v0.3.1${SEP}models/rallyclip_v0.3.1" \
+            --add-data "models/rallyclip_v0.5.0${SEP}models/rallyclip_v0.5.0" \
             --hidden-import=extraction.yolo_onnx_runner \
             --hidden-import=onnxruntime \
             --exclude-module=torch \

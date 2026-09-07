@@ -51,8 +51,9 @@ Local runtime config: `config.toml` (don't commit machine-specific paths).
 
 ## Model assets
 
-- Packaged artifact (tracked): `models/rallyclip_v0.3.1/{model.onnx,scaler.json,manifest.json}`.
-  The manifest is the contract source of truth (pipeline id, imgsz 960, fps 5, seq_len 100).
+- Packaged artifact (tracked): `models/rallyclip_v0.5.0/{model.onnx,scaler.json,manifest.json}`.
+  Classic LSTM fallback: `models/rallyclip_v0.4.0/`. The manifest is the contract
+  source of truth (pipeline id, imgsz 960, fps 5, seq_len 100).
 - YOLO pose weights: `yolov8n-pose.pt` resolved from `models/` or auto-downloaded by
   Ultralytics (gitignored).
 

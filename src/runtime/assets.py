@@ -121,4 +121,9 @@ def manifest_values(model_path: Path, manifest_path: Optional[Path] = None) -> D
         values["high"] = float(postprocess["high"])
     if postprocess.get("min_dur_sec") is not None:
         values["min_dur_sec"] = float(postprocess["min_dur_sec"])
+    # Full postprocess params passthrough: lets pipelines with their own decode
+    # knobs (e.g. the boundary-heatmap head) read config without every key being
+    # hardcoded above. The classic hysteresis fields above stay explicit/typed.
+    if postprocess:
+        values["postprocess_params"] = dict(postprocess)
     return values

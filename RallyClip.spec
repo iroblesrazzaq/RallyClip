@@ -3,9 +3,9 @@ from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
 from PyInstaller.utils.hooks import copy_metadata
 
-# Torch-free bundle: pose runs on the ONNX inside models/rallyclip_v0.3.1
+# Torch-free bundle: pose runs on the ONNX inside models/rallyclip_v0.5.0
 # (extraction.yolo_onnx_runner + onnxruntime); no .pt weights, no ultralytics.
-datas = [('src/gui/frontend', 'gui/frontend'), ('models/rallyclip_v0.3.1', 'models/rallyclip_v0.3.1'), ('src/preprocessing/default_court_mask.png', 'preprocessing'), ('docs/rallyclip.icns', 'docs'), ('docs/rallyclip_logo.svg', 'docs'), ('docs/rallyclip_app_icon.svg', 'docs'), ('docs/rallyclip_logo_cropped.png', 'docs'), ('docs/rallyclip_favicon_transparent2.png', 'docs')]
+datas = [('src/gui/frontend', 'gui/frontend'), ('models/rallyclip_v0.5.0', 'models/rallyclip_v0.5.0'), ('src/preprocessing/default_court_mask.png', 'preprocessing'), ('docs/rallyclip.icns', 'docs'), ('docs/rallyclip_logo.svg', 'docs'), ('docs/rallyclip_app_icon.svg', 'docs'), ('docs/rallyclip_logo_cropped.png', 'docs'), ('docs/rallyclip_favicon_transparent2.png', 'docs')]
 binaries = []
 hiddenimports = ['gui.app', 'gui.analysis_worker', 'cli.main', 'runtime.assets', 'runtime.device', 'runtime.defaults', 'runtime.paths', 'extraction.yolo_onnx_runner', 'onnxruntime', 'psutil', 'webview']
 hiddenimports += collect_submodules('flask')

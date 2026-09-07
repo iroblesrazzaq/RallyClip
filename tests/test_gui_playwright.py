@@ -12,7 +12,7 @@ for the desktop UI — only the native window chrome differs.
 
 Marked ``e2e``+``slow``. Needs the e2e-ui extra + a browser:
     pip install ".[dev,e2e-ui]" && playwright install chromium
-Self-skips cleanly when Playwright or the v0.3.1 ONNX artifact is absent.
+Self-skips cleanly when Playwright or the v0.5.0 ONNX artifact is absent.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
-MODEL_ONNX = REPO_ROOT / "models" / "rallyclip_v0.3.1" / "model.onnx"
+MODEL_ONNX = REPO_ROOT / "models" / "rallyclip_v0.5.0" / "model.onnx"
 
 pytest.importorskip("playwright.sync_api")
 pytest.importorskip("requests")
@@ -43,7 +43,7 @@ pytestmark = [
     pytest.mark.slow,
     pytest.mark.skipif(
         not MODEL_ONNX.exists(),
-        reason="shipped v0.3.1 ONNX artifact missing (models/rallyclip_v0.3.1/model.onnx)",
+        reason="shipped v0.5.0 ONNX artifact missing (models/rallyclip_v0.5.0/model.onnx)",
     ),
 ]
 
@@ -374,6 +374,10 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             const originalPrefetch = app.prefetchForPlaybackSchedule.bind(app);
             const pausedDescriptor = Object.getOwnPropertyDescriptor(app.matchVideo, "paused");
             const calls = [];
+            const originalDirect = app.directPlayback;
+            const originalStandby = app.directStandby;
+            app.directPlayback = false;
+            app.directStandby = null;
             app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }, { start: 10, end: 12 }];
             app.activePlaybackSegment = { kind: "point", start: 1.8, end: 2, pointIndex: 0, nextPointIndex: 1 };
             app.getViewerSourceTime = () => 2.03;
@@ -384,6 +388,8 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             app.seekViewerToSourceTime = originalSeek;
             app.getViewerSourceTime = originalGetTime;
             app.prefetchForPlaybackSchedule = originalPrefetch;
+            app.directPlayback = originalDirect;
+            app.directStandby = originalStandby;
             if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
             else delete app.matchVideo.paused;
             return calls;
@@ -401,6 +407,10 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             const pausedDescriptor = Object.getOwnPropertyDescriptor(app.matchVideo, "paused");
             const calls = [];
             let pauses = 0;
+            const originalDirect = app.directPlayback;
+            const originalStandby = app.directStandby;
+            app.directPlayback = false;
+            app.directStandby = null;
             app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }, { start: 10, end: 12 }];
             app.activePlaybackSegment = { kind: "gap", start: 2.5, end: 5, pointIndex: 1, nextPointIndex: 2 };
             app.lastViewerTime = 3.95;
@@ -423,6 +433,8 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             app.getViewerSourceTime = originalGetTime;
             app.prefetchForPlaybackSchedule = originalPrefetch;
             app.matchVideo.pause = originalPause;
+            app.directPlayback = originalDirect;
+            app.directStandby = originalStandby;
             if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
             else delete app.matchVideo.paused;
             return result;
@@ -443,6 +455,10 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             const originalPrefetch = app.prefetchForPlaybackSchedule.bind(app);
             const pausedDescriptor = Object.getOwnPropertyDescriptor(app.matchVideo, "paused");
             const calls = [];
+            const originalDirect = app.directPlayback;
+            const originalStandby = app.directStandby;
+            app.directPlayback = false;
+            app.directStandby = null;
             app.pointIntervals = [{ start: 1, end: 2 }, { start: 4, end: 5 }, { start: 10, end: 12 }];
             app.activePlaybackSegment = { kind: "gap", start: 2.5, end: 5, pointIndex: 1, nextPointIndex: 2 };
             app.getViewerSourceTime = () => 5.04;
@@ -453,6 +469,8 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             app.seekViewerToSourceTime = originalSeek;
             app.getViewerSourceTime = originalGetTime;
             app.prefetchForPlaybackSchedule = originalPrefetch;
+            app.directPlayback = originalDirect;
+            app.directStandby = originalStandby;
             if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
             else delete app.matchVideo.paused;
             return calls;
