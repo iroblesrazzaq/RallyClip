@@ -9,11 +9,14 @@ release_repo_root() {
 }
 
 release_project_version() {
-  python3 - <<'PY'
+  local root
+  root="$(release_repo_root)"
+  python3 - "${root}/pyproject.toml" <<'PY'
+import sys
 import tomllib
 from pathlib import Path
 
-print(tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"])
+print(tomllib.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["project"]["version"])
 PY
 }
 

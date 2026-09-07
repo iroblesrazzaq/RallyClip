@@ -10,7 +10,10 @@ from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
 from PyInstaller.utils.hooks import copy_metadata
 
-_SPEC_DIR = Path(SPECPATH).resolve().parent
+# PyInstaller sets SPECPATH to the spec file's directory, not the spec path.
+# Treat a file path as well so a mis-set SPECPATH still finds pyproject.toml.
+_spec_path = Path(SPECPATH).resolve()
+_SPEC_DIR = _spec_path.parent if _spec_path.is_file() else _spec_path
 with (_SPEC_DIR / "pyproject.toml").open("rb") as _fh:
     _VERSION = tomllib.load(_fh)["project"]["version"]
 

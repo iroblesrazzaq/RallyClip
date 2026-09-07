@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import ast
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
+
+import pytest
 
 from runtime.defaults import DEFAULT_ARTIFACT_DIR
 
@@ -34,6 +37,34 @@ def test_pyinstaller_spec_bundles_default_artifact_dir():
     assert "_BUNDLE_IDENTIFIER = \"com.iroblesrazzaq.rallyclip\"" in spec
     assert "bundle_identifier=_BUNDLE_IDENTIFIER" in spec
     assert "CFBundleShortVersionString" in spec
+    assert "_spec_path.parent if _spec_path.is_file() else _spec_path" in spec
+
+
+def _exec_spec_version_block(specpath: str) -> str:
+    spec_lines = (ROOT / "RallyClip.spec").read_text(encoding="utf-8").splitlines()
+    block: list[str] = []
+    capturing = False
+    for line in spec_lines:
+        if line.startswith("_spec_path") or (
+            not capturing and line.startswith("_SPEC_DIR")
+        ):
+            capturing = True
+        if capturing:
+            block.append(line)
+            if "_VERSION" in line and "tomllib" in line:
+                break
+    ns = {"SPECPATH": specpath, "Path": Path, "tomllib": tomllib}
+    exec("\n".join(block), ns)
+    return str(ns["_VERSION"])
+
+
+def test_spec_reads_pyproject_version_when_specpath_is_directory():
+    # PyInstaller sets SPECPATH to the spec file's directory.
+    assert _exec_spec_version_block(str(ROOT)) == _pyproject_version()
+
+
+def test_spec_reads_pyproject_version_when_specpath_is_spec_file():
+    assert _exec_spec_version_block(str(ROOT / "RallyClip.spec")) == _pyproject_version()
 
 
 def test_spec_bundle_identifier_is_set():
@@ -51,6 +82,8 @@ def test_spec_bundle_identifier_is_set():
 
 
 def test_release_scripts_are_valid_bash():
+    if sys.platform == "win32":
+        pytest.skip("macOS release scripts; Windows CI has no usable bash")
     scripts = sorted(SCRIPTS.glob("*.sh"))
     names = {path.name for path in scripts}
     assert names >= {
@@ -72,6 +105,8 @@ def test_release_scripts_are_valid_bash():
 
 
 def test_release_scripts_usage_without_args():
+    if sys.platform == "win32":
+        pytest.skip("macOS release scripts; Windows CI has no usable bash")
     for name in (
         "sign_macos_app.sh",
         "make_macos_dmg.sh",
@@ -89,6 +124,8 @@ def test_release_scripts_usage_without_args():
 
 
 def test_release_lib_project_version_matches_pyproject():
+    if sys.platform == "win32":
+        pytest.skip("macOS release scripts; Windows CI has no usable bash")
     script = r"""
 set -euo pipefail
 source scripts/release/lib.sh
@@ -104,7 +141,27 @@ release_project_version
     assert result.stdout.strip() == _pyproject_version()
 
 
+def test_release_lib_project_version_independent_of_cwd(tmp_path):
+    if sys.platform == "win32":
+        pytest.skip("macOS release scripts; Windows CI has no usable bash")
+    script = f"""
+set -euo pipefail
+source "{SCRIPTS / "lib.sh"}"
+release_project_version
+"""
+    result = subprocess.run(
+        ["bash", "-c", script],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert result.stdout.strip() == _pyproject_version()
+
+
 def test_release_lib_dmg_basename():
+    if sys.platform == "win32":
+        pytest.skip("macOS release scripts; Windows CI has no usable bash")
     script = r"""
 set -euo pipefail
 source scripts/release/lib.sh
@@ -130,6 +187,33 @@ def test_release_workflow_uses_spec_and_signing_pipeline():
     assert "dist/RallyClip.app/Contents/MacOS/RallyClip" in workflow
     assert "models/rallyclip_v0.3.1" not in workflow
     assert "timeout-minutes: 180" in workflow
+    assert "Require Apple Silicon runner" in workflow
+    assert "uname -m" in workflow
+
+
+def test_release_workflow_keeps_signing_secrets_off_build_steps():
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    _, rest = workflow.split("  build:\n", 1)
+    header, steps = rest.split("    steps:\n", 1)
+    secret_p12 = "MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}"
+    secret_p8 = "APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}"
+    assert secret_p12 not in header
+    assert secret_p8 not in header
+    assert "RALLYCLIP_HAS_SIGNING_CERT" in header
+    assert secret_p12 in steps
+    assert secret_p8 in steps
+    assert "Install build deps" in steps
+    install_idx = steps.index("Install build deps")
+    assert steps.index(secret_p12) > install_idx
+    assert steps.index(secret_p8) > install_idx
+
+
+def test_import_cert_writes_p12_into_private_tempdir():
+    script = (SCRIPTS / "import_apple_cert.sh").read_text(encoding="utf-8")
+    assert "mktemp -d" in script
+    assert "umask 077" in script
+    assert "chmod 600" in script
+    assert "chmod 700" in script
 
 
 def test_notarize_script_submits_then_waits():
@@ -138,3 +222,6 @@ def test_notarize_script_submits_then_waits():
     assert "notarytool wait" in script
     assert "RALLYCLIP_NOTARY_SUBMISSION_ID" in script
     assert "RALLYCLIP_NOTARY_TIMEOUT:-2h" in script
+    assert "mktemp -d" in script
+    assert "umask 077" in script
+    assert "chmod 600" in script

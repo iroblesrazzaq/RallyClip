@@ -15,10 +15,13 @@ if [[ -z "${MACOS_CERTIFICATE_PASSWORD:-}" ]]; then
   exit 1
 fi
 
-WORKDIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
-WORKDIR="${WORKDIR%/}"
-CERT_PATH="${WORKDIR}/rallyclip-developer-id.p12"
-KEYCHAIN_PATH="${WORKDIR}/rallyclip-signing.keychain-db"
+umask 077
+PARENT_TEMP="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+PARENT_TEMP="${PARENT_TEMP%/}"
+WORKDIR="$(mktemp -d "${PARENT_TEMP}/rallyclip-signing.XXXXXX")"
+chmod 700 "${WORKDIR}"
+CERT_PATH="${WORKDIR}/developer-id.p12"
+KEYCHAIN_PATH="${WORKDIR}/signing.keychain-db"
 KEYCHAIN_PASSWORD="${RALLYCLIP_KEYCHAIN_PASSWORD:-$(openssl rand -base64 32)}"
 
 cleanup_cert() {
@@ -27,6 +30,7 @@ cleanup_cert() {
 trap cleanup_cert EXIT
 
 printf '%s' "${MACOS_CERTIFICATE_P12_BASE64}" | tr -d '\n\r ' | base64 --decode > "${CERT_PATH}"
+chmod 600 "${CERT_PATH}"
 
 security delete-keychain "${KEYCHAIN_PATH}" >/dev/null 2>&1 || true
 security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
@@ -46,10 +50,7 @@ security set-key-partition-list \
 security list-keychain -d user -s "${KEYCHAIN_PATH}"
 
 if [[ -n "${GITHUB_ENV:-}" ]]; then
-  {
-    echo "RALLYCLIP_KEYCHAIN_PATH=${KEYCHAIN_PATH}"
-    echo "RALLYCLIP_KEYCHAIN_PASSWORD=${KEYCHAIN_PASSWORD}"
-  } >> "${GITHUB_ENV}"
+  echo "RALLYCLIP_KEYCHAIN_PATH=${KEYCHAIN_PATH}" >> "${GITHUB_ENV}"
 fi
 
 echo "Imported Developer ID certificate into ${KEYCHAIN_PATH}"

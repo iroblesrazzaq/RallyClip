@@ -31,17 +31,20 @@ if ! command -v xcrun >/dev/null 2>&1; then
   exit 1
 fi
 
-WORKDIR="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
-WORKDIR="${WORKDIR%/}"
+umask 077
+PARENT_TEMP="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+PARENT_TEMP="${PARENT_TEMP%/}"
+WORKDIR="$(mktemp -d "${PARENT_TEMP}/rallyclip-notary.XXXXXX")"
+chmod 700 "${WORKDIR}"
 KEY_PATH="${WORKDIR}/AuthKey_${APPSTORE_API_KEY_ID}.p8"
 
 cleanup_key() {
   rm -f "${KEY_PATH}"
+  rmdir "${WORKDIR}" >/dev/null 2>&1 || true
 }
 trap cleanup_key EXIT
 
 # The p8 must not be world-readable; notarytool rejects overly open keys.
-umask 077
 printf '%s\n' "${APPSTORE_API_PRIVATE_KEY}" > "${KEY_PATH}"
 chmod 600 "${KEY_PATH}"
 
