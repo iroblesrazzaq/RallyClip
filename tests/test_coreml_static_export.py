@@ -30,7 +30,7 @@ from extraction.yolo_onnx_runner import letterbox, letterbox_exact
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CLIP = REPO_ROOT / "tests" / "fixtures" / "golden_cli" / "clip.mp4"
-ARTIFACT_DIR = REPO_ROOT / "models" / "rallyclip_v0.3.1"
+ARTIFACT_DIR = REPO_ROOT / "models" / "rallyclip_v0.5.0"
 DYNAMIC_ONNX = ARTIFACT_DIR / "yolov8n-pose-960-dynamic.onnx"
 STATIC_ONNX = ARTIFACT_DIR / "yolov8n-pose-544x960-static.onnx"
 

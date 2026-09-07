@@ -26,6 +26,8 @@ jobs:
           python-version: "3.11"
       - name: Install package
         run: pip install ".[cpu,dev]"
+      - name: Fetch inference artifact
+        run: PYTHONPATH=src python -m runtime.artifact fetch
       - name: Install OpenCV runtime libs (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
@@ -45,6 +47,8 @@ jobs:
           python-version: "3.11"
       - name: Install package
         run: pip install ".[cpu,dev,e2e-ui]"
+      - name: Fetch inference artifact
+        run: PYTHONPATH=src python -m runtime.artifact fetch
       - name: Install OpenCV runtime libs (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0

@@ -1,6 +1,6 @@
 # Artifact registry — keep git light, combine models into the DMG at build
 
-Status: **plan only** (not started). Default inference stays `models/rallyclip_v0.5.0/`
+Status: **implemented**. Default inference stays `models/rallyclip_v0.5.0/`
 (`frame_startend_heatmap`). Mac `.app` still ships that folder **inside the bundle**.
 
 ## Goal

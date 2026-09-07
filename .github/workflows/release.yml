@@ -20,6 +20,9 @@ jobs:
       - name: Install package
         shell: bash
         run: pip install ".[cpu,dev,e2e-ui]"
+      - name: Fetch inference artifact
+        shell: bash
+        run: PYTHONPATH=src python -m runtime.artifact fetch
       - name: Install Playwright browser
         shell: bash
         run: python -m playwright install chromium
@@ -55,6 +58,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install ".[desktop,pack,cpu]"
+      - name: Fetch inference artifact
+        shell: bash
+        run: PYTHONPATH=src python -m runtime.artifact fetch
       - name: Check tag matches pyproject version
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -69,22 +75,11 @@ jobs:
       - name: Verify RallyClip model artifacts
         shell: bash
         run: |
-          python -c "
-          import sys
+          PYTHONPATH=src python -c "
           from pathlib import Path
-          sys.path.insert(0, 'src')
+          from runtime.artifact import verify_artifact_dir
           from runtime.defaults import DEFAULT_ARTIFACT_DIR
-          root = Path(DEFAULT_ARTIFACT_DIR)
-          required = [
-              'model.onnx',
-              'scaler.json',
-              'manifest.json',
-              'yolov8n-pose-960-dynamic.onnx',
-              'yolov8n-pose-544x960-static.onnx',
-          ]
-          missing = [name for name in required if not (root / name).is_file()]
-          if missing:
-              raise SystemExit(f'missing {missing} under {root}')
+          verify_artifact_dir(Path(DEFAULT_ARTIFACT_DIR))
           "
           test -f src/preprocessing/default_court_mask.png
           test -f docs/rallyclip.icns

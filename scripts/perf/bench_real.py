@@ -37,7 +37,7 @@ for p in (str(SRC), str(PERF)):
 
 import bench_pipeline as bp  # RSSSampler, _install_numpy_io_probes, SER  # noqa: E402
 
-ARTIFACT_DIR = ROOT / "models" / "rallyclip_v0.3.1"
+ARTIFACT_DIR = ROOT / "models" / "rallyclip_v0.5.0"
 
 # build_run_config reads these via getattr(args, key, None); anything unset must be None.
 _ARG_KEYS = (

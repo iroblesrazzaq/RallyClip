@@ -86,7 +86,7 @@ def test_analysis_run_stays_torch_free():
 
     repo_root = Path(__file__).resolve().parents[1]
     clip = repo_root / "tests" / "fixtures" / "golden_cli" / "clip.mp4"
-    artifact = repo_root / "models" / "rallyclip_v0.3.1" / "yolov8n-pose-960-dynamic.onnx"
+    artifact = repo_root / "models" / "rallyclip_v0.5.0" / "yolov8n-pose-960-dynamic.onnx"
     if not clip.is_file() or not artifact.is_file():
         pytest.skip("golden clip or pose ONNX artifact absent")
 

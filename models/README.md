@@ -1,24 +1,37 @@
 # RallyClip Model Artifacts
 
-Shipped inference artifacts:
+Git tracks **manifests and checksums**, not ONNX. Weights live on GitHub Release
+[`artifact-rallyclip_v0.5.0`](https://github.com/iroblesrazzaq/RallyClip/releases/tag/artifact-rallyclip_v0.5.0).
 
-- `models/rallyclip_v0.5.0/` — **current default**. Dilated TCN with pointness + start/end heatmap heads; hybrid decode (`frame_startend_heatmap`).
-- `models/rallyclip_v0.4.0/` — classic bidirectional LSTM, pointness + hysteresis. Kept as fallback.
-- `models/rallyclip_v0.3.1/` — previous LSTM recipe (5 fps / 20 s windows).
-- `models/rallyclip_v0.1.0_legacy/` — original legacy artifact (15 fps / 300-frame sequences).
-
-Each artifact directory contains:
-
-1. **`model.onnx`** — ONNX segmenter (LSTM logits, or TCN 3-head logits).
-2. **`scaler.json`** — `StandardScaler` parameters (`mean` / `scale`).
-3. **`manifest.json`** — contract, postprocess knobs, provenance.
-4. Pose ONNX siblings (`yolov8n-pose-960-dynamic.onnx`, static 544×960).
-
-To run a non-default artifact from the CLI, pass the files explicitly:
+After clone:
 
 ```bash
-rallyclip \
-  --model-path models/rallyclip_v0.4.0/model.onnx \
-  --scaler-path models/rallyclip_v0.4.0/scaler.json \
-  --video path/to/match.mp4
+python scripts/fetch_artifact.py
+# or: PYTHONPATH=src python -m runtime.artifact fetch
+```
+
+That unpacks into `models/rallyclip_v0.5.0/` (gitignored binaries). Idempotent:
+skips the network when SHA-256 already matches `SHA256SUMS`. Hash mismatch fails
+closed.
+
+## Layout
+
+- `models/rallyclip_v0.5.0/` — **current default** (`DEFAULT_ARTIFACT_DIR`).
+  Dilated TCN with pointness + start/end heatmap heads; hybrid decode
+  (`frame_startend_heatmap`). Git: `manifest.json`, `SHA256SUMS`. After fetch:
+  `model.onnx`, `scaler.json`, both pose ONNX files.
+- `models/rallyclip_v0.4.0/manifest.json` — classic bidirectional LSTM +
+  hysteresis. Kept so pipeline-resolution tests do not need the old LSTM ONNX.
+- `models/rallyclip_v0.3.1/manifest.json` / `models/rallyclip_v0.1.0_legacy/manifest.json`
+  — historical contracts only.
+
+Pose ONNX lives **once**, only in the v0.5.0 zip.
+
+The Mac DMG still embeds `models/rallyclip_v0.5.0/` at build time
+(`RallyClip.spec`). The packaged app does **not** download weights at launch.
+
+To pack a new zip from a complete local folder:
+
+```bash
+scripts/release/pack_artifact.sh dist/
 ```

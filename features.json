@@ -71,9 +71,9 @@
     {
       "id": "artifact-registry",
       "name": "ONNX off git: GitHub artifact zip + fetch; DMG still embeds DEFAULT_ARTIFACT_DIR",
-      "status": "not_started",
+      "status": "in_progress",
       "verification": "See docs/artifact-registry-plan.md Definition of done: depth-1 clone has no models/**/*.onnx; fetch_artifact.py then golden/e2e; CI fetch; PyInstaller bundle still contains v0.5.0 weights; packaged app does not download at launch.",
-      "evidence": ""
+      "evidence": "2026-09-07: pack/fetch + SHA256SUMS + published release artifact-rallyclip_v0.5.0; CI/release fetch wired; ONNX untracked. Gate evidence pending this session."
     }
   ],
   "active": "artifact-registry"

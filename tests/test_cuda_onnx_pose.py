@@ -16,7 +16,7 @@ pytest.importorskip("onnxruntime")
 from extraction.pose_extractor import PoseExtractor
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ARTIFACT_DIR = REPO_ROOT / "models" / "rallyclip_v0.3.1"
+ARTIFACT_DIR = REPO_ROOT / "models" / "rallyclip_v0.5.0"
 DYNAMIC_ONNX = ARTIFACT_DIR / "yolov8n-pose-960-dynamic.onnx"
 
 requires_bundled_exports = pytest.mark.skipif(
