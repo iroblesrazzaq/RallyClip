@@ -8,43 +8,43 @@ Verified interpreter (2026-07-03): the sibling clone's venv —
 No venv in this worktree. Alternative full-stack interpreters (unverified this session):
 conda `tennis_env`, `/Users/ismaelrobles-razzaq/anaconda3/bin/python`.
 
-Fresh setup (if you need your own env):
+Fresh setup (uv is the supported installer):
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev,desktop]"        # core + pytest + pywebview + CPU onnxruntime; add [train] for torch/ultralytics
-pip install -e ".[e2e-ui]" && playwright install chromium   # browser e2e only
-pip install -e ".[pack]"               # PyInstaller packaging only
+uv sync --extra cpu --extra dev --extra desktop   # runtime + pytest + pywebview
+uv sync --extra cpu --extra e2e-ui && uv run playwright install chromium   # browser e2e only
+uv sync --extra cpu --extra pack                  # PyInstaller packaging only
+uv sync --extra cpu --extra train                 # torch / ultralytics / wandb / h5py / sklearn, training only
+uv run pytest -m "not slow and not e2e"
 ```
 
-Desktop-only Mac/CPU (no pytest): `pip install -e ".[desktop,cpu]"`.
+Desktop-only Mac/CPU (no pytest): `uv sync --extra cpu --extra desktop`.
 
 ### NVIDIA CUDA (Windows / Linux)
 
-`[cpu]` and `[gpu]` are mutually exclusive (`onnxruntime` vs `onnxruntime-gpu` — same import name; the CPU wheel wins if both are present). Uninstall both, then install **only** `[desktop,gpu]` (do not add `[cpu]` or `[dev]`, which pull the CPU wheel):
+`cpu` and `gpu` extras are mutually exclusive (`onnxruntime` vs `onnxruntime-gpu` — same import name; the CPU wheel wins if both are present). `dev` no longer pulls a runtime wheel, so pick one:
 
 ```bash
-pip uninstall -y onnxruntime onnxruntime-gpu
-pip install -e ".[desktop,gpu]"
+uv sync --extra gpu --extra desktop   # NVIDIA
+# or: uv sync --extra cpu --extra desktop
 ```
 
 Verify:
 
 ```bash
-python -c "import onnxruntime as ort; print(ort.get_available_providers())"
+uv run python -c "import onnxruntime as ort; print(ort.get_available_providers())"
 ```
 
-You should see `CUDAExecutionProvider`. Match `onnxruntime-gpu` to your installed CUDA toolkit/driver (mismatched versions drop the CUDA EP or fail session init). Mac packaging stays on `[desktop,cpu]` / CoreML — do not use `[gpu]` there.
-
-From a checkout without editable install, prefix commands with `PYTHONPATH=src:tests`.
+You should see `CUDAExecutionProvider`. Match `onnxruntime-gpu` to your installed CUDA toolkit/driver (mismatched versions drop the CUDA EP or fail session init). Mac packaging stays on `--extra cpu` / CoreML — do not use `--extra gpu` there.
 
 ## Run commands
 
 ```bash
-rallyclip --help                 # CLI (entry: cli:main)
-rallyclip --video match.mp4      # segment a match
-rallyclip gui                    # Flask dev UI in browser
-rallyclip-desktop                # pywebview shell, WKWebView/WebView2 (entry: gui.desktop:main)
+uv run rallyclip                 # same as `uv run rallyclip gui`
+uv run rallyclip gui             # Flask UI in the browser
+uv run rallyclip --video match.mp4
+uv run rallyclip --help
+uv run rallyclip-desktop         # pywebview shell (needs --extra desktop)
 ```
 
 Local runtime config: `config.toml` (don't commit machine-specific paths).

@@ -35,7 +35,7 @@ try:
     from werkzeug.utils import secure_filename
 except ImportError as exc:  # pragma: no cover - handled at runtime
     raise SystemExit(
-        "rallyclip gui requires Flask. Reinstall with `pip install .`."
+        "rallyclip gui requires Flask. From a checkout: uv sync --extra cpu && uv run rallyclip gui"
     ) from exc
 
 from runtime.assets import candidate_roots, resolve_asset

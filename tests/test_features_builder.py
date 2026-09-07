@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
+
+pytest.importorskip("h5py")
 
 from training.features.builder import _pack_player, _player_velocity
 

@@ -1,0 +1,12 @@
+---
+description: PR review is Greptile only — never Bugbot
+alwaysApply: true
+---
+
+# Review with Greptile only
+
+Never request, mention, or run Cursor Bugbot (`cursor[bot]`, `/review-bugbot`, `cursor review`, `bugbot run`, or the Bugbot subagent).
+
+For pull request review, use Greptile only:
+- Comment `@greptileai` on the PR
+- Use the `greptile` CLI for local review (`greptile review --branch main --agent`)

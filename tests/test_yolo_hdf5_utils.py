@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import pytest
-
 from pathlib import Path
 
-import h5py
 import numpy as np
+
+h5py = pytest.importorskip("h5py")
 
 try:
     yolo_module = pytest.importorskip("training.pose.yolo_hdf5")

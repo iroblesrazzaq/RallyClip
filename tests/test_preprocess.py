@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
+
+pytest.importorskip("h5py")
 
 from training.preprocess.preprocessor import _build_targets, _filter_by_court, _sample_indices
 

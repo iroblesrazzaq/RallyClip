@@ -41,16 +41,18 @@ def main() -> int:
 
     if len(sys.argv) > 1 and sys.argv[1] == "--cli":
         # Lazy import keeps GUI startup free of the analysis import chain.
+        # force_cli keeps an empty remainder on the argparse path: `RallyClip --cli`
+        # with no extra args used to error on a missing video, not start Flask.
         from cli.main import main as cli_main
 
         sys.argv = [sys.argv[0], *sys.argv[2:]]
-        return cli_main()
+        return cli_main(force_cli=True)
 
     try:
         import webview
     except ImportError as exc:
         print(
-            "rallyclip-desktop requires pywebview. Install with: pip install '.[desktop]'",
+            "rallyclip-desktop requires pywebview. From a checkout: uv sync --extra cpu --extra desktop",
             file=sys.stderr,
         )
         print(f"Details: {exc}", file=sys.stderr)

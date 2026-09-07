@@ -286,3 +286,31 @@ def test_malformed_manifest_warns_and_falls_back(tmp_path, monkeypatch, caplog):
 
     assert values == {}
     assert any("manifest" in r.getMessage().lower() for r in caplog.records)
+
+
+def test_main_with_no_args_launches_gui(monkeypatch):
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.setattr(cli_main, "_launch_gui", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["rallyclip"])
+    assert cli_main.main() == 0
+
+
+def test_main_gui_subcommand_launches_gui(monkeypatch):
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.setattr(cli_main, "_launch_gui", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["rallyclip", "gui"])
+    assert cli_main.main() == 0
+    assert sys.argv == ["rallyclip"]
+
+
+def test_force_cli_no_args_does_not_launch_gui(tmp_path, monkeypatch):
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    def _boom() -> int:
+        raise AssertionError("gui launched")
+
+    monkeypatch.setattr(cli_main, "_launch_gui", _boom)
+    monkeypatch.setattr(sys, "argv", ["RallyClip"])
+    with pytest.raises(SystemExit, match="Please provide a video"):
+        cli_main.main(force_cli=True)

@@ -15,23 +15,24 @@ dependencies = [
   "opencv-python>=4.8,<5",
   "av",
   "tqdm",
-  "joblib",
-  "h5py",
-  "pyyaml",
-  "wandb",
-  "jsonschema",
   "tomli>=2.0.1",
-  "scikit-learn>=1.7.1",
   "Flask>=2.3",
   "flask-cors>=4.0",
 ]
 
 [project.optional-dependencies]
-# Training / .pt-weights path only. The shipped runtime is torch-free: pose
+# Training pipeline + .pt weights. The shipped runtime is torch-free: pose
 # runs on the bundled ONNX via onnxruntime (extraction.yolo_onnx_runner).
+# HDF5 / YAML / W&B / sklearn / joblib live here, not on the GUI install.
 train = [
   "torch",
   "ultralytics",
+  "h5py",
+  "pyyaml",
+  "joblib",
+  "scikit-learn>=1.7.1",
+  "wandb",
+  "jsonschema",
 ]
 # Mutually exclusive ONNX Runtime wheels (same import name). Never install
 # [cpu] and [gpu] together — the CPU package wins on import and hides CUDA.
@@ -46,12 +47,15 @@ gpu = [
 dev = [
   "pytest",
   "requests",
-  # Default EP for tests/CI (Mac/CPU). GPU machines use [gpu] instead of [cpu]/
-  "onnxruntime",
+  # Training unit tests import HDF5/YAML/joblib/sklearn modules without torch.
+  "h5py",
+  "pyyaml",
+  "joblib",
+  "scikit-learn>=1.7.1",
 ]
 # Browser-driven L2 e2e (frontend journey). Heavy (downloads a browser); kept
 # separate so the core dev/test install stays light. Install the browser with
-# `playwright install chromium` after `pip install .[e2e-ui]`.
+# `playwright install chromium` after `uv sync --extra cpu --extra e2e-ui`.
 e2e-ui = [
   "playwright>=1.40",
   "pytest-playwright>=0.4",
@@ -69,6 +73,17 @@ pack = [
 [project.scripts]
 rallyclip = "cli:main"
 rallyclip-desktop = "gui.desktop:main"
+
+[tool.uv]
+# onnxruntime and onnxruntime-gpu share an import path; installing both
+# silently hides CUDA. uv needs this declared so `uv sync --extra cpu`
+# and `uv sync --extra gpu` resolve as separate forks.
+conflicts = [
+  [
+    { extra = "cpu" },
+    { extra = "gpu" },
+  ],
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

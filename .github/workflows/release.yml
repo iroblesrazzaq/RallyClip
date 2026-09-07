@@ -19,7 +19,7 @@ jobs:
           python-version: "3.11"
       - name: Install package
         shell: bash
-        run: pip install ".[dev,e2e-ui]"
+        run: pip install ".[cpu,dev,e2e-ui]"
       - name: Install Playwright browser
         shell: bash
         run: python -m playwright install chromium
