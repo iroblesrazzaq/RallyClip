@@ -2,10 +2,12 @@
 
 Runs the real shipped pipeline (CPU, no fakes) on a small committed fixture
 clip and asserts the segments CSV matches the committed golden: identical
-segment count, boundaries within 0.25s (CPU inference differs across
-platforms/BLAS backends by up to one frame hop; byte-exact only holds on
-the platform the golden was generated on). This locks in the analysis
-output of the frame_startend_heatmap pipeline across refactors.
+segment count, boundaries within 0.5s. CPU/ORT backends differ across
+platforms by up to ~2 frame hops at 5 fps, and TCN pointness can briefly
+dip under threshold (ubuntu/windows CI used to emit a 0.3s split of the
+first Mac golden point). Byte-exact only holds on the platform the golden
+was generated on. This locks in the analysis output of the
+frame_startend_heatmap pipeline across refactors.
 
 Regenerate the golden (only after a deliberate model/pipeline change):
 
@@ -34,6 +36,8 @@ FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "golden_cli"
 CLIP = FIXTURE_DIR / "clip.mp4"
 GOLDEN_CSV = FIXTURE_DIR / "golden_segments.csv"
 ARTIFACT_DIR = REPO_ROOT / "models" / "rallyclip_v0.5.0"
+# Two 5 fps frames: ORT/CPU start-edge jitter on the TCN hybrid decode.
+BOUNDARY_TOLERANCE_SEC = 0.5
 
 pytestmark = pytest.mark.skipif(
     not (ARTIFACT_DIR / "model.onnx").is_file(),
@@ -79,5 +83,5 @@ def test_cli_segments_csv_matches_golden(tmp_path):
     assert got_header == want_header
     assert len(got) == len(want), f"segment count differs: {got} vs golden {want}"
     for (g_start, g_end), (w_start, w_end) in zip(got, want):
-        assert abs(g_start - w_start) <= 0.25, f"{got} vs golden {want}"
-        assert abs(g_end - w_end) <= 0.25, f"{got} vs golden {want}"
+        assert abs(g_start - w_start) <= BOUNDARY_TOLERANCE_SEC, f"{got} vs golden {want}"
+        assert abs(g_end - w_end) <= BOUNDARY_TOLERANCE_SEC, f"{got} vs golden {want}"

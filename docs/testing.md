@@ -16,7 +16,7 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-08-24, feat/v0.5.0-tcn default swap): **267 passed, 48 deselected, ~38s** (2 sklearn warnings, benign).
+Last known (2026-08-24, feat/v0.5.0-tcn default swap): **269 passed, 48 deselected, ~38s** (2 sklearn warnings, benign).
 
 ## Compile gate (cheap, run with the default gate)
 
@@ -32,8 +32,10 @@ Last known (2026-07-03): exit 0.
 PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_cli_golden_parity.py
 ```
 
-Last known (2026-07-03): **1 passed, 14.0s**. Boundaries compared at 0.25s tolerance;
-byte-exact only holds on the machine+env the golden was generated on.
+Last known (2026-07-03): **1 passed, 14.0s**. Boundaries compared at 0.5s tolerance;
+byte-exact only holds on the machine+env the golden was generated on. ubuntu/windows
+ORT can split a TCN point across a 1-frame pointness dip; v0.5.0 ships
+`merge_gap_sec: 0.5` so those fragments become one segment.
 
 ## Full e2e (44 tests; heavy — run before merges/releases, not per-commit)
 

@@ -55,8 +55,10 @@ def test_soft_argmax_single_spike_is_exact():
 def test_soft_argmax_falls_back_to_center_time_when_no_mass():
     ts = _timestamps(20)
     prob = np.zeros(20)  # no heatmap mass anywhere
-    # mean of the window's timestamps [3..7] -> ts[5]
-    assert _soft_argmax_time(prob, ts, center=5, window=2) == pytest.approx(ts[3:8].mean())
+    assert _soft_argmax_time(prob, ts, center=5, window=2) == pytest.approx(ts[5])
+    # Clipped windows at either video edge must not pull the time inward.
+    assert _soft_argmax_time(prob, ts, center=0, window=5) == pytest.approx(ts[0])
+    assert _soft_argmax_time(prob, ts, center=19, window=5) == pytest.approx(ts[19])
 
 
 def test_soft_argmax_interpolates_between_frames():
@@ -72,6 +74,41 @@ def test_merge_intervals_merges_touching_and_overlapping():
     assert _merge_intervals([(0.0, 1.0), (1.0, 2.0), (5.0, 6.0)]) == [(0.0, 2.0), (5.0, 6.0)]
     assert _merge_intervals([(0.0, 3.0), (1.0, 2.0)]) == [(0.0, 3.0)]
     assert _merge_intervals([(2.0, 1.0)]) == []  # degenerate dropped
+
+
+def test_merge_intervals_closes_gap_within_budget():
+    assert _merge_intervals([(4.07, 4.394), (4.665, 11.97)], gap=0.5) == [(4.07, 11.97)]
+    assert _merge_intervals([(4.07, 4.394), (4.665, 11.97)], gap=0.0) == [
+        (4.07, 4.394),
+        (4.665, 11.97),
+    ]
+
+
+def test_hybrid_merge_gap_closes_one_frame_pointness_dip():
+    """ubuntu/windows ORT dipped one frame under 0.5 and split the first golden point."""
+    n = 60
+    ts = _timestamps(n)
+    pointness = np.full(n, 0.1)
+    pointness[15:55] = 0.9
+    pointness[22] = 0.4  # 1-frame dip at 5 fps = 0.2s hole after refinement
+    start_prob = np.zeros(n)
+    start_prob[15] = 0.9
+    end_prob = np.zeros(n)
+    end_prob[54] = 0.9
+    split = decode_hybrid(
+        pointness, start_prob, end_prob, ts,
+        HeatmapDecodeConfig(mode="hybrid", threshold=0.5, min_duration_sec=0.3),
+    )
+    assert len(split) == 2
+    merged = decode_hybrid(
+        pointness, start_prob, end_prob, ts,
+        HeatmapDecodeConfig(
+            mode="hybrid", threshold=0.5, min_duration_sec=0.3, merge_gap_sec=0.5,
+        ),
+    )
+    assert len(merged) == 1
+    assert merged[0][0] == pytest.approx(split[0][0])
+    assert merged[0][1] == pytest.approx(split[1][1])
 
 
 # ---------------------------------------------------------------- hybrid decode
@@ -331,6 +368,7 @@ def test_fp_filters_default_to_no_ops():
     cfg = _fp_cfg()
     assert cfg.smooth_sigma_frames is None
     assert cfg.hybrid_min_duration_sec == 0.0
+    assert cfg.merge_gap_sec == 0.0
     point, start, end, ts = _fp_tracks()
     assert len(decode_hybrid(point, start, end, ts, cfg)) == 3
 

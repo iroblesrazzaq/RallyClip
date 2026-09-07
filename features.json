@@ -10,7 +10,7 @@
       "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
-      "evidence": "2026-08-24: 267 passed, 48 deselected, 2 warnings (~38s) on feat/v0.5.0-tcn (heatmap runtime + TCN default swap)."
+      "evidence": "2026-08-24: 269 passed, 48 deselected, 2 warnings (~38s) on feat/v0.5.0-tcn (heatmap runtime + TCN default swap; Greptile start_time offset fix)."
     },
     {
       "id": "golden-cli-parity",

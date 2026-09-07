@@ -434,7 +434,10 @@ class HeatmapHybridModel(AnalysisModel):
         start_prob = np.asarray(model_output[1], dtype=np.float64)
         end_prob = np.asarray(model_output[2], dtype=np.float64)
         num_frames = int(pointness.shape[0])
-        timestamps = np.arange(num_frames, dtype=np.float64) / float(self.request.fps)
+        timestamps = (
+            float(self.request.start_time)
+            + np.arange(num_frames, dtype=np.float64) / float(self.request.fps)
+        )
         return decode(pointness, start_prob, end_prob, timestamps, self._decode_config())
 
 

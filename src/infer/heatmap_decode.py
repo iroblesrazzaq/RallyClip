@@ -57,6 +57,12 @@ class HeatmapDecodeConfig:
     # all -- a known parity gap between the two implementations, tracked
     # separately. This knob behaves identically on both sides.
     hybrid_min_duration_sec: float = 0.0
+    # Merge neighbouring segments whose gap is <= this. Default 0 keeps
+    # touch-or-overlap-only merging. TCN pointness can dip below threshold for
+    # one frame on some ORT/CPU builds, which would otherwise emit a 0.3s
+    # fragment plus the rest of the same point (CI golden split on
+    # ubuntu/windows).
+    merge_gap_sec: float = 0.0
 
     def _refine_window(self) -> int:
         return int(self.refine_window_frames if self.refine_window_frames is not None
@@ -81,11 +87,12 @@ def _gaussian_smooth(data: np.ndarray, sigma: float) -> np.ndarray:
     return np.convolve(padded, kernel, mode="valid").astype(data.dtype)
 
 
-def _merge_intervals(segments: List[Interval]) -> List[Interval]:
+def _merge_intervals(segments: List[Interval], gap: float = 0.0) -> List[Interval]:
     segments = sorted(s for s in segments if s[1] > s[0])
     merged: List[Interval] = []
+    max_gap = max(0.0, float(gap))
     for seg in segments:
-        if merged and seg[0] <= merged[-1][1]:
+        if merged and seg[0] <= merged[-1][1] + max_gap:
             merged[-1] = (merged[-1][0], max(merged[-1][1], seg[1]))
         else:
             merged.append(seg)
@@ -97,14 +104,16 @@ def _soft_argmax_time(
 ) -> float:
     """Probability-weighted mean of frame times in [center-window, center+window].
     Falls back to the plain window-centre time if the local heatmap mass vanishes
-    (so a frame with no boundary signal still yields the run-edge time)."""
+    (so a frame with no boundary signal still yields the run-edge time).
+    Must use timestamps[center], not the clipped window mean: at a video edge
+    the window is asymmetric and the mean would pull the boundary inward."""
     lo = max(0, center - window)
     hi = min(len(prob), center + window + 1)
     w = prob[lo:hi]
     ts = timestamps[lo:hi]
     total = float(w.sum())
     if total <= 1e-9:
-        return float(ts.mean())
+        return float(timestamps[center])
     return float(np.average(ts, weights=w))
 
 
@@ -173,7 +182,7 @@ def decode_hybrid(
         if dur < cfg.min_duration_sec or dur > cfg.max_duration_sec:
             continue
         segments.append((s, e))
-    merged = _merge_intervals(segments)
+    merged = _merge_intervals(segments, gap=cfg.merge_gap_sec)
     # Duration floor applied AFTER merging, so adjacent fragments that together
     # form a real point are not discarded individually.
     if cfg.hybrid_min_duration_sec > 0:
@@ -217,7 +226,7 @@ def decode_peakpair(
         used[k] = True
         ei = k + 1
         segments.append((st, et))
-    return _merge_intervals(segments)
+    return _merge_intervals(segments, gap=cfg.merge_gap_sec)
 
 
 def decode_heatmap_segments(

@@ -31,7 +31,7 @@ OUTPUT_NAMES = ("pointness_logit", "start_heatmap_logit", "end_heatmap_logit")
 
 
 def load_tcn(checkpoint: Path, input_size: int, hidden_size: int, levels: int, kernel_size: int, dropout: float, head: str) -> TennisPointHeatmapTCN:
-    ckpt = torch.load(str(checkpoint), map_location="cpu", weights_only=False)
+    ckpt = torch.load(str(checkpoint), map_location="cpu", weights_only=True)
     state = ckpt.get("model_state_dict", ckpt)
     model = TennisPointHeatmapTCN(
         input_size=input_size,

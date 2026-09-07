@@ -163,6 +163,20 @@ def test_gui_config_forces_yolo_nano():
     assert normalized["yolo_weights"] == gui_app.FIXED_YOLO_MODEL
 
 
+def test_normalize_config_does_not_sticky_default_pipeline():
+    from gui import app as gui_app
+
+    # Frontend spreads /api/config/defaults, which includes the bundled pipeline id.
+    sticky = gui_app._normalize_config({"pipeline_id": gui_app.DEFAULT_CONFIG.get("pipeline_id")})
+    assert sticky["pipeline_id"] is None
+
+    explicit = gui_app._normalize_config({"pipeline_id": "frame_probability_hysteresis"})
+    if gui_app.DEFAULT_CONFIG.get("pipeline_id") == "frame_probability_hysteresis":
+        assert explicit["pipeline_id"] is None
+    else:
+        assert explicit["pipeline_id"] == "frame_probability_hysteresis"
+
+
 def test_persist_library_item_saves_source_without_cutting(tmp_path, monkeypatch):
     from gui import app as gui_app
 
@@ -187,7 +201,7 @@ def test_persist_library_item_saves_source_without_cutting(tmp_path, monkeypatch
         upload_path=upload,
         base_name="Match",
         segments=[(0, 10)],
-        intervals_sec=[(0.0, 2.0)],
+        intervals_sec=[(1.234, 5.678)],
         fps=5.0,
         job=job,
     )
@@ -196,6 +210,7 @@ def test_persist_library_item_saves_source_without_cutting(tmp_path, monkeypatch
     assert source_out == item_dir / "source.mp4"
     assert source_out.read_bytes() == b"fake video"
     assert csv_out == item_dir / "segments.csv"
+    assert csv_out.read_text(encoding="utf-8") == "start_time,end_time\n1.234,5.678\n"
     assert not (item_dir / "video.mp4").exists()
     assert not (item_dir / "export.mp4").exists()
 

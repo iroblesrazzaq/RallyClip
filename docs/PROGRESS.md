@@ -13,11 +13,12 @@ _Last updated: 2026-08-24 (session: ship TCN heatmap as default v0.5.0)._
 - GitHub Releases latest is still **v0.3.0**; tagging `v0.5.0` is the Mac DMG
   path once this branch is proven. Do not pretend v0.4.0 was a GitHub product
   release.
-- Gates this session: default unit **267 passed, 48 deselected**; compile clean;
+- Gates this session: default unit **269 passed, 48 deselected**; compile clean;
   golden CLI regenerated and passing; CLI smoke v0.4.0 vs v0.5.0 on the fixture
   clip (classic one 3.8–24.0s segment vs TCN two points 3.753–11.964 and
   13.040–23.449). L1 GUI e2e (default job) + Playwright new-match
-  (upload → progress → library) passed.
+  (upload → progress → library) passed. Greptile P1 (heatmap `--start-time`
+  offset) and library CSV sub-frame persistence are fixed on this branch.
 
 ## What shipped this session
 

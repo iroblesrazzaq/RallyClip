@@ -116,7 +116,7 @@ class _IdentityScaler:
         return np.asarray(values, dtype=np.float32)
 
 
-def _make_request(tmp_path: Path, *, write_csv=True, segment_video=False) -> RunRequest:
+def _make_request(tmp_path: Path, *, write_csv=True, segment_video=False, start_time: int = 0) -> RunRequest:
     model_path = tmp_path / "model.onnx"
     model_path.write_bytes(b"x")
     return RunRequest(
@@ -143,6 +143,7 @@ def _make_request(tmp_path: Path, *, write_csv=True, segment_video=False) -> Run
         high=0.0,
         min_dur_sec=0.0,
         pipeline_id=FRAME_STARTEND_HEATMAP,
+        start_time=start_time,
     )
 
 
@@ -218,6 +219,24 @@ def test_heatmap_model_run_produces_intervals_and_csv(tmp_path, monkeypatch):
     csv_text = (tmp_path / "out" / "match_segments.csv").read_text(encoding="utf-8")
     assert csv_text.splitlines()[0] == "start_time,end_time"
     assert csv_text.splitlines()[1] == "1.000,2.000"
+
+
+def test_heatmap_model_offsets_timestamps_by_request_start_time(tmp_path, monkeypatch):
+    n = 20
+    point = np.full(n, 0.1, dtype=np.float32)
+    point[5:11] = 0.9
+    start = np.zeros(n, dtype=np.float32)
+    start[5] = 0.9
+    end = np.zeros(n, dtype=np.float32)
+    end[10] = 0.9
+    _install_fakes(monkeypatch, np.stack([point, start, end], axis=0))
+
+    request = _make_request(tmp_path, start_time=12)
+    result = build_analysis_model(request, _spec(tmp_path), _fake_deps()).run()
+
+    assert result.intervals_sec == [pytest.approx((12 + 5 / FPS, 12 + 10 / FPS))]
+    csv_text = (tmp_path / "out" / "match_segments.csv").read_text(encoding="utf-8")
+    assert csv_text.splitlines()[1] == "13.000,14.000"
 
 
 def test_heatmap_model_segments_video_from_intervals(tmp_path, monkeypatch):

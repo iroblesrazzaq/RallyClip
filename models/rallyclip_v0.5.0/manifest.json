@@ -135,6 +135,7 @@
       "min_duration_sec": 0.3,
       "max_duration_sec": 60.0,
       "hybrid_min_duration_sec": 0.0,
+      "merge_gap_sec": 0.5,
       "sigma": 1.5,
       "low": 0.5,
       "high": 0.65,

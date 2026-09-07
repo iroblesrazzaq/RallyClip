@@ -1241,7 +1241,10 @@ def _persist_library_item(
     item_dir.mkdir(parents=True, exist_ok=True)
     try:
         csv_out = item_dir / "segments.csv"
-        _get_analysis_runtime().write_segments_csv(segments, str(csv_out), fps=fps, overwrite=True)
+        # Persist source-time intervals, not rounded frame indices: heatmap
+        # decode yields sub-frame bounds the CLI already keeps via
+        # write_point_intervals. Re-deriving times as frame/fps would drop them.
+        write_point_intervals(csv_out, intervals_sec)
         source_out = item_dir / "source.mp4"
         shutil.copy2(upload_path, source_out)
         _set_step(job, "output", "in_progress", 70)
@@ -1487,11 +1490,13 @@ def _normalize_config(raw: Dict[str, Any]) -> Dict[str, Any]:
     )
     cfg["yolo_size"] = "nano"
     cfg["yolo_weights"] = FIXED_YOLO_MODEL
-    # Pipeline is a property of the selected artifact. Sticky GUI defaults would
-    # force frame_startend_heatmap onto every job, including tests and fallback
-    # models whose manifests declare hysteresis. Only honor an explicit client
-    # override; otherwise the engine reads pipeline.id from the model manifest.
-    if not (raw or {}).get("pipeline_id"):
+    # Pipeline is a property of the selected artifact. Sticky GUI defaults
+    # (and the frontend spreading /api/config/defaults into every upload)
+    # would force the bundled pipeline onto every job. Only honor an explicit
+    # client override that differs from the startup default; otherwise the
+    # engine reads pipeline.id from the model manifest.
+    raw_pipeline = (raw or {}).get("pipeline_id")
+    if not raw_pipeline or raw_pipeline == DEFAULT_CONFIG.get("pipeline_id"):
         cfg["pipeline_id"] = None
     return cfg
 
