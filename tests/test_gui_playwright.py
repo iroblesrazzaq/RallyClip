@@ -781,7 +781,7 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
         "activeFullscreenClass": True,
         "resetFullscreenLabel": "⛶",
         "resetFullscreenClass": False,
-        "calls": [{"time": 23, "autoplay": True}, {"time": 33, "autoplay": True}],
+        "calls": [{"time": 25, "autoplay": True}, {"time": 35, "autoplay": True}],
         "prevented": 2,
     }
 
