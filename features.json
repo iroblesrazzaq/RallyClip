@@ -38,7 +38,7 @@
       "name": "Full e2e set: L1 backend golden jobs, L2 playwright UI, quality harness, court e2e (44 tests)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m e2e -p no:cacheprovider",
-      "evidence": "2026-09-07: test_ui_viewer_uses_source_timeline_scheduler keyboard-skip expects corrected to 25/35 (source time 20+10, skip 5s). Unit gate 280 passed. CI e2e confirmation pending this push. 2026-08-24 (feat/v0.5.0-tcn): L1 GUI e2e 5 passed; Playwright 2 passed (welcome + new-match). Golden-footage L1 still skips without data/e2e/aditi_5pts."
+      "evidence": "2026-09-07: scheduler e2e skip checks stub source time 30s and paused=false so 25/35 autoplay seeks are OS-stable. Unit gate 280 passed. CI e2e confirmation pending this push. 2026-08-24 (feat/v0.5.0-tcn): L1 GUI e2e 5 passed; Playwright 2 passed (welcome + new-match). Golden-footage L1 still skips without data/e2e/aditi_5pts."
     },
     {
       "id": "onnx-pose-swap",

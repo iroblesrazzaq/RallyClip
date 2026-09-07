@@ -1,6 +1,6 @@
 # PROGRESS — overwrite me at every session end
 
-_Last updated: 2026-09-07 (session: fix scheduler e2e keyboard-skip expects)._
+_Last updated: 2026-09-07 (session: make scheduler e2e skip checks deterministic)._
 
 ## Repo state
 
@@ -11,14 +11,13 @@ _Last updated: 2026-09-07 (session: fix scheduler e2e keyboard-skip expects)._
 
 ## What shipped this session
 
-1. `test_ui_viewer_uses_source_timeline_scheduler` keyboard-skip expects were
-   23/33s. Source time is window start 20 + `currentTime` 10 = 30, skip is 5s,
-   so seeks are 25/35 — same as the skip-button block already asserted. CI on
-   all three OS failed that one assert. Expectation updated; product code unchanged.
+1. Scheduler e2e skip checks no longer read live `currentTime` / `paused`.
+   Keyboard and skip-button blocks stub `getViewerSourceTime` at 30s and
+   `paused` false, so seeks are 25/35 with autoplay true on every OS.
+   Ubuntu was clamping `currentTime=10` inside the 8s preview window (23/33);
+   macOS/Windows had a paused element (`autoplay: False`).
 
 ## Next steps
 
 1. Wait for CI e2e green on this push, then merge #50 (user merges).
-2. Dry-run: Actions → Release → Run workflow on this branch (not `main`) if a
-   notarized DMG is needed before the tag.
-3. After merge: tag `v0.5.0` (must match `pyproject.toml`).
+2. After merge: tag `v0.5.0` (must match `pyproject.toml`).

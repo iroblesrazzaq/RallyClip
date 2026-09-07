@@ -314,10 +314,9 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
     # after the Qt-native player, which drew its own, was deleted).
     expect(page.locator(".viewer-point-segment").first).to_be_visible()
 
-    # macOS Chromium keeps playing the H.264 fixture. Mute live timeupdate
-    # while the synthetic interval/duration mutations run so those handlers
-    # cannot clear matchVideo.src. Do not pause the element: later skip-button
-    # checks pass autoplay from !matchVideo.paused.
+    # Mute live timeupdate while synthetic interval/duration mutations run so
+    # those handlers cannot clear matchVideo.src. Skip autoplay is stubbed
+    # below; do not depend on the live media element's paused/currentTime.
     page.evaluate(
         """() => {
             const app = window.rallyClipApp;
@@ -735,9 +734,10 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             app.matchVideo.dataset.windowStart = "20";
             app.matchVideo.dataset.windowDuration = "20";
             app.sourceDuration = 120;
-            app.matchVideo.currentTime = 10;
             const calls = [];
             const originalSeek = app.seekViewerToSourceTime.bind(app);
+            const originalGetTime = app.getViewerSourceTime.bind(app);
+            app.getViewerSourceTime = () => 30;
             app.seekViewerToSourceTime = (time, autoplay) => calls.push({ time, autoplay });
             let prevented = 0;
             app.handleViewerKeyboardShortcuts({
@@ -753,6 +753,7 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
                 preventDefault: () => { prevented += 1; },
             });
             app.seekViewerToSourceTime = originalSeek;
+            app.getViewerSourceTime = originalGetTime;
 
             if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
             else delete app.matchVideo.paused;
@@ -791,13 +792,20 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             const calls = [];
             const originalSeek = app.seekViewerToSourceTime.bind(app);
             const originalGetTime = app.getViewerSourceTime.bind(app);
+            const pausedDescriptor = Object.getOwnPropertyDescriptor(app.matchVideo, "paused");
             app.sourceDuration = 120;
             app.getViewerSourceTime = () => 30;
+            Object.defineProperty(app.matchVideo, "paused", {
+                get: () => false,
+                configurable: true,
+            });
             app.seekViewerToSourceTime = (time, autoplay) => calls.push({ time, autoplay });
             app.viewerBackBtn.click();
             app.viewerForwardBtn.click();
             app.seekViewerToSourceTime = originalSeek;
             app.getViewerSourceTime = originalGetTime;
+            if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
+            else delete app.matchVideo.paused;
             return calls;
         }"""
     )
