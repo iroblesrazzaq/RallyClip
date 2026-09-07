@@ -160,3 +160,14 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   unsigned builds). `workflow_dispatch` still wraps an unsigned DMG when
   secrets are absent.
 
+## 2026-09-07 — PR review is Greptile only; Bugbot stays off
+
+- **What:** Agents must not invoke Cursor Bugbot. PR review is Greptile
+  (`@greptileai`, iterate to 5/5). Disable Bugbot for this repo in the Cursor
+  dashboard so it does not spend tokens on every PR push.
+- **Why:** Greptile is already the repo reviewer and is free here; Bugbot is a
+  second paid review on the same diffs.
+- **Rejected:** leaving Bugbot on "only when mentioned" (still easy to trip by
+  commenting `cursor review`); uninstalling the whole Cursor GitHub App (that
+  also breaks Cloud Agents / PR comments we still use).
+
