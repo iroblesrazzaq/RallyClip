@@ -6,14 +6,18 @@ from typing import Any, Dict, Optional
 from runtime.assets import YOLO_SIZE_MAP, manifest_values, resolve_asset
 from rallyclip_core.pipelines import pipeline_id_from_manifest_values
 
+# Shipped inference bundle. RallyClip.spec copies this folder into the .app;
+# tests/test_release_packaging.py fails if the spec drifts from this constant.
+DEFAULT_ARTIFACT_DIR = "models/rallyclip_v0.5.0"
+
 
 def resolve_default_artifacts(
     artifact_dir: Optional[str] = None,
 ) -> tuple[Path, Path, Path]:
     """Resolve bundled ONNX artifact paths for GUI defaults."""
     artifact_path = Path(artifact_dir).expanduser().resolve() if artifact_dir else None
-    model_relatives = ["models/rallyclip_v0.5.0/model.onnx"]
-    scaler_relatives = ["models/rallyclip_v0.5.0/scaler.json"]
+    model_relatives = [f"{DEFAULT_ARTIFACT_DIR}/model.onnx"]
+    scaler_relatives = [f"{DEFAULT_ARTIFACT_DIR}/scaler.json"]
     if artifact_path is not None:
         model_path = artifact_path / "model.onnx"
         scaler_path = artifact_path / "scaler.json"

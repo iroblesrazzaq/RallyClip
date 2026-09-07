@@ -21,12 +21,12 @@ dir is not a git repo; this table is the authoritative summary):
 |---|---|
 | `src/` | The Python package (8 subpackages, see seams below). `package-dir = src`. |
 | `tests/` | Pytest suites + `tests/fixtures/` (court goldens ~11MB, golden CLI clip, quality GT) + `tests/helpers/`. |
-| `scripts/` | Training/data tooling + `scripts/export_heatmap_model.py` (TCN ONNX export) + `scripts/perf/` benchmarks + `scripts/release/sign_macos_app.sh`. Not shipped. |
+| `scripts/` | Training/data tooling + `scripts/export_heatmap_model.py` (TCN ONNX export) + `scripts/perf/` benchmarks + `scripts/release/` (sign, DMG, notarize, CI cert import). Not shipped. |
 | `configs/` | Training YAMLs (`configs/train/base.yaml`, `configs/extract/*`). |
 | `models/` | Tracked inference artifacts: `rallyclip_v0.5.0/` (default TCN heatmap) + `rallyclip_v0.4.0/` (classic LSTM fallback) + `rallyclip_v0.3.1/` + `rallyclip_v0.1.0_legacy/`. Weights (`*.pt`, `*.pth`) present locally but gitignored. |
 | `docs/` | This harness + plans (Tier 3) + `docs/perf/` (streaming-perf loop journal) + `docs/training.md`. |
 | `packaging/`, `RallyClip.spec` | PyInstaller/macOS packaging. |
-| `.github/workflows/` | `ci.yml` (3 OS × unit/e2e), `release.yml`. |
+| `.github/workflows/` | `ci.yml` (3 OS × unit/e2e), `release.yml` (tag `v*` → signed/notarized DMG). |
 | `train.py`, `visualize.py` | Training-pipeline entry points (developer workflow, not runtime). |
 | `config.toml` | Local runtime config for CLI runs. |
 | `build/`, `logs/`, `src/rallyclip.egg-info/`, `__pycache__` | SKIP: generated, gitignored. |
@@ -44,7 +44,7 @@ dir is not a git repo; this table is the authoritative summary):
 - **Court detection** → `src/preprocessing/court_detector_impl.py`, `tests/test_court_detection_deterministic.py`, `tests/helpers/court_fixtures.py`; regen fixtures with `scripts/court_fixtures_gen.py`.
 - **Features/preprocessing (runtime)** → `src/features/feature_engineer.py`, `src/preprocessing/data_preprocessor.py`, contract tests `tests/test_runtime_*_contract.py`.
 - **Training pipeline** → `docs/training.md`, `src/training/pipeline.py`, `configs/train/base.yaml`, `train.py`.
-- **Packaging/release** → `RallyClip.spec`, `packaging/macos/`, `.github/workflows/release.yml`, `docs/cli-in-release-binary-plan.md`.
+- **Packaging/release** → `RallyClip.spec`, `packaging/macos/`, `scripts/release/`, `.github/workflows/release.yml`, `docs/cli-in-release-binary-plan.md`.
 - **Perf** → `docs/perf/PLAN.md` + `docs/perf/JOURNAL.md`, `scripts/perf/bench_*.py`, baselines in `docs/perf/baseline/`.
 
 ## Key seams & entry points
@@ -52,7 +52,7 @@ dir is not a git repo; this table is the authoritative summary):
 - `src/rallyclip_core/` — pure contracts (`RunRequest`→`RunResult`, ProgressEvent, SavedMatchStore, playback scheduling). **Rule: no heavy imports here** (torch/ultralytics/av/cv2/numpy); `tests/test_gui_startup_imports.py` enforces it.
 - `src/rallyclip_engine/runtime.py:27` — `RuntimeDeps` default binds `PoseExtractor`; the dependency-injection seam (the ONNX pose swap was validated through it before landing as the default).
 - `src/rallyclip_core/pipelines.py:14` — `pipeline_id_from_manifest_values`: the model artifact's manifest (not code) selects the pipeline. Shipped default: `frame_startend_heatmap` (TCN 3-head hybrid decode); `frame_probability_hysteresis` remains on `models/rallyclip_v0.4.0/`; `start_end_attention_voting` is a stub.
-- `models/rallyclip_v0.5.0/manifest.json` — the model contract: imgsz 960, conf 0.25, fps 5, seq_len 100, pipeline `frame_startend_heatmap`. Don't hardcode these in code.
+- `models/rallyclip_v0.5.0/manifest.json` — the model contract: imgsz 960, conf 0.25, fps 5, seq_len 100, pipeline `frame_startend_heatmap`. Don't hardcode these in code. `runtime.defaults.DEFAULT_ARTIFACT_DIR` is the packaging/runtime pointer.
 - `src/rallyclip_api/services.py:10` — `RallyClipServices` facade; CLI and Flask GUI are both thin clients of it. Desktop app = pywebview (WKWebView/WebView2) → local Flask; **all behavior is `/api/*` HTTP**, no private channel.
 - `src/extraction/pose_extractor.py` `_flush_batch` — the predict surface (4 arrays per result) that `yolo_onnx_runner.YOLO` replicates; `.pt` weights still route to lazily-imported ultralytics (`[train]` extra).
 - `src/gui/app.py:86-226` — config is module globals (`PREFERENCES_PATH`, `JOBS_DIR`, …). E2E harness `tests/helpers/e2e_backend.py` must redirect ALL of them; config-object refactor planned (`docs/runtime-config-refactor-plan.md`).

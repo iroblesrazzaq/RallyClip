@@ -1,24 +1,65 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
+
+try:
+    import tomllib
+except ImportError:  # pragma: no cover - Python 3.10
+    import tomli as tomllib
+
 from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
 from PyInstaller.utils.hooks import copy_metadata
 
-# Torch-free bundle: pose runs on the ONNX inside models/rallyclip_v0.5.0
-# (extraction.yolo_onnx_runner + onnxruntime); no .pt weights, no ultralytics.
-datas = [('src/gui/frontend', 'gui/frontend'), ('models/rallyclip_v0.5.0', 'models/rallyclip_v0.5.0'), ('src/preprocessing/default_court_mask.png', 'preprocessing'), ('docs/rallyclip.icns', 'docs'), ('docs/rallyclip_logo.svg', 'docs'), ('docs/rallyclip_app_icon.svg', 'docs'), ('docs/rallyclip_logo_cropped.png', 'docs'), ('docs/rallyclip_favicon_transparent2.png', 'docs')]
+# PyInstaller sets SPECPATH to the spec file's directory, not the spec path.
+# Treat a file path as well so a mis-set SPECPATH still finds pyproject.toml.
+_spec_path = Path(SPECPATH).resolve()
+_SPEC_DIR = _spec_path.parent if _spec_path.is_file() else _spec_path
+with (_SPEC_DIR / "pyproject.toml").open("rb") as _fh:
+    _VERSION = tomllib.load(_fh)["project"]["version"]
+
+# Keep this string in lockstep with runtime.defaults.DEFAULT_ARTIFACT_DIR
+# (tests/test_release_packaging.py enforces that). Torch-free bundle: pose
+# runs on the ONNX in this folder (extraction.yolo_onnx_runner + onnxruntime).
+_DEFAULT_ARTIFACT_DIR = "models/rallyclip_v0.5.0"
+_BUNDLE_IDENTIFIER = "com.iroblesrazzaq.rallyclip"
+
+datas = [
+    ("src/gui/frontend", "gui/frontend"),
+    (_DEFAULT_ARTIFACT_DIR, _DEFAULT_ARTIFACT_DIR),
+    ("src/preprocessing/default_court_mask.png", "preprocessing"),
+    ("docs/rallyclip.icns", "docs"),
+    ("docs/rallyclip_logo.svg", "docs"),
+    ("docs/rallyclip_app_icon.svg", "docs"),
+    ("docs/rallyclip_logo_cropped.png", "docs"),
+    ("docs/rallyclip_favicon_transparent2.png", "docs"),
+]
 binaries = []
-hiddenimports = ['gui.app', 'gui.analysis_worker', 'cli.main', 'runtime.assets', 'runtime.device', 'runtime.defaults', 'runtime.paths', 'extraction.yolo_onnx_runner', 'onnxruntime', 'psutil', 'webview']
-hiddenimports += collect_submodules('flask')
-tmp_ret = collect_all('psutil')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+hiddenimports = [
+    "gui.app",
+    "gui.analysis_worker",
+    "cli.main",
+    "runtime.assets",
+    "runtime.device",
+    "runtime.defaults",
+    "runtime.paths",
+    "extraction.yolo_onnx_runner",
+    "onnxruntime",
+    "psutil",
+    "webview",
+]
+hiddenimports += collect_submodules("flask")
+tmp_ret = collect_all("psutil")
+datas += tmp_ret[0]
+binaries += tmp_ret[1]
+hiddenimports += tmp_ret[2]
 # The in-app update check reads importlib.metadata.version("rallyclip");
 # without the dist-info the frozen app falls back to a hardcoded 0.1.0 and
 # nags about every release — including older ones.
-datas += copy_metadata('rallyclip')
+datas += copy_metadata("rallyclip")
 
 
 a = Analysis(
-    ['src/gui/desktop.py'],
+    ["src/gui/desktop.py"],
     pathex=[],
     binaries=binaries,
     datas=datas,
@@ -26,7 +67,22 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['PyQt5', 'PyQt6', 'PySide2', 'openvino', 'torch', 'torchvision', 'ultralytics', 'PySide6', 'shiboken6', 'tensorflow', 'keras', 'tf_keras', 'tensorflow_hub', 'tensorboard'],
+    excludes=[
+        "PyQt5",
+        "PyQt6",
+        "PySide2",
+        "openvino",
+        "torch",
+        "torchvision",
+        "ultralytics",
+        "PySide6",
+        "shiboken6",
+        "tensorflow",
+        "keras",
+        "tf_keras",
+        "tensorflow_hub",
+        "tensorboard",
+    ],
     noarchive=False,
     optimize=0,
 )
@@ -37,7 +93,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='RallyClip',
+    name="RallyClip",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -47,8 +103,8 @@ exe = EXE(
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
-    entitlements_file='packaging/macos/RallyClip.entitlements',
-    icon=['docs/rallyclip.icns'],
+    entitlements_file="packaging/macos/RallyClip.entitlements",
+    icon=["docs/rallyclip.icns"],
 )
 coll = COLLECT(
     exe,
@@ -57,12 +113,23 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='RallyClip',
+    name="RallyClip",
 )
 app = BUNDLE(
     coll,
-    name='RallyClip.app',
-    icon='docs/rallyclip.icns',
-    bundle_identifier=None,
-    entitlements_file='packaging/macos/RallyClip.entitlements',
+    name="RallyClip.app",
+    icon="docs/rallyclip.icns",
+    bundle_identifier=_BUNDLE_IDENTIFIER,
+    entitlements_file="packaging/macos/RallyClip.entitlements",
+    info_plist={
+        "CFBundleName": "RallyClip",
+        "CFBundleDisplayName": "RallyClip",
+        "CFBundleIdentifier": _BUNDLE_IDENTIFIER,
+        "CFBundleShortVersionString": _VERSION,
+        "CFBundleVersion": _VERSION,
+        "CFBundlePackageType": "APPL",
+        "LSMinimumSystemVersion": "12.0",
+        "NSHighResolutionCapable": True,
+        "LSApplicationCategoryType": "public.app-category.sports",
+    },
 )
