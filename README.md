@@ -43,29 +43,8 @@ CLI, training, and extra install notes live in [`docs/ENVIRONMENT.md`](docs/ENVI
 ## Features coming soon (in rough order)
 - iOS mobile app beta coming soon
 
-
 ## Current release status
-
 The current public desktop release is `v0.3.0` for **Apple Silicon macOS only**.
-It was built, signed, notarized, stapled, and uploaded manually as a DMG. 
-
-## Runtime architecture direction
-
-The `refactor/runtime-api-engine` branch is splitting the runtime into:
-
-- `rallyclip_core`: pure contracts, interval helpers, pipeline selection, saved
-  playback manifests, and source-time scheduler rules.
-- `rallyclip_engine`: analysis execution. A model pipeline owns preprocessing,
-  inference, postprocessing, and CSV/video-ready output.
-- `rallyclip_api`: application service layer that Flask, CLI, desktop, and future
-  clients can share.
-- UI clients: native macOS, browser dev UI, and future mobile clients own their
-  own video rendering and controls.
-
-See `docs/ENVIRONMENT.md` and `docs/runtime-api-engine-refactor.md` for the current
-branch handoff and test commands.
-
-
 
 ## Features down the road
 In no particular order,
