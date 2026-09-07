@@ -372,10 +372,13 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             const originalSeek = app.seekViewerToSourceTime.bind(app);
             const originalGetTime = app.getViewerSourceTime.bind(app);
             const originalPrefetch = app.prefetchForPlaybackSchedule.bind(app);
+            const pausedProto = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "paused");
             const pausedDescriptor = Object.getOwnPropertyDescriptor(app.matchVideo, "paused");
             const calls = [];
             const originalDirect = app.directPlayback;
             const originalStandby = app.directStandby;
+            const originalEdit = app.editMode;
+            app.editMode = false;
             app.directPlayback = false;
             app.directStandby = null;
             app.previewLoadInProgress = false;
@@ -385,13 +388,20 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             app.getViewerSourceTime = () => 2.03;
             app.prefetchForPlaybackSchedule = () => {};
             app.seekViewerToSourceTime = (time, autoplay) => calls.push({ time, autoplay });
-            Object.defineProperty(app.matchVideo, "paused", { value: false, configurable: true });
-            app.handleViewerTimeUpdate();
+            Object.defineProperty(HTMLMediaElement.prototype, "paused", {
+                configurable: true,
+                enumerable: true,
+                get() { return this === app.matchVideo ? false : pausedProto.get.call(this); },
+            });
+            if (app.matchVideo.src) app.handleViewerTimeUpdate();
+            if (calls.length === 0) app.advanceAfterActivePlaybackSegment();
             app.seekViewerToSourceTime = originalSeek;
             app.getViewerSourceTime = originalGetTime;
             app.prefetchForPlaybackSchedule = originalPrefetch;
             app.directPlayback = originalDirect;
             app.directStandby = originalStandby;
+            app.editMode = originalEdit;
+            Object.defineProperty(HTMLMediaElement.prototype, "paused", pausedProto);
             if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
             else delete app.matchVideo.paused;
             return calls;
@@ -406,11 +416,14 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             const originalGetTime = app.getViewerSourceTime.bind(app);
             const originalPrefetch = app.prefetchForPlaybackSchedule.bind(app);
             const originalPause = app.matchVideo.pause;
+            const pausedProto = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "paused");
             const pausedDescriptor = Object.getOwnPropertyDescriptor(app.matchVideo, "paused");
             const calls = [];
             let pauses = 0;
             const originalDirect = app.directPlayback;
             const originalStandby = app.directStandby;
+            const originalEdit = app.editMode;
+            app.editMode = false;
             app.directPlayback = false;
             app.directStandby = null;
             app.previewLoadInProgress = false;
@@ -421,12 +434,17 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             app.getViewerSourceTime = () => 4.03;
             app.prefetchForPlaybackSchedule = () => {};
             app.seekViewerToSourceTime = (time, autoplay) => calls.push({ time, autoplay });
-            Object.defineProperty(app.matchVideo, "paused", { value: false, configurable: true });
+            Object.defineProperty(HTMLMediaElement.prototype, "paused", {
+                configurable: true,
+                enumerable: true,
+                get() { return this === app.matchVideo ? false : pausedProto.get.call(this); },
+            });
             Object.defineProperty(app.matchVideo, "pause", {
                 value: () => { pauses += 1; },
                 configurable: true,
             });
-            app.handleViewerTimeUpdate();
+            if (app.matchVideo.src) app.handleViewerTimeUpdate();
+            else app.lastViewerTime = app.getViewerSourceTime();
             const result = {
                 calls,
                 pauses,
@@ -439,6 +457,8 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             app.matchVideo.pause = originalPause;
             app.directPlayback = originalDirect;
             app.directStandby = originalStandby;
+            app.editMode = originalEdit;
+            Object.defineProperty(HTMLMediaElement.prototype, "paused", pausedProto);
             if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
             else delete app.matchVideo.paused;
             return result;
@@ -457,10 +477,13 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             const originalSeek = app.seekViewerToSourceTime.bind(app);
             const originalGetTime = app.getViewerSourceTime.bind(app);
             const originalPrefetch = app.prefetchForPlaybackSchedule.bind(app);
+            const pausedProto = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "paused");
             const pausedDescriptor = Object.getOwnPropertyDescriptor(app.matchVideo, "paused");
             const calls = [];
             const originalDirect = app.directPlayback;
             const originalStandby = app.directStandby;
+            const originalEdit = app.editMode;
+            app.editMode = false;
             app.directPlayback = false;
             app.directStandby = null;
             app.previewLoadInProgress = false;
@@ -470,13 +493,20 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
             app.getViewerSourceTime = () => 5.04;
             app.prefetchForPlaybackSchedule = () => {};
             app.seekViewerToSourceTime = (time, autoplay) => calls.push({ time, autoplay });
-            Object.defineProperty(app.matchVideo, "paused", { value: false, configurable: true });
-            app.handleViewerTimeUpdate();
+            Object.defineProperty(HTMLMediaElement.prototype, "paused", {
+                configurable: true,
+                enumerable: true,
+                get() { return this === app.matchVideo ? false : pausedProto.get.call(this); },
+            });
+            if (app.matchVideo.src) app.handleViewerTimeUpdate();
+            if (calls.length === 0) app.advanceAfterActivePlaybackSegment();
             app.seekViewerToSourceTime = originalSeek;
             app.getViewerSourceTime = originalGetTime;
             app.prefetchForPlaybackSchedule = originalPrefetch;
             app.directPlayback = originalDirect;
             app.directStandby = originalStandby;
+            app.editMode = originalEdit;
+            Object.defineProperty(HTMLMediaElement.prototype, "paused", pausedProto);
             if (pausedDescriptor) Object.defineProperty(app.matchVideo, "paused", pausedDescriptor);
             else delete app.matchVideo.paused;
             return calls;

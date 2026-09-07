@@ -200,7 +200,7 @@ def test_release_workflow_uses_spec_and_signing_pipeline():
 
 def test_package_script_records_dmg_before_notarize():
     script = (SCRIPTS / "package_macos.sh").read_text(encoding="utf-8")
-    first_write = script.index("write_dmg_outputs")
+    first_write = script.index("\nwrite_dmg_outputs\n")
     notarize = script.index("notarize_macos_dmg.sh")
     assert first_write < notarize
     assert script.count("write_dmg_outputs") >= 3
