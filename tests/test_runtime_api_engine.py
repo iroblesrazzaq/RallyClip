@@ -20,14 +20,20 @@ from rallyclip_engine.models import decode_start_end_votes
 
 
 def test_current_manifest_resolves_to_heatmap_pipeline():
-    spec = resolve_pipeline_spec(Path("models/rallyclip_v0.5.0/model.onnx"))
+    spec = resolve_pipeline_spec(
+        Path("models/rallyclip_v0.5.0/model.onnx"),
+        Path("models/rallyclip_v0.5.0/manifest.json"),
+    )
     assert spec.pipeline_id == FRAME_STARTEND_HEATMAP
     assert spec.model_output == "pointness_start_end_heatmap"
     assert spec.decode_method == "heatmap_hybrid"
 
 
 def test_v040_manifest_still_resolves_to_hysteresis_pipeline():
-    spec = resolve_pipeline_spec(Path("models/rallyclip_v0.4.0/model.onnx"))
+    spec = resolve_pipeline_spec(
+        Path("models/rallyclip_v0.4.0/model.onnx"),
+        Path("models/rallyclip_v0.4.0/manifest.json"),
+    )
     assert spec.pipeline_id == FRAME_PROBABILITY_HYSTERESIS
     assert spec.model_output == "frame_probability"
     assert spec.decode_method == "gaussian_hysteresis"

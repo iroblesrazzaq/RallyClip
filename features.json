@@ -10,7 +10,7 @@
       "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
-      "evidence": "2026-09-07: 280 passed, 6 skipped, 27 deselected, 4 warnings (~19s) on cursor/macos-release-cicd-5f28 (Linux py3.12). Keyboard-skip e2e expect aligned to 25/35; unit gate unchanged."
+      "evidence": "2026-09-07: 298 passed, 6 skipped, 27 deselected, 4 warnings (~19s) on cursor/artifact-registry-plan-5f28 (Linux py3.12). Artifact pack/fetch tests included; ONNX not in git."
     },
     {
       "id": "golden-cli-parity",
@@ -59,7 +59,7 @@
       "name": "CI/CD builds, signs, notarizes, and uploads the macOS desktop DMG",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q tests/test_release_packaging.py -p no:cacheprovider",
-      "evidence": "2026-09-07: rebased onto v0.5.0 main. release.yml tags v* run tests, pyinstaller RallyClip.spec (bundles DEFAULT_ARTIFACT_DIR=models/rallyclip_v0.5.0 + CFBundleIdentifier com.iroblesrazzaq.rallyclip), sign/DMG/notarytool/staple via scripts/release/, and upload RallyClip-<version>-macOS-arm64.dmg to a draft GitHub Release. Secrets not set yet: tagged releases fail closed; workflow_dispatch wraps an unsigned DMG. tests/test_release_packaging.py covers spec/default-model lockstep, bash -n, usage, version/dmg naming, and workflow wiring."
+      "evidence": "2026-09-07: rebased onto v0.5.0 main. release.yml tags v* run tests, fetch artifact-rallyclip_v0.5.0, pyinstaller RallyClip.spec (bundles DEFAULT_ARTIFACT_DIR=models/rallyclip_v0.5.0 + CFBundleIdentifier com.iroblesrazzaq.rallyclip), sign/DMG/notarytool/staple via scripts/release/, and upload RallyClip-<version>-macOS-arm64.dmg to a draft GitHub Release. tests/test_release_packaging.py 21 passed (spec lockstep, fetch/verify wiring, gitignore, no tracked ONNX)."
     },
     {
       "id": "webview-shell",
@@ -67,7 +67,14 @@
       "status": "passing",
       "verification": "pytest -q tests/test_desktop_dispatch.py tests/test_native_playback.py; build via RallyClip.spec; driven-webview probe (play/seek/upload)",
       "evidence": "2026-07-04 (PR #27): gui/native_player.py + QWebChannel bridge deleted (frontend already fell back to HTML5 when the bridge was absent); WKWebView probe: canplay 1280x720, seek over ranges, playback advances, H.264+HEVC canPlayType 'probably', native file input. Bundle 765MB->266MB. CI 6/6 green."
+    },
+    {
+      "id": "artifact-registry",
+      "name": "ONNX off git: GitHub artifact zip + fetch; DMG still embeds DEFAULT_ARTIFACT_DIR",
+      "status": "passing",
+      "verification": "See docs/artifact-registry-plan.md Definition of done: depth-1 clone has no models/**/*.onnx; fetch_artifact.py then golden/e2e; CI fetch; PyInstaller bundle still contains v0.5.0 weights; packaged app does not download at launch.",
+      "evidence": "2026-09-07: Published https://github.com/iroblesrazzaq/RallyClip/releases/tag/artifact-rallyclip_v0.5.0 (non-draft). git ls-files models has no *.onnx (manifests + SHA256SUMS only). PYTHONPATH=src:tests pytest -m 'not slow and not e2e': 298 passed, 6 skipped. Fetch unpacks to a temp dir and installs only after SHA-256 verify so a rejected zip cannot overwrite SHA256SUMS. Hash mismatch raises ArtifactError. ci.yml fetch x2; release.yml fetch + verify_artifact_dir. RallyClip.spec still packs DEFAULT_ARTIFACT_DIR; frozen sources do not import runtime.artifact."
     }
   ],
-  "active": "tcn-v050-default"
+  "active": "artifact-registry"
 }

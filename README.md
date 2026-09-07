@@ -21,9 +21,10 @@ Open the DMG and drag RallyClip into Applications. Apple Silicon only.
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if you do not have it (`brew install uv`, or the installer on that page). uv will create a local environment and can install Python 3.10+.
 
 ```bash
-git clone https://github.com/iroblesrazzaq/RallyClip.git
+git clone --depth 1 --single-branch https://github.com/iroblesrazzaq/RallyClip.git
 cd RallyClip
 uv sync --extra cpu
+uv run python scripts/fetch_artifact.py
 uv run rallyclip gui
 ```
 

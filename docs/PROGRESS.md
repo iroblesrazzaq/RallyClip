@@ -1,23 +1,34 @@
 # PROGRESS — overwrite me at every session end
 
-_Last updated: 2026-09-07 (session: make scheduler e2e skip checks deterministic)._
+_Last updated: 2026-09-07 (session: artifact-registry implementation)._
 
 ## Repo state
 
-- Topic branch `cursor/macos-release-cicd-5f28`, PR #50 against `main`.
-- Default artifact is `models/rallyclip_v0.5.0/`. GitHub Actions Developer ID /
-  notary secrets are set. Do not tag `v0.5.0` until #50 is on `main`.
-- GitHub Releases latest is still **v0.3.0**.
+- `main` includes merged macOS release CI (#50). GitHub Releases latest app
+  channel is still **v0.3.0**. Do not tag app `v0.5.0` until this lands on
+  `main` (and you want the DMG).
+- Artifact zip is **published** (not draft):
+  https://github.com/iroblesrazzaq/RallyClip/releases/tag/artifact-rallyclip_v0.5.0
+- Active feature: `artifact-registry` (`docs/artifact-registry-plan.md`).
 
 ## What shipped this session
 
-1. Scheduler e2e skip checks no longer read live `currentTime` / `paused`.
-   Keyboard and skip-button blocks stub `getViewerSourceTime` at 30s and
-   `paused` false, so seeks are 25/35 with autoplay true on every OS.
-   Ubuntu was clamping `currentTime=10` inside the 8s preview window (23/33);
-   macOS/Windows had a paused element (`autoplay: False`).
+1. `src/runtime/artifact.py` + `scripts/fetch_artifact.py` +
+   `scripts/release/pack_artifact.sh`: pack/verify/fetch with SHA-256, zip-slip
+   reject, idempotent no-op when checksums match. Fail closed on mismatch.
+2. Published `artifact-rallyclip_v0.5.0` / `rallyclip_v0.5.0.zip` while weights
+   were still in git.
+3. `ci.yml` and `release.yml` fetch after install; release verify calls
+   `verify_artifact_dir` before PyInstaller. `RallyClip.spec` unchanged — DMG
+   still embeds `models/rallyclip_v0.5.0/`; frozen app does not fetch at launch.
+4. Gitignore ONNX + `scaler.json` under `models/`; dropped old/duplicate
+   weights from git; tests that only need pipeline id read `manifest.json`.
+5. Default gate: **298 passed, 6 skipped, 27 deselected, ~19s**.
+   Fetch unpacks to a temp dir and copies into `models/rallyclip_v0.5.0/`
+   only after SHA-256 verify (rejected zip cannot overwrite SHA256SUMS).
 
 ## Next steps
 
-1. Wait for CI e2e green on this push, then merge #50 (user merges).
-2. After merge: tag `v0.5.0` (must match `pyproject.toml`).
+1. Merge this PR. Then tag app `v0.5.0` when ready (fetch same zip, existing
+   sign/notary path).
+2. In-app Skip/Later auto-update remains out of scope.

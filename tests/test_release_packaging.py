@@ -8,10 +8,12 @@ from pathlib import Path
 
 import pytest
 
+from runtime.artifact import REQUIRED_FILES, parse_sha256sums, verify_artifact_dir
 from runtime.defaults import DEFAULT_ARTIFACT_DIR
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts" / "release"
+ARTIFACT_DIR = ROOT / DEFAULT_ARTIFACT_DIR
 
 
 def _pyproject_version() -> str:
@@ -19,16 +21,89 @@ def _pyproject_version() -> str:
     return str(payload["project"]["version"])
 
 
+def test_default_artifact_dir_has_tracked_checksums():
+    """Git tracks SHA256SUMS + manifest; ONNX lives in the artifact zip."""
+    assert ARTIFACT_DIR.is_dir()
+    assert not ARTIFACT_DIR.is_symlink()
+    for name in ("manifest.json", "SHA256SUMS"):
+        path = ARTIFACT_DIR / name
+        assert path.is_file(), f"missing {path}"
+        assert not path.is_symlink(), f"{path} must not be a symlink"
+    checksums = parse_sha256sums((ARTIFACT_DIR / "SHA256SUMS").read_text(encoding="utf-8"))
+    for name in REQUIRED_FILES:
+        digest = checksums.get(name)
+        assert digest, f"SHA256SUMS missing {name}"
+        assert len(digest) == 64, f"bad digest for {name}"
+
+
+def test_gitignore_excludes_onnx_weights():
+    text = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    assert "models/**/*.onnx" in text
+    assert "models/**/scaler.json" in text
+
+
+def test_git_does_not_track_model_binaries():
+    result = subprocess.run(
+        ["git", "ls-files", "--", "models"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    tracked = result.stdout.splitlines()
+    offenders = [
+        path
+        for path in tracked
+        if path.endswith((".onnx", ".pth", ".joblib")) or path.endswith("/scaler.json")
+    ]
+    assert offenders == [], f"git still tracks weight files: {offenders}"
+    assert f"{DEFAULT_ARTIFACT_DIR}/manifest.json" in tracked
+    assert f"{DEFAULT_ARTIFACT_DIR}/SHA256SUMS" in tracked
+    assert "models/rallyclip_v0.4.0/manifest.json" in tracked
+
+
+def test_frozen_runtime_does_not_fetch_weights():
+    """The packaged app must not download ONNX at launch."""
+    sources = [
+        ROOT / "RallyClip.spec",
+        ROOT / "src" / "gui" / "desktop.py",
+        ROOT / "src" / "gui" / "app.py",
+        ROOT / "src" / "cli" / "main.py",
+        ROOT / "src" / "runtime" / "assets.py",
+        ROOT / "src" / "runtime" / "defaults.py",
+    ]
+    for path in sources:
+        text = path.read_text(encoding="utf-8")
+        assert "runtime.artifact" not in text, path
+        assert "fetch_artifact" not in text, path
+        assert "fetch_default_artifact" not in text, path
+
+
+@pytest.mark.skipif(
+    not (ARTIFACT_DIR / "model.onnx").is_file(),
+    reason="weights not fetched (run python scripts/fetch_artifact.py)",
+)
 def test_default_artifact_dir_has_shipped_weights():
-    root = ROOT / DEFAULT_ARTIFACT_DIR
-    for name in (
-        "model.onnx",
-        "scaler.json",
-        "manifest.json",
-        "yolov8n-pose-960-dynamic.onnx",
-        "yolov8n-pose-544x960-static.onnx",
-    ):
-        assert (root / name).is_file(), f"missing {name} under {root}"
+    """After fetch, the pointer used by the app must exist as a directory
+    with the required files — not a symlink (PyInstaller does not follow
+    directory-level symlinks).
+    """
+    assert ARTIFACT_DIR.is_dir()
+    assert not ARTIFACT_DIR.is_symlink(), (
+        "DEFAULT_ARTIFACT_DIR must be a real directory, not a symlink"
+    )
+    verify_artifact_dir(ARTIFACT_DIR)
+    for name in REQUIRED_FILES:
+        path = ARTIFACT_DIR / name
+        assert path.is_file(), f"missing {path}"
+        assert not path.is_symlink(), f"{path} must not be a symlink"
+
+
+def test_fetch_artifact_script_dispatches_fetch():
+    text = (ROOT / "scripts" / "fetch_artifact.py").read_text(encoding="utf-8")
+    assert "from runtime.artifact import main" in text
+    assert '"fetch"' in text
+    assert "--repo-root" in text
 
 
 def test_pyinstaller_spec_bundles_default_artifact_dir():
@@ -92,6 +167,7 @@ def test_release_scripts_are_valid_bash():
         "make_macos_dmg.sh",
         "notarize_macos_dmg.sh",
         "package_macos.sh",
+        "pack_artifact.sh",
         "sign_macos_app.sh",
     }
     for path in scripts:
@@ -186,6 +262,8 @@ def test_release_workflow_uses_spec_and_signing_pipeline():
     assert "APPSTORE_API_PRIVATE_KEY" in workflow
     assert "dist/RallyClip.app/Contents/MacOS/RallyClip" in workflow
     assert "models/rallyclip_v0.3.1" not in workflow
+    assert "python -m runtime.artifact fetch" in workflow
+    assert "verify_artifact_dir" in workflow
     assert "timeout-minutes: 180" in workflow
     assert "Require Apple Silicon runner" in workflow
     assert "uname -m" in workflow
@@ -196,6 +274,11 @@ def test_release_workflow_uses_spec_and_signing_pipeline():
     signed_upload = workflow.index("Upload signed DMG artifact")
     notarize = workflow.index("Notarize and staple DMG")
     assert signed_upload < notarize
+
+
+def test_ci_workflow_fetches_artifact():
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert workflow.count("python -m runtime.artifact fetch") >= 2
 
 
 def test_package_script_records_dmg_before_notarize():

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+import pytest
 
 from features.feature_engineer import FeatureEngineer
 from training.features.v1 import FeatureSetV1
@@ -45,6 +47,10 @@ def _create_features(tmp_path, assigned_frames: list[dict]) -> np.ndarray:
         return np.asarray(data["features"], dtype=np.float32)
 
 
+@pytest.mark.skipif(
+    not (ROOT / "models" / "rallyclip_v0.5.0" / "scaler.json").is_file(),
+    reason="weights not fetched (run python scripts/fetch_artifact.py)",
+)
 def test_runtime_feature_dim_matches_v1_and_bundled_scaler(tmp_path):
     assigned_frames = [make_runtime_assigned_players(idx) for idx in range(3)]
 
@@ -53,7 +59,7 @@ def test_runtime_feature_dim_matches_v1_and_bundled_scaler(tmp_path):
     assert FeatureSetV1.feature_dim() == FEATURE_DIM
     assert features.shape == (3, FeatureSetV1.feature_dim())
 
-    scaler_payload = json.loads((ROOT / "models" / "rallyclip_v0.3.1" / "scaler.json").read_text(encoding="utf-8"))
+    scaler_payload = json.loads((ROOT / "models" / "rallyclip_v0.5.0" / "scaler.json").read_text(encoding="utf-8"))
     mean = np.asarray(scaler_payload["mean"], dtype=np.float32)
     scale = np.asarray(scaler_payload["scale"], dtype=np.float32)
     assert mean.shape == (FEATURE_DIM,)
