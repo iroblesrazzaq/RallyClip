@@ -16,7 +16,8 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-08-24, feat/v0.5.0-tcn default swap): **269 passed, 48 deselected, ~38s** (2 sklearn warnings, benign).
+Last known (2026-09-07, macos-release-cicd rebased on v0.5.0, Linux py3.12):
+**273 passed, 6 skipped, 27 deselected, ~19s**. `tests/test_release_packaging.py` 8 passed.
 
 ## Compile gate (cheap, run with the default gate)
 

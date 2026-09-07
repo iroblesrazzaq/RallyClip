@@ -55,6 +55,13 @@
       "evidence": "2026-07-04: dist/RallyClip.app built from RallyClip.spec (torch-free, Qt-free after PR #27): 266MB .app / 113MB zipped (v0.1.0 dmg 558MB). Bundled --cli golden byte-equal; app boot -> /api/health 200 -> upload->analyze->library job with exact golden segments. --backend-only dispatch not built; smoke drives the real binary over HTTP."
     },
     {
+      "id": "macos-release-cicd",
+      "name": "CI/CD builds, signs, notarizes, and uploads the macOS desktop DMG",
+      "status": "passing",
+      "verification": "PYTHONPATH=src:tests $PY -m pytest -q tests/test_release_packaging.py -p no:cacheprovider",
+      "evidence": "2026-09-07: rebased onto v0.5.0 main. release.yml tags v* run tests, pyinstaller RallyClip.spec (bundles DEFAULT_ARTIFACT_DIR=models/rallyclip_v0.5.0 + CFBundleIdentifier com.iroblesrazzaq.rallyclip), sign/DMG/notarytool/staple via scripts/release/, and upload RallyClip-<version>-macOS-arm64.dmg to a draft GitHub Release. Secrets not set yet: tagged releases fail closed; workflow_dispatch wraps an unsigned DMG. tests/test_release_packaging.py covers spec/default-model lockstep, bash -n, usage, version/dmg naming, and workflow wiring."
+    },
+    {
       "id": "webview-shell",
       "name": "System-webview desktop shell (pywebview WKWebView/WebView2) replacing QtWebEngine/PySide6",
       "status": "passing",

@@ -33,7 +33,7 @@ Not included in the first Mac release:
   call one explicit runtime API contract. This is now in progress on
   `refactor/runtime-api-engine`; it is not part of v0.1.0.
 - A full GitHub Actions release pipeline with Apple signing, notarization, DMG creation,
-  and release upload.
+  and release upload — see `.github/workflows/release.yml` and `scripts/release/`.
 - MLX or CoreML inference runtime.
 - iOS app support.
 - Training dependency slimming. Training remains a developer workflow, not a runtime
@@ -116,12 +116,9 @@ Not included in the first Mac release:
   (`cv2`), which produces duplicate Objective-C class warnings in the frozen analysis
   worker. Decide whether runtime video IO should standardize on PyAV, OpenCV, or a
   direct ffmpeg subprocess wrapper, then remove or isolate the redundant bundled copy.
-- Add release CI/CD:
-  - run tests;
-  - build the macOS app on GitHub Actions;
-  - sign and notarize with Apple credentials;
-  - create DMG/zip artifacts;
-  - publish GitHub Release assets.
+- Add release CI/CD: implemented in `.github/workflows/release.yml` (tag `v*`
+  builds, signs, notarizes, and uploads `RallyClip-<version>-macOS-arm64.dmg`).
+  Remaining: first signed run after GitHub secrets are added; Windows artifacts.
 - Add fresh-machine release tests for app launch, first-run preference persistence,
   replay, New Match, export, and CLI mode.
 - Later update improvements:

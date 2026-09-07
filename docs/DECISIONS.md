@@ -136,3 +136,27 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   pair-DP as default decode; chasing bit-identical train-wt metrics (min-duration
   is applied at slightly different stages); `rallyclip serve` / Win-Linux freeze
   in the same change.
+
+## 2026-09-07 — Desktop DMG is built/signed/notarized in GitHub Actions
+
+- **What:** `release.yml` on `v*` tags runs tests, `pyinstaller RallyClip.spec`,
+  Developer ID codesign (hardened runtime + timestamp), a drag-to-Applications
+  DMG, `notarytool` submit/wait, stapler, and a draft GitHub Release asset
+  named `RallyClip-<pyproject-version>-macOS-arm64.dmg`. The same scripts run
+  locally (`scripts/release/package_macos.sh`). The spec bundles
+  `runtime.defaults.DEFAULT_ARTIFACT_DIR` (currently `models/rallyclip_v0.5.0`)
+  and sets `CFBundleIdentifier` `com.iroblesrazzaq.rallyclip`.
+- **Why:** v0.1–v0.3 DMGs were assembled and notarized by hand; CI only uploaded
+  an unsigned `.tar.gz`. Signing belongs in CI so a tag is the release
+  artifact, not a leftover file on one Mac. GitHub-hosted `macos-latest`
+  runners can codesign/notarize if the Developer ID `.p12` and App Store
+  Connect API key are injected as secrets (no self-hosted Mac required).
+- **Rejected:** keeping the ad-hoc `pyinstaller --hidden-import ...` CLI in
+  `release.yml` (it had drifted from `RallyClip.spec`); `rcodesign` on Linux
+  (extra toolchain, still need Apple notary); `apple-actions/import-codesign-certs`
+  (another pin; a 40-line import script is enough); notarizing a zip of the
+  `.app` then wrapping a DMG (one DMG submission matches the proven v0.1.0
+  manual path); failing open on missing secrets for tags (that would re-ship
+  unsigned builds). `workflow_dispatch` still wraps an unsigned DMG when
+  secrets are absent.
+

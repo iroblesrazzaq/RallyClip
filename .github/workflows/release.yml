@@ -32,13 +32,15 @@ jobs:
 
   build:
     needs: tests
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            artifact: RallyClip-macos
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+      APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+      APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+      APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -49,57 +51,49 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install ".[desktop,pack,cpu]"
+      - name: Check tag matches pyproject version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          source scripts/release/lib.sh
+          expected="v$(release_project_version)"
+          if [[ "${GITHUB_REF_NAME}" != "${expected}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match pyproject.toml version ${expected}."
+            echo "Bump the version in pyproject.toml before tagging."
+            exit 1
+          fi
       - name: Verify RallyClip model artifacts
         shell: bash
         run: |
-          # Artifacts are tracked in git under models/rallyclip_v0.5.0/
-          test -f models/rallyclip_v0.5.0/model.onnx
-          test -f models/rallyclip_v0.5.0/scaler.json
-          test -f models/rallyclip_v0.5.0/manifest.json
-          test -f models/rallyclip_v0.5.0/yolov8n-pose-960-dynamic.onnx
+          python -c "
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'src')
+          from runtime.defaults import DEFAULT_ARTIFACT_DIR
+          root = Path(DEFAULT_ARTIFACT_DIR)
+          required = [
+              'model.onnx',
+              'scaler.json',
+              'manifest.json',
+              'yolov8n-pose-960-dynamic.onnx',
+              'yolov8n-pose-544x960-static.onnx',
+          ]
+          missing = [name for name in required if not (root / name).is_file()]
+          if missing:
+              raise SystemExit(f'missing {missing} under {root}')
+          "
           test -f src/preprocessing/default_court_mask.png
           test -f docs/rallyclip.icns
           test -f docs/rallyclip_favicon_transparent2.png
           test -f docs/rallyclip_logo_cropped.png
       - name: Build desktop bundle
         shell: bash
-        run: |
-          SEP=":"
-          if [ "${{ runner.os }}" = "Windows" ]; then SEP=";"; fi
-          pyinstaller --noconfirm --windowed --onedir \
-            --name RallyClip \
-            --icon docs/rallyclip.icns \
-            --hidden-import=gui.app \
-            --hidden-import=cli.main \
-            --hidden-import=runtime.assets \
-            --hidden-import=runtime.device \
-            --hidden-import=runtime.defaults \
-            --hidden-import=runtime.paths \
-            --hidden-import=gui.analysis_worker \
-            --hidden-import=webview \
-            --collect-submodules=flask \
-            --exclude-module=PyQt5 \
-            --exclude-module=PyQt6 \
-            --exclude-module=PySide2 \
-            --exclude-module=PySide6 \
-            --exclude-module=shiboken6 \
-            --exclude-module=openvino \
-            --add-data "src/gui/frontend${SEP}gui/frontend" \
-            --add-data "models/rallyclip_v0.5.0${SEP}models/rallyclip_v0.5.0" \
-            --hidden-import=extraction.yolo_onnx_runner \
-            --hidden-import=onnxruntime \
-            --exclude-module=torch \
-            --exclude-module=torchvision \
-            --exclude-module=ultralytics \
-            --add-data "src/preprocessing/default_court_mask.png${SEP}preprocessing" \
-            --add-data "docs/rallyclip_logo_cropped.png${SEP}docs" \
-            --add-data "docs/rallyclip_favicon_transparent2.png${SEP}docs" \
-            src/gui/desktop.py
+        run: pyinstaller --noconfirm RallyClip.spec
       - name: Smoke test headless CLI in bundle
         shell: bash
         run: |
-          BIN="$(pwd)/dist/RallyClip/RallyClip"
-          if [ "${{ runner.os }}" = "Windows" ]; then BIN="$BIN.exe"; fi
+          BIN="$(pwd)/dist/RallyClip.app/Contents/MacOS/RallyClip"
+          test -x "$BIN"
 
           # 1) Frozen import chain + argparse work.
           "$BIN" --cli --help
@@ -122,8 +116,7 @@ jobs:
       - name: Run pipeline e2e on synthetic clip
         shell: bash
         run: |
-          BIN="$(pwd)/dist/RallyClip/RallyClip"
-          if [ "${{ runner.os }}" = "Windows" ]; then BIN="$BIN.exe"; fi
+          BIN="$(pwd)/dist/RallyClip.app/Contents/MacOS/RallyClip"
 
           # Full frozen pipeline: PyAV decode -> court detection -> pose ->
           # features -> ONNX inference -> CSV, all on the bundled ONNX
@@ -137,20 +130,13 @@ jobs:
             --write-csv --csv-output-dir ./csv_out --no-segment-video
           test -f csv_out/smoke_segments.csv
           head -1 csv_out/smoke_segments.csv | grep -q "start_time,end_time"
-      - name: Install QtWebEngine runtime libs (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libnss3 libxkbcommon0 libasound2t64 libgbm1 \
-            libxcomposite1 libxdamage1 libxrandr2 libxtst6
       - name: Probe GUI backend boot
         shell: bash
         run: |
-          BIN="$(pwd)/dist/RallyClip/RallyClip"
-          if [ "${{ runner.os }}" = "Windows" ]; then BIN="$BIN.exe"; fi
+          BIN="$(pwd)/dist/RallyClip.app/Contents/MacOS/RallyClip"
 
           # Boot the GUI personality and prove Flask + the system webview
-          # (WKWebView / WebView2) come up in the frozen bundle.
+          # (WKWebView) come up in the frozen bundle.
           export RALLYCLIP_GUI_PORT=8765
           "$BIN" > gui_probe.log 2>&1 &
           GUI_PID=$!
@@ -168,25 +154,60 @@ jobs:
             cat gui_probe.log
             exit 1
           fi
-      - name: Archive build
+      - name: Require signing secrets on tagged releases
+        if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
-          test -d dist/RallyClip.app
-          cd dist && tar -czf "../${{ matrix.artifact }}.tar.gz" RallyClip.app
-          cd ..
-          shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256"
+          missing=()
+          [[ -n "${MACOS_CERTIFICATE_P12_BASE64}" ]] || missing+=("MACOS_CERTIFICATE_P12_BASE64")
+          [[ -n "${MACOS_CERTIFICATE_PASSWORD}" ]] || missing+=("MACOS_CERTIFICATE_PASSWORD")
+          [[ -n "${APPSTORE_ISSUER_ID}" ]] || missing+=("APPSTORE_ISSUER_ID")
+          [[ -n "${APPSTORE_API_KEY_ID}" ]] || missing+=("APPSTORE_API_KEY_ID")
+          [[ -n "${APPSTORE_API_PRIVATE_KEY}" ]] || missing+=("APPSTORE_API_PRIVATE_KEY")
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "Tagged releases must be signed and notarized. Missing GitHub secrets:"
+            printf '  %s\n' "${missing[@]}"
+            echo "See the GitHub Releases section in README.md."
+            exit 1
+          fi
+      - name: Import Apple signing certificate
+        if: env.MACOS_CERTIFICATE_P12_BASE64 != ''
+        shell: bash
+        run: bash scripts/release/import_apple_cert.sh
+      - name: Package DMG
+        id: package
+        shell: bash
+        run: |
+          chmod +x scripts/release/*.sh
+          if [[ -n "${MACOS_CERTIFICATE_P12_BASE64}" ]]; then
+            bash scripts/release/package_macos.sh dist/RallyClip.app dist
+          else
+            echo "Signing secrets not configured; wrapping an unsigned DMG for this workflow_dispatch run."
+            export RALLYCLIP_SKIP_SIGNING=1
+            bash scripts/release/package_macos.sh dist/RallyClip.app dist
+          fi
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
-            ${{ matrix.artifact }}.*
+            ${{ steps.package.outputs.dmg_path }}
+            ${{ steps.package.outputs.sha256_path }}
           draft: true
           generate_release_notes: true
       - name: Upload workflow artifact
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}.*
+          name: ${{ steps.package.outputs.dmg_name }}
+          path: |
+            ${{ steps.package.outputs.dmg_path }}
+            ${{ steps.package.outputs.sha256_path }}
           retention-days: 7
+      - name: Delete signing keychain
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${RALLYCLIP_KEYCHAIN_PATH:-}" ]]; then
+            security delete-keychain "${RALLYCLIP_KEYCHAIN_PATH}" >/dev/null 2>&1 || true
+          fi

@@ -77,8 +77,8 @@ RallyClip model artifacts live under `models/rallyclip_v0.5.0/`:
 - `model.onnx`
 - `scaler.json`
 - `manifest.json`
-
-YOLO pose weights are downloaded automatically into `models/` when needed.
+- `yolov8n-pose-960-dynamic.onnx`
+- `yolov8n-pose-544x960-static.onnx`
 
 ## Quick run (minimal CLI)
 Only the video path is required; segmented output defaults to `./output_videos`.
@@ -145,18 +145,46 @@ rallyclip --config config.toml
 
 ## GitHub Releases
 
-The current `v0.1.0` macOS release was created manually. GitHub Releases hosts
-the DMG exactly as uploaded; GitHub does not convert zips or app bundles into a
-DMG.
+Tagging `v*` on `main` runs `.github/workflows/release.yml`: tests, PyInstaller
+`.app` via `RallyClip.spec`, Developer ID signing, DMG wrap, Apple notarization,
+stapling, and a draft GitHub Release with `RallyClip-<version>-macOS-arm64.dmg`.
+`workflow_dispatch` builds the same artifact without publishing (unsigned if
+signing secrets are missing).
 
-Future work: add GitHub Actions CI/CD for tests, app build, Apple signing,
-notarization, stapling, DMG creation, and release upload.
+### One-time GitHub secrets
 
-To cut a release locally:
+Repo Settings → Secrets and variables → Actions:
+
+| Secret | What |
+|---|---|
+| `MACOS_CERTIFICATE_P12_BASE64` | Developer ID Application `.p12`, base64 (`base64 -i cert.p12 \| pbcopy`) |
+| `MACOS_CERTIFICATE_PASSWORD` | Password for that `.p12` |
+| `APPSTORE_ISSUER_ID` | App Store Connect API issuer ID |
+| `APPSTORE_API_KEY_ID` | Key ID (`AuthKey_<id>.p8`) |
+| `APPSTORE_API_PRIVATE_KEY` | Full contents of the `.p8` (including BEGIN/END lines) |
+
+Optional: `MACOS_SIGN_IDENTITY` if the cert name is not
+`Developer ID Application: Ismael Robles-Razzaq (L9W8X6N9B9)`.
+
+Export the cert from Keychain Access → My Certificates → Developer ID
+Application. Create the API key under App Store Connect → Users and Access →
+Integrations → App Store Connect API (Developer or App Manager).
+
+### Cut a release
+
+1. Set `version` in `pyproject.toml` (the tag must be `v` plus that value).
+2. Merge to `main`, then `git tag v0.x.y && git push origin v0.x.y`.
+3. Wait for the Release workflow. Publish the draft after a Gatekeeper smoke test.
+
+Local equivalent (macOS, cert in your login keychain):
+
 ```bash
 pip install ".[desktop,pack,cpu]"
 pyinstaller --noconfirm RallyClip.spec
+bash scripts/release/package_macos.sh dist/RallyClip.app dist
 ```
+
+Skip Apple with `RALLYCLIP_SKIP_SIGNING=1` or `RALLYCLIP_SKIP_NOTARIZE=1`.
 
 The runtime is torch-free: pose inference runs on the ONNX bundled in
 `models/rallyclip_v0.5.0/` via onnxruntime (`extraction/yolo_onnx_runner.py`).
@@ -168,10 +196,10 @@ The shipped binary can run the full pipeline without launching the GUI. Pass
 CLI:
 
 ```bash
-dist/RallyClip/RallyClip --cli --video match.mp4 --start-time 1240 --duration 180 \
+dist/RallyClip.app/Contents/MacOS/RallyClip --cli --video match.mp4 \
+  --start-time 1240 --duration 180 \
   --write-csv --csv-output-dir /tmp/out --no-segment-video
 ```
 
-`RallyClip --cli --help` prints the full flag reference. Note: YOLO pose
-weights are not bundled; the first headless run downloads them into a
-`models/` folder under the current working directory.
+`RallyClip --cli --help` prints the full flag reference. Pose ONNX weights ship
+inside the app bundle (`models/rallyclip_v0.5.0/`); no extra download is needed.
