@@ -33,7 +33,7 @@ jobs:
   build:
     needs: tests
     runs-on: macos-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}

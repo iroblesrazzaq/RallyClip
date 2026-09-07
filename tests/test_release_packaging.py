@@ -129,3 +129,12 @@ def test_release_workflow_uses_spec_and_signing_pipeline():
     assert "APPSTORE_API_PRIVATE_KEY" in workflow
     assert "dist/RallyClip.app/Contents/MacOS/RallyClip" in workflow
     assert "models/rallyclip_v0.3.1" not in workflow
+    assert "timeout-minutes: 180" in workflow
+
+
+def test_notarize_script_submits_then_waits():
+    script = (SCRIPTS / "notarize_macos_dmg.sh").read_text(encoding="utf-8")
+    assert "notarytool submit" in script
+    assert "notarytool wait" in script
+    assert "RALLYCLIP_NOTARY_SUBMISSION_ID" in script
+    assert "RALLYCLIP_NOTARY_TIMEOUT:-2h" in script
