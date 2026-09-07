@@ -191,19 +191,49 @@ jobs:
         id: package
         env:
           MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
-          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
-          APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
-          APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
         shell: bash
         run: |
           chmod +x scripts/release/*.sh
           if [[ "${RALLYCLIP_HAS_SIGNING_CERT}" == "true" ]]; then
+            # Sign and wrap first; notarization wait is a later step so a
+            # timeout still has a signed DMG artifact to resume against.
+            export RALLYCLIP_SKIP_NOTARIZE=1
             bash scripts/release/package_macos.sh dist/RallyClip.app dist
           else
             echo "Signing secrets not configured; wrapping an unsigned DMG for this workflow_dispatch run."
             export RALLYCLIP_SKIP_SIGNING=1
             bash scripts/release/package_macos.sh dist/RallyClip.app dist
           fi
+      - name: Upload signed DMG artifact
+        if: ${{ always() && steps.package.outputs.dmg_path != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.package.outputs.dmg_name }}
+          path: |
+            ${{ steps.package.outputs.dmg_path }}
+            ${{ steps.package.outputs.sha256_path }}
+          retention-days: 7
+      - name: Notarize and staple DMG
+        id: notarize
+        if: env.RALLYCLIP_HAS_SIGNING_CERT == 'true'
+        env:
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          bash scripts/release/notarize_macos_dmg.sh "${{ steps.package.outputs.dmg_path }}"
+          shasum -a 256 "${{ steps.package.outputs.dmg_path }}" | tee "${{ steps.package.outputs.sha256_path }}"
+      - name: Upload stapled DMG artifact
+        if: env.RALLYCLIP_HAS_SIGNING_CERT == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.package.outputs.dmg_name }}
+          path: |
+            ${{ steps.package.outputs.dmg_path }}
+            ${{ steps.package.outputs.sha256_path }}
+          overwrite: true
+          retention-days: 7
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
@@ -213,15 +243,6 @@ jobs:
             ${{ steps.package.outputs.sha256_path }}
           draft: true
           generate_release_notes: true
-      - name: Upload workflow artifact
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{ steps.package.outputs.dmg_name }}
-          path: |
-            ${{ steps.package.outputs.dmg_path }}
-            ${{ steps.package.outputs.sha256_path }}
-          retention-days: 7
       - name: Delete signing keychain
         if: always()
         shell: bash

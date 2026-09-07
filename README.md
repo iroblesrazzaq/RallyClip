@@ -151,10 +151,11 @@ stapling, and a draft GitHub Release with `RallyClip-<version>-macOS-arm64.dmg`.
 `workflow_dispatch` builds the same artifact without publishing (unsigned if
 signing secrets are missing).
 
-Notarization is async on Apple's side. The GitHub job submits, prints the
-submission id, then polls for up to 2 hours (`notarytool wait`). Apple does not
-provide a webhook. If the wait times out, Apple is still working; resume with
-`RALLYCLIP_NOTARY_SUBMISSION_ID=<id>` against the same signed DMG.
+Notarization is async on Apple's side. The GitHub job signs the DMG and uploads
+it as a workflow artifact, then submits to Apple and polls for up to 2 hours
+(`notarytool wait`). Apple does not provide a webhook. If the wait times out,
+Apple is still working; the signed DMG remains on the run's Artifacts page.
+Resume with `RALLYCLIP_NOTARY_SUBMISSION_ID=<id>` against that same signed DMG.
 
 ### One-time GitHub secrets
 

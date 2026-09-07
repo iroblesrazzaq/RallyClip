@@ -189,6 +189,21 @@ def test_release_workflow_uses_spec_and_signing_pipeline():
     assert "timeout-minutes: 180" in workflow
     assert "Require Apple Silicon runner" in workflow
     assert "uname -m" in workflow
+    assert "RALLYCLIP_SKIP_NOTARIZE=1" in workflow
+    assert "Upload signed DMG artifact" in workflow
+    assert "Notarize and staple DMG" in workflow
+    assert "always() && steps.package.outputs.dmg_path != ''" in workflow
+    signed_upload = workflow.index("Upload signed DMG artifact")
+    notarize = workflow.index("Notarize and staple DMG")
+    assert signed_upload < notarize
+
+
+def test_package_script_records_dmg_before_notarize():
+    script = (SCRIPTS / "package_macos.sh").read_text(encoding="utf-8")
+    first_write = script.index("write_dmg_outputs")
+    notarize = script.index("notarize_macos_dmg.sh")
+    assert first_write < notarize
+    assert script.count("write_dmg_outputs") >= 3
 
 
 def test_release_workflow_keeps_signing_secrets_off_build_steps():
