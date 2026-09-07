@@ -45,9 +45,6 @@ described in docs/REPO_MAP.md.
   ASCII-only (Windows cp1252 consoles).
 - MUST NOT write temp/scratch files into repo roots (any of the four checkouts).
 - Don't delete `docs/`. Code lives in `src/`, tests in `tests/` (`test_*.py`).
-- MUST NOT request, mention, or run Cursor Bugbot (`cursor[bot]`, `/review-bugbot`,
-  `cursor review`, `bugbot run`). PR review is Greptile only: comment `@greptileai`
-  and use the `greptile` CLI. Do not launch the Bugbot subagent.
 
 ## Tier 2 — reference docs (read when the task touches the domain)
 

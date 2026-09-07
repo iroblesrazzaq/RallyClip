@@ -356,13 +356,16 @@ def _launch_gui() -> int:
     return launch()
 
 
-def main() -> int:
+def main(*, force_cli: bool = False) -> int:
     # No args, or an explicit `gui` subcommand: open the local browser UI.
-    if len(sys.argv) == 1:
-        return _launch_gui()
-    if sys.argv[1].lower() == "gui":
-        sys.argv.pop(1)
-        return _launch_gui()
+    # The frozen desktop dispatcher (`RallyClip --cli ...`) sets force_cli so a
+    # stripped empty argv stays on the argparse path instead of starting Flask.
+    if not force_cli:
+        if len(sys.argv) == 1:
+            return _launch_gui()
+        if sys.argv[1].lower() == "gui":
+            sys.argv.pop(1)
+            return _launch_gui()
 
     p = argparse.ArgumentParser(description="RallyClip end-to-end CLI with optional config.toml.")
     p.add_argument("--config", help="Path to config.toml. If omitted, looks for ./config.toml.")

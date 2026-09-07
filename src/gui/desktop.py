@@ -41,10 +41,12 @@ def main() -> int:
 
     if len(sys.argv) > 1 and sys.argv[1] == "--cli":
         # Lazy import keeps GUI startup free of the analysis import chain.
+        # force_cli keeps an empty remainder on the argparse path: `RallyClip --cli`
+        # with no extra args used to error on a missing video, not start Flask.
         from cli.main import main as cli_main
 
         sys.argv = [sys.argv[0], *sys.argv[2:]]
-        return cli_main()
+        return cli_main(force_cli=True)
 
     try:
         import webview

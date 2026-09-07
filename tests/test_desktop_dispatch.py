@@ -10,8 +10,9 @@ def _stub_cli_main(monkeypatch, result: int = 0) -> dict:
     """Install a fake cli.main so the dispatch never imports torch/ultralytics."""
     calls: dict = {}
 
-    def fake_main() -> int:
+    def fake_main(*, force_cli: bool = False) -> int:
         calls["argv"] = list(sys.argv)
+        calls["force_cli"] = force_cli
         return result
 
     cli_pkg = types.ModuleType("cli")
@@ -29,6 +30,16 @@ def test_cli_flag_dispatches_with_flag_stripped(monkeypatch):
 
     assert desktop.main() == 7
     assert calls["argv"] == ["RallyClip", "--video", "match.mp4", "--write-csv"]
+    assert calls["force_cli"] is True
+
+
+def test_cli_flag_without_args_still_dispatches_to_cli(monkeypatch):
+    calls = _stub_cli_main(monkeypatch, result=2)
+    monkeypatch.setattr(sys, "argv", ["RallyClip", "--cli"])
+
+    assert desktop.main() == 2
+    assert calls["argv"] == ["RallyClip"]
+    assert calls["force_cli"] is True
 
 
 def _block_webview(monkeypatch):

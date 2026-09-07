@@ -52,11 +52,11 @@ The pipeline is broken into explicit steps so you can re-run only what you need:
 ## Quickstart
 Install the training extra first (`uv sync --extra cpu --extra train`), then:
 ```bash
-python train.py --config configs/train/base.yaml
+uv run python train.py --config configs/train/base.yaml
 ```
 Override steps:
 ```bash
-python train.py --config configs/train/base.yaml --steps extract,preprocess,features
+uv run python train.py --config configs/train/base.yaml --steps extract,preprocess,features
 ```
 
 ## Useful scripts
@@ -70,9 +70,9 @@ python train.py --config configs/train/base.yaml --steps extract,preprocess,feat
 
 ## Visualization overlays
 ```bash
-python visualize.py --config configs/train/base.yaml --stage yolo --video match1.mp4
-python visualize.py --config configs/train/base.yaml --stage court --video match1.mp4
-python visualize.py --config configs/train/base.yaml --stage preproc --video match1.mp4
+uv run python visualize.py --config configs/train/base.yaml --stage yolo --video match1.mp4
+uv run python visualize.py --config configs/train/base.yaml --stage court --video match1.mp4
+uv run python visualize.py --config configs/train/base.yaml --stage preproc --video match1.mp4
 ```
 
 Outputs land in `data/visualizations/<run_id>/` and use the source video FPS.
