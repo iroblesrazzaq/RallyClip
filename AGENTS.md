@@ -57,7 +57,7 @@ described in docs/REPO_MAP.md.
 ## Tier 3 — working docs (current plans; move to docs/archive/ when done)
 
 - `docs/e2e_test_plan.md`, `docs/cli-in-release-binary-plan.md`,
-  `docs/runtime-config-refactor-plan.md`.
+  `docs/runtime-config-refactor-plan.md`, `docs/artifact-registry-plan.md`.
 
 ## Tier 4 — supplementary / human-oriented (don't read unless pointed there)
 

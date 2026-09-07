@@ -171,3 +171,17 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   commenting `cursor review`); uninstalling the whole Cursor GitHub App (that
   also breaks Cloud Agents / PR comments we still use).
 
+## 2026-09-07 — ONNX off git; artifact zip; DMG still combines at build
+
+- **What:** Plan (`docs/artifact-registry-plan.md`): git tracks manifests +
+  `DEFAULT_ARTIFACT_DIR` pointer; weights live on GitHub Release
+  `artifact-rallyclip_v0.5.0`. CI fetches the zip before PyInstaller. The
+  notarized `.app` still contains `models/rallyclip_v0.5.0/` and does not
+  download on launch. From-source clones run `scripts/fetch_artifact.py`.
+- **Why:** Even `git clone --depth 1` currently pulls every ONNX on `main`
+  (triplicated pose weights + old LSTM trees). Clone should be code; the DMG
+  stays a single offline install.
+- **Rejected:** Git LFS/DVC (extra quota/tooling); first-launch download inside
+  the Mac app; putting weights in Application Support next to the library;
+  rewriting git history in the same change.
+

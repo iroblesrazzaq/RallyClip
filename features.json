@@ -67,7 +67,14 @@
       "status": "passing",
       "verification": "pytest -q tests/test_desktop_dispatch.py tests/test_native_playback.py; build via RallyClip.spec; driven-webview probe (play/seek/upload)",
       "evidence": "2026-07-04 (PR #27): gui/native_player.py + QWebChannel bridge deleted (frontend already fell back to HTML5 when the bridge was absent); WKWebView probe: canplay 1280x720, seek over ranges, playback advances, H.264+HEVC canPlayType 'probably', native file input. Bundle 765MB->266MB. CI 6/6 green."
+    },
+    {
+      "id": "artifact-registry",
+      "name": "ONNX off git: GitHub artifact zip + fetch; DMG still embeds DEFAULT_ARTIFACT_DIR",
+      "status": "not_started",
+      "verification": "See docs/artifact-registry-plan.md Definition of done: depth-1 clone has no models/**/*.onnx; fetch_artifact.py then golden/e2e; CI fetch; PyInstaller bundle still contains v0.5.0 weights; packaged app does not download at launch.",
+      "evidence": ""
     }
   ],
-  "active": "tcn-v050-default"
+  "active": "artifact-registry"
 }

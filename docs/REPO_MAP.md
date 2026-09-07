@@ -23,8 +23,8 @@ dir is not a git repo; this table is the authoritative summary):
 | `tests/` | Pytest suites + `tests/fixtures/` (court goldens ~11MB, golden CLI clip, quality GT) + `tests/helpers/`. |
 | `scripts/` | Training/data tooling + `scripts/export_heatmap_model.py` (TCN ONNX export) + `scripts/perf/` benchmarks + `scripts/release/` (sign, DMG, notarize, CI cert import). Not shipped. |
 | `configs/` | Training YAMLs (`configs/train/base.yaml`, `configs/extract/*`). |
-| `models/` | Tracked inference artifacts: `rallyclip_v0.5.0/` (default TCN heatmap) + `rallyclip_v0.4.0/` (classic LSTM fallback) + `rallyclip_v0.3.1/` + `rallyclip_v0.1.0_legacy/`. Weights (`*.pt`, `*.pth`) present locally but gitignored. |
-| `docs/` | This harness + plans (Tier 3) + `docs/perf/` (streaming-perf loop journal) + `docs/training.md`. |
+| `models/` | Tracked **manifests** + (until artifact-registry) ONNX under `rallyclip_v0.5.0/` etc. Plan: `docs/artifact-registry-plan.md` — binaries become a GitHub zip; git keeps JSON. |
+| `docs/` | This harness + plans (Tier 3) + `docs/perf/` (streaming-perf loop journal) + `docs/training.md` + `docs/artifact-registry-plan.md` (ONNX off git). |
 | `packaging/`, `RallyClip.spec` | PyInstaller/macOS packaging. |
 | `.github/workflows/` | `ci.yml` (3 OS × unit/e2e), `release.yml` (tag `v*` → signed/notarized DMG). |
 | `train.py`, `visualize.py` | Training-pipeline entry points (developer workflow, not runtime). |
