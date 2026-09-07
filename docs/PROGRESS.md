@@ -1,44 +1,23 @@
 # PROGRESS — overwrite me at every session end
 
-_Last updated: 2026-08-24 (session: ship TCN heatmap as default v0.5.0)._
+_Last updated: 2026-09-07 (session: make scheduler e2e skip checks deterministic)._
 
 ## Repo state
 
-- Worktree `hm-wt` on `feat/v0.5.0-tcn` (heatmap runtime + TCN export + default swap).
-  Not merged to `main`. Heatmap runtime also sits on open PR #48
-  (`feat/heatmap-runtime-v050`); original PR #45 is stale.
-- Shipped default is now `models/rallyclip_v0.5.0/` (dilated TCN, 3 named logit
-  heads, `frame_startend_heatmap` hybrid decode). Classic LSTM kept at
-  `models/rallyclip_v0.4.0/`.
-- GitHub Releases latest is still **v0.3.0**; tagging `v0.5.0` is the Mac DMG
-  path once this branch is proven. Do not pretend v0.4.0 was a GitHub product
-  release.
-- Gates this session: default unit **269 passed, 48 deselected**; compile clean;
-  golden CLI regenerated and passing; CLI smoke v0.4.0 vs v0.5.0 on the fixture
-  clip (classic one 3.8–24.0s segment vs TCN two points 3.753–11.964 and
-  13.040–23.449). L1 GUI e2e (default job) + Playwright new-match
-  (upload → progress → library) passed. Greptile P1 (heatmap `--start-time`
-  offset) and library CSV sub-frame persistence are fixed on this branch.
+- Topic branch `cursor/macos-release-cicd-5f28`, PR #50 against `main`.
+- Default artifact is `models/rallyclip_v0.5.0/`. GitHub Actions Developer ID /
+  notary secrets are set. Do not tag `v0.5.0` until #50 is on `main`.
+- GitHub Releases latest is still **v0.3.0**.
 
 ## What shipped this session
 
-1. **Heatmap runtime** (already on this branch): `HeatmapHybridModel`,
-   `frame_startend_heatmap`, 3-head ONNX track ordering, hybrid decode knobs
-   from the manifest.
-2. **Champion TCN export**: `scripts/export_heatmap_model.py` +
-   `src/training/models/heatmap_tcn.py`. Checkpoint
-   `training_data/runs/20260724_tcn64_cos1e4/checkpoints/best.pth` →
-   `models/rallyclip_v0.5.0/model.onnx` (opset 17, named
-   `pointness_logit` / `start_heatmap_logit` / `end_heatmap_logit`). Torch vs
-   ORT max abs 1.88e-06.
-3. **Default swap**: CLI/GUI/defaults, `RallyClip.spec`, `release.yml`,
-   pyproject **0.5.0**, golden CSV, packaging paths off the lagging v0.3.1
-   bundle. GUI `_normalize_config` does not sticky-override `pipeline_id`
-   from defaults (artifact manifest wins).
+1. Scheduler e2e skip checks no longer read live `currentTime` / `paused`.
+   Keyboard and skip-button blocks stub `getViewerSourceTime` at 30s and
+   `paused` false, so seeks are 25/35 with autoplay true on every OS.
+   Ubuntu was clamping `currentTime=10` inside the 8s preview window (23/33);
+   macOS/Windows had a paused element (`autoplay: False`).
 
-## Next steps (in order)
+## Next steps
 
-1. Open/land the v0.5.0 PR (do not commit to `main`).
-2. Tag `v0.5.0` to fire the existing Mac DMG / notarization workflow.
-3. Out of scope here: `rallyclip serve`, Win/Linux freeze, more TCN search,
-   pair-DP decode.
+1. Wait for CI e2e green on this push, then merge #50 (user merges).
+2. After merge: tag `v0.5.0` (must match `pyproject.toml`).

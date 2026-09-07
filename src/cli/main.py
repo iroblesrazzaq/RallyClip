@@ -24,6 +24,7 @@ from infer import (
     write_segments_csv,
 )
 from preprocessing.data_preprocessor import DataPreprocessor
+from runtime.defaults import DEFAULT_ARTIFACT_DIR
 from runtime.device import apply_pose_device
 from runtime.video_validation import VideoValidationError, validate_video
 from segmentation.segment import segment_video
@@ -198,13 +199,13 @@ def build_run_config(args: argparse.Namespace) -> RunConfig:
     model_path = _resolve_asset(
         model_path_raw,
         env_var="RALLYCLIP_MODEL_PATH",
-        relatives=["models/rallyclip_v0.5.0/model.onnx"],
+        relatives=[f"{DEFAULT_ARTIFACT_DIR}/model.onnx"],
         description="RallyClip model artifact (ONNX)",
     )
     scaler_path = _resolve_asset(
         scaler_path_raw,
         env_var="RALLYCLIP_SCALER_PATH",
-        relatives=["models/rallyclip_v0.5.0/scaler.json"],
+        relatives=[f"{DEFAULT_ARTIFACT_DIR}/scaler.json"],
         description="RallyClip scaler artifact (JSON)",
     )
     manifest_path = Path(manifest_path_raw).expanduser().resolve() if manifest_path_raw else None
