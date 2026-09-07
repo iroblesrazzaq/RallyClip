@@ -109,12 +109,31 @@ def verify_artifact_dir(dest_dir: Path, expected: Optional[dict[str, str]] = Non
             raise ArtifactError(f"hash mismatch for {name}: expected {digest}, got {actual}")
 
 
-def artifact_complete(dest_dir: Path) -> bool:
+def artifact_complete(dest_dir: Path, expected: Optional[dict[str, str]] = None) -> bool:
     try:
-        verify_artifact_dir(dest_dir)
+        verify_artifact_dir(dest_dir, expected=expected)
     except ArtifactError:
         return False
     return True
+
+
+def _trusted_checksums(dest_dir: Path) -> Optional[dict[str, str]]:
+    sums_path = dest_dir / SHA256SUMS_NAME
+    if not sums_path.is_file():
+        return None
+    return parse_sha256sums(sums_path.read_text(encoding="utf-8"))
+
+
+def _install_verified_artifact(src_dir: Path, dest_dir: Path) -> None:
+    """Copy verified members into dest. SHA256SUMS last so a crash stays fail-closed."""
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for name in (*REQUIRED_FILES, SHA256SUMS_NAME):
+        src = src_dir / name
+        if not src.is_file():
+            raise ArtifactError(f"verified staging missing {name}")
+        tmp = dest_dir / f".{name}.tmp"
+        tmp.write_bytes(src.read_bytes())
+        tmp.replace(dest_dir / name)
 
 
 def pack_artifact_dir(src_dir: Path, zip_path: Path) -> Path:
@@ -167,47 +186,39 @@ def fetch_artifact(
     *,
     url: Optional[str] = None,
     zip_path: Optional[Path] = None,
+    expected: Optional[dict[str, str]] = None,
 ) -> Path:
-    """Ensure ``dest_dir`` has the shipped weights. No-op when hashes already match."""
+    """Ensure ``dest_dir`` has the shipped weights. No-op when hashes already match.
+
+    Unpack and verify in a temp directory. The live dest, including any
+    committed SHA256SUMS trust anchor, is replaced only after verification.
+    """
     dest_dir = dest_dir.resolve()
-    if artifact_complete(dest_dir):
+    if expected is None:
+        expected = _trusted_checksums(dest_dir)
+    if artifact_complete(dest_dir, expected=expected):
         return dest_dir
 
-    expected: Optional[dict[str, str]] = None
-    sums_path = dest_dir / SHA256SUMS_NAME
-    if sums_path.is_file():
-        expected = parse_sha256sums(sums_path.read_text(encoding="utf-8"))
-
-    if zip_path is None:
-        download_url = url or os.environ.get("RALLYCLIP_ARTIFACT_URL") or default_download_url()
-        with tempfile.TemporaryDirectory(prefix="rallyclip-artifact-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="rallyclip-artifact-") as tmp:
+        staging = Path(tmp) / "unpack"
+        if zip_path is None:
+            download_url = url or os.environ.get("RALLYCLIP_ARTIFACT_URL") or default_download_url()
             tmp_zip = Path(tmp) / ARTIFACT_ZIP_NAME
             _download(download_url, tmp_zip)
-            unpack_artifact_zip(tmp_zip, dest_dir)
-    else:
-        unpack_artifact_zip(zip_path, dest_dir)
-
+            unpack_artifact_zip(tmp_zip, staging)
+        else:
+            unpack_artifact_zip(zip_path, staging)
+        verify_artifact_dir(staging, expected=expected)
+        _install_verified_artifact(staging, dest_dir)
     verify_artifact_dir(dest_dir, expected=expected)
     return dest_dir
 
 
 def fetch_default_artifact(repo_root: Path) -> Path:
     dest = artifact_dir(repo_root)
-    committed_sums = dest / SHA256SUMS_NAME
-    expected = None
-    if committed_sums.is_file():
-        expected = parse_sha256sums(committed_sums.read_text(encoding="utf-8"))
-    if missing_required_files(dest) == [] and expected is not None:
-        verify_artifact_dir(dest, expected=expected)
-        return dest
-    if artifact_complete(dest):
-        return dest
     zip_override = os.environ.get("RALLYCLIP_ARTIFACT_ZIP")
     zip_path = Path(zip_override).expanduser().resolve() if zip_override else None
-    fetch_artifact(dest, zip_path=zip_path)
-    if expected is not None:
-        verify_artifact_dir(dest, expected=expected)
-    return dest
+    return fetch_artifact(dest, zip_path=zip_path, expected=_trusted_checksums(dest))
 
 
 def main(argv: Optional[list[str]] = None) -> int:

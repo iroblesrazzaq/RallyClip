@@ -84,3 +84,37 @@ def test_fetch_refuses_unsafe_zip_members(tmp_path: Path):
         zf.writestr("../escape.onnx", b"nope")
     with pytest.raises(ArtifactError, match="unsafe"):
         unpack_artifact_zip(zip_path, tmp_path / "out")
+
+
+def test_rejected_zip_does_not_poison_trust_anchor_on_retry(tmp_path: Path):
+    """A tampered zip that includes matching SHA256SUMS must not become the
+    live trust anchor. Retry must still use the original committed hashes.
+    """
+    trusted = tmp_path / "trusted"
+    _seed_artifact(trusted, b"good-weights")
+    trusted_sums = (trusted / SHA256SUMS_NAME).read_text(encoding="utf-8")
+
+    evil = tmp_path / "evil"
+    _seed_artifact(evil, b"evil-weights")
+    evil_zip = tmp_path / "evil.zip"
+    pack_artifact_dir(evil, evil_zip)
+
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    (dest / SHA256SUMS_NAME).write_text(trusted_sums, encoding="utf-8")
+
+    with pytest.raises(ArtifactError, match="hash mismatch"):
+        fetch_artifact(dest, zip_path=evil_zip)
+    assert (dest / SHA256SUMS_NAME).read_text(encoding="utf-8") == trusted_sums
+    assert not (dest / "model.onnx").is_file()
+
+    with pytest.raises(ArtifactError, match="hash mismatch"):
+        fetch_artifact(dest, zip_path=evil_zip)
+    assert (dest / SHA256SUMS_NAME).read_text(encoding="utf-8") == trusted_sums
+    assert artifact_complete(dest) is False
+
+    good_zip = tmp_path / "good.zip"
+    pack_artifact_dir(trusted, good_zip)
+    fetch_artifact(dest, zip_path=good_zip)
+    assert (dest / "model.onnx").read_bytes() == b"good-weights"
+    verify_artifact_dir(dest)

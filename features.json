@@ -10,7 +10,7 @@
       "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
-      "evidence": "2026-09-07: 297 passed, 6 skipped, 27 deselected, 4 warnings (~20s) on cursor/artifact-registry-plan-5f28 (Linux py3.12). Artifact pack/fetch tests included; ONNX not in git."
+      "evidence": "2026-09-07: 298 passed, 6 skipped, 27 deselected, 4 warnings (~19s) on cursor/artifact-registry-plan-5f28 (Linux py3.12). Artifact pack/fetch tests included; ONNX not in git."
     },
     {
       "id": "golden-cli-parity",
@@ -73,7 +73,7 @@
       "name": "ONNX off git: GitHub artifact zip + fetch; DMG still embeds DEFAULT_ARTIFACT_DIR",
       "status": "passing",
       "verification": "See docs/artifact-registry-plan.md Definition of done: depth-1 clone has no models/**/*.onnx; fetch_artifact.py then golden/e2e; CI fetch; PyInstaller bundle still contains v0.5.0 weights; packaged app does not download at launch.",
-      "evidence": "2026-09-07: Published https://github.com/iroblesrazzaq/RallyClip/releases/tag/artifact-rallyclip_v0.5.0 (non-draft). git ls-files models has no *.onnx (manifests + SHA256SUMS only). PYTHONPATH=src:tests pytest -m 'not slow and not e2e': 297 passed, 6 skipped. python scripts/fetch_artifact.py no-ops when checksums match; hash mismatch raises ArtifactError. ci.yml fetch x2; release.yml fetch + verify_artifact_dir. RallyClip.spec still packs DEFAULT_ARTIFACT_DIR; frozen sources do not import runtime.artifact."
+      "evidence": "2026-09-07: Published https://github.com/iroblesrazzaq/RallyClip/releases/tag/artifact-rallyclip_v0.5.0 (non-draft). git ls-files models has no *.onnx (manifests + SHA256SUMS only). PYTHONPATH=src:tests pytest -m 'not slow and not e2e': 298 passed, 6 skipped. Fetch unpacks to a temp dir and installs only after SHA-256 verify so a rejected zip cannot overwrite SHA256SUMS. Hash mismatch raises ArtifactError. ci.yml fetch x2; release.yml fetch + verify_artifact_dir. RallyClip.spec still packs DEFAULT_ARTIFACT_DIR; frozen sources do not import runtime.artifact."
     }
   ],
   "active": "artifact-registry"
