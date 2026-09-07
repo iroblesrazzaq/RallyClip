@@ -314,6 +314,20 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
     # after the Qt-native player, which drew its own, was deleted).
     expect(page.locator(".viewer-point-segment").first).to_be_visible()
 
+    # macOS Chromium decodes the fixture as H.264 and keeps playing. Live
+    # timeupdate handlers then react to the synthetic interval/duration
+    # mutations below and can clear matchVideo.src before the skip checks.
+    page.evaluate(
+        """() => {
+            const app = window.rallyClipApp;
+            app.directPlayback = false;
+            app.directWatcherActive = false;
+            app.directStandby = null;
+            app.matchVideo?.pause();
+            app.matchVideoBuffer?.pause();
+        }"""
+    )
+
     scheduler = page.evaluate(
         """() => {
             const app = window.rallyClipApp;
@@ -394,6 +408,7 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
                 enumerable: true,
                 get() { return this === app.matchVideo ? false : pausedProto.get.call(this); },
             });
+            if (!app.matchVideo.src && app.primaryMatchVideo?.src) app.matchVideo = app.primaryMatchVideo;
             if (!app.matchVideo.src) throw new Error("viewer matchVideo.src is empty");
             app.mseActive = false;
             app.handleViewerTimeUpdate();
@@ -447,6 +462,7 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
                 value: () => { pauses += 1; },
                 configurable: true,
             });
+            if (!app.matchVideo.src && app.primaryMatchVideo?.src) app.matchVideo = app.primaryMatchVideo;
             if (!app.matchVideo.src) throw new Error("viewer matchVideo.src is empty");
             app.mseActive = false;
             app.handleViewerTimeUpdate();
@@ -505,6 +521,7 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
                 enumerable: true,
                 get() { return this === app.matchVideo ? false : pausedProto.get.call(this); },
             });
+            if (!app.matchVideo.src && app.primaryMatchVideo?.src) app.matchVideo = app.primaryMatchVideo;
             if (!app.matchVideo.src) throw new Error("viewer matchVideo.src is empty");
             app.mseActive = false;
             app.handleViewerTimeUpdate();
