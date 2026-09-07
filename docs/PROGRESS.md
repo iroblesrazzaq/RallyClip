@@ -23,6 +23,7 @@ _Last updated: 2026-09-07 (session: artifact-registry implementation)._
    still embeds `models/rallyclip_v0.5.0/`; frozen app does not fetch at launch.
 4. Gitignore ONNX + `scaler.json` under `models/`; dropped old/duplicate
    weights from git; tests that only need pipeline id read `manifest.json`.
+5. Default gate: **297 passed, 6 skipped, 27 deselected, ~20s**.
 
 ## Next steps
 

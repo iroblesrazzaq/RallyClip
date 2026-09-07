@@ -16,8 +16,9 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-09-07, scheduler e2e keyboard-skip expect fix, Linux py3.12):
-**280 passed, 6 skipped, 27 deselected, ~19s**. `tests/test_release_packaging.py` 8 passed.
+Last known (2026-09-07, artifact-registry, Linux py3.12):
+**297 passed, 6 skipped, 27 deselected, ~20s**. `tests/test_release_packaging.py` 21 passed;
+`tests/test_artifact_fetch.py` 5 passed.
 
 ## Compile gate (cheap, run with the default gate)
 
