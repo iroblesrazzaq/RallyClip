@@ -50,6 +50,7 @@ The pipeline is broken into explicit steps so you can re-run only what you need:
 6. `eval`: evaluate on test split.
 
 ## Quickstart
+Install the training extra first (`uv sync --extra cpu --extra train`), then:
 ```bash
 python train.py --config configs/train/base.yaml
 ```

@@ -50,7 +50,7 @@ def main() -> int:
         import webview
     except ImportError as exc:
         print(
-            "rallyclip-desktop requires pywebview. Install with: pip install '.[desktop]'",
+            "rallyclip-desktop requires pywebview. From a checkout: uv sync --extra cpu --extra desktop",
             file=sys.stderr,
         )
         print(f"Details: {exc}", file=sys.stderr)

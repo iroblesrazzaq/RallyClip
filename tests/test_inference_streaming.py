@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -12,6 +13,7 @@ if str(SRC) not in sys.path:
 
 from infer.inference import (  # noqa: E402
     generate_start_indices,
+    load_scaler_asset,
     run_windowed_inference_average_stream,
 )
 
@@ -79,3 +81,20 @@ def test_stream_validates_overlap():
     features = rng.standard_normal((200, 8)).astype(np.float32)
     with pytest.raises(ValueError):
         run_windowed_inference_average_stream(iter(features), _make_run_window(), 100, 100)
+
+
+def test_json_scaler_loads_without_joblib(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "joblib", None)
+    path = tmp_path / "scaler.json"
+    path.write_text(json.dumps({"mean": [1.0, 2.0], "scale": [0.5, 4.0]}), encoding="utf-8")
+    scaler = load_scaler_asset(str(path))
+    out = scaler.transform(np.array([[1.0, 2.0]], dtype=np.float32))
+    np.testing.assert_allclose(out, [[0.0, 0.0]])
+
+
+def test_legacy_joblib_scaler_explains_missing_dep(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "joblib", None)
+    path = tmp_path / "legacy.joblib"
+    path.write_bytes(b"not a real joblib")
+    with pytest.raises(RuntimeError, match="Legacy \\.joblib scaler"):
+        load_scaler_asset(str(path))

@@ -11,7 +11,7 @@ localhost Flask, so headless Chromium against the same URL is a faithful proxy
 for the desktop UI — only the native window chrome differs.
 
 Marked ``e2e``+``slow``. Needs the e2e-ui extra + a browser:
-    pip install ".[dev,e2e-ui]" && playwright install chromium
+    uv sync --extra cpu --extra e2e-ui && uv run playwright install chromium
 Self-skips cleanly when Playwright or the v0.5.0 ONNX artifact is absent.
 """
 from __future__ import annotations

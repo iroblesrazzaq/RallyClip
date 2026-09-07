@@ -286,3 +286,18 @@ def test_malformed_manifest_warns_and_falls_back(tmp_path, monkeypatch, caplog):
 
     assert values == {}
     assert any("manifest" in r.getMessage().lower() for r in caplog.records)
+
+
+def test_main_with_no_args_launches_gui(monkeypatch):
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.setattr(cli_main, "_launch_gui", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["rallyclip"])
+    assert cli_main.main() == 0
+
+
+def test_main_gui_subcommand_launches_gui(monkeypatch):
+    cli_main = import_cli_main_with_stubs(monkeypatch)
+    monkeypatch.setattr(cli_main, "_launch_gui", lambda: 0)
+    monkeypatch.setattr(sys, "argv", ["rallyclip", "gui"])
+    assert cli_main.main() == 0
+    assert sys.argv == ["rallyclip"]

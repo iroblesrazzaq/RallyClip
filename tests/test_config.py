@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-import yaml
+import pytest
+
+yaml = pytest.importorskip("yaml")
 
 from training.io.config import load_config
 

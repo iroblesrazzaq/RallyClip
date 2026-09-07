@@ -43,7 +43,7 @@ ORT can split a TCN point across a 1-frame pointness dip; v0.5.0 ships
 PYTHONPATH=src:tests $PY -m pytest -q -m e2e -p no:cacheprovider
 ```
 
-Not run 2026-07-03 (needs `pip install .[dev,e2e-ui]` + `playwright install chromium`;
+Not run 2026-07-03 (needs `uv sync --extra cpu --extra dev --extra e2e-ui` + `uv run playwright install chromium`;
 quality/court e2e need local footage — `RALLYCLIP_COURT_VIDEO_DIR`/`RALLYCLIP_YOLO_WEIGHTS`,
 self-skip if absent). CI runs unit+e2e on 3 OS; green as of 2026-07-04 snapshot.
 Court e2e wants `PYTORCH_ENABLE_MPS_FALLBACK=1`.

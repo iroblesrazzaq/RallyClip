@@ -6,11 +6,11 @@ import json
 from typing import Optional, List, Tuple, Callable
 
 import numpy as np
-import joblib
 
 # torch and .model (which imports torch) are imported lazily inside the
 # torch-path functions below: the shipped runtime is ONNX-only and must work
-# without torch installed.
+# without torch installed. joblib is the same: JSON scalers are the runtime
+# path; legacy .joblib files need the [train] extra.
 
 try:
     import onnxruntime as ort
@@ -43,6 +43,13 @@ def load_scaler_asset(path: str):
         if mean.size == 0 or scale.size == 0:
             raise ValueError(f"Invalid scaler JSON: '{path}'")
         return JsonStandardScaler(mean=mean, scale=scale)
+    try:
+        import joblib
+    except ImportError as exc:
+        raise RuntimeError(
+            "Legacy .joblib scaler requires joblib. "
+            "Install with `uv sync --extra cpu --extra train`, or use a JSON scaler."
+        ) from exc
     return joblib.load(path)
 
 

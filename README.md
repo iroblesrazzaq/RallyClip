@@ -8,6 +8,37 @@ This repo ships:
 - `rallyclip gui` browser-based local UI for development
 - open training pipeline code
 
+## To run
+
+**macOS with an M-series chip (M1, M2, M3, …)**
+
+Install the desktop app from [GitHub Releases](https://github.com/iroblesrazzaq/RallyClip/releases/latest).
+
+Open the DMG and drag RallyClip into Applications. Apple Silicon only.
+
+**Windows, Linux, and Intel Macs**
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if you do not have it (`brew install uv`, or the installer on that page). uv will create a local environment and can install Python 3.10+.
+
+```bash
+git clone https://github.com/iroblesrazzaq/RallyClip.git
+cd RallyClip
+uv sync --extra cpu
+uv run rallyclip gui
+```
+
+That starts a local backend and opens RallyClip in your browser at `http://127.0.0.1:8000` (or the next free port). Leave the terminal open while you use it.
+
+NVIDIA GPU with CUDA:
+
+```bash
+uv sync --extra gpu
+uv run rallyclip gui
+```
+
+Do not combine the `cpu` and `gpu` extras — they install conflicting ONNX Runtime wheels.
+
+CLI, training, and extra install notes live in [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md).
 
 ## Features coming soon (in rough order)
 - iOS mobile app beta coming soon
@@ -43,135 +74,4 @@ In no particular order,
 - Doubles support (need to label + train on doubles data)
 - Open dataset (once deployed, opt-in for publicly available dataset for open-source community to use)
 - Match scoring
-- Better resolution support: 720p, 1080p, 1440p, 4K. Training models for each, finding out best yolo params etc for them, given that YOLO downscales regardless it might not matter, but will look into. 
-
-
-
-## Prereqs
-- Python 3.10+
-- A clean virtual environment is recommended:
-  `python -m venv .venv && source .venv/bin/activate` (or conda equivalent)
-
-## Install
-```bash
-git clone https://github.com/iroblesrazzaq/RallyClip.git
-cd RallyClip
-pip install ".[cpu]"
-```
-
-### Desktop app
-```bash
-pip install ".[desktop,cpu]"   # Mac / CPU-only; use ".[desktop,gpu]" on NVIDIA (see docs/ENVIRONMENT.md)
-rallyclip-desktop
-```
-
-The desktop app bundles the local Flask backend in a native window. Device selection defaults to **Auto** (`CUDA > CoreML > MPS > CPU`) and can be overridden in Advanced settings. CUDA for the torch-free ONNX pose path needs the optional `[gpu]` extra (`onnxruntime-gpu`); never combine `[cpu]` and `[gpu]` — see `docs/ENVIRONMENT.md`.
-
-### Browser GUI (development)
-```bash
-rallyclip gui
-```
-
-## Model assets
-RallyClip model artifacts live under `models/rallyclip_v0.5.0/`:
-- `model.onnx`
-- `scaler.json`
-- `manifest.json`
-
-YOLO pose weights are downloaded automatically into `models/` when needed.
-
-## Quick run (minimal CLI)
-Only the video path is required; segmented output defaults to `./output_videos`.
-
-```bash
-rallyclip --video "raw_videos/your_match.mp4"
-```
-
-- Segmented video: `output_videos/<video_stem>_segmented.mp4`
-- CSV (if enabled): `output_csvs/<video_stem>_segments.csv` or the input video directory
-
-## Input video quality
-- Recommended source resolution: at least 720p
-- 1080p works best and matches pose-model training assumptions
-- Lower resolutions can reduce keypoint quality and segmentation accuracy
-
-## Common CLI flags
-- `--video PATH` (required unless supplied in config)
-- `--output-dir PATH` (default: `./output_videos`)
-- `--csv-output-dir PATH` (default: video directory; enable CSV with `--write-csv`)
-- `--write-csv / --no-csv` (default: off)
-- `--yolo-size {nano,small,medium,large}` (default: `small`)
-- `--yolo-device {cpu,cuda,mps,coreml}` (force pose model device; on Apple silicon auto picks `coreml` — the bundled static ONNX on the Apple Neural Engine, several times faster pose — and degrades to `cpu`, the byte-parity reference, whenever CoreML is unusable)
-- Advanced overrides: `--conf`, `--low`, `--high`, `--sigma`, `--seq-len`, `--overlap`, `--min-dur-sec`, `--fps`
-- Artifact overrides: `--artifact-dir`, `--manifest-path`
-- Config file: `--config path/to/config.toml` (defaults to `./config.toml` if present)
-
-## Config file (`config.toml`)
-Use TOML config instead of long CLI invocations:
-
-```toml
-[run]
-video_path = "raw_videos/your_match.mp4"   # required
-output_dir = "output_videos"
-csv_output_dir = "output_csvs"             # optional; defaults to video directory
-
-write_csv = false
-segment_video = true
-yolo_model = "nano"                        # nano | small | medium | large
-yolo_device = "mps"                        # cpu | cuda | mps | coreml
-
-# Optional artifact overrides:
-# artifact_dir = "models/rallyclip_v0.5.0"
-
-# Postprocessing / inference parameters
-low = 0.45
-high = 0.7
-sigma = 1.0
-min_dur_sec = 1.0
-
-# Temporal settings for v0.5.0 defaults
-fps = 5.0
-seq_len = 100
-overlap = 50
-conf = 0.25
-start_time = 0
-duration = 999999
-```
-
-Run with:
-```bash
-rallyclip --config config.toml
-```
-
-## GitHub Releases
-
-The current `v0.1.0` macOS release was created manually. GitHub Releases hosts
-the DMG exactly as uploaded; GitHub does not convert zips or app bundles into a
-DMG.
-
-Future work: add GitHub Actions CI/CD for tests, app build, Apple signing,
-notarization, stapling, DMG creation, and release upload.
-
-To cut a release locally:
-```bash
-pip install ".[desktop,pack,cpu]"
-pyinstaller --noconfirm RallyClip.spec
-```
-
-The runtime is torch-free: pose inference runs on the ONNX bundled in
-`models/rallyclip_v0.5.0/` via onnxruntime (`extraction/yolo_onnx_runner.py`).
-Training and the legacy .pt path need `pip install ".[train]"`.
-
-### Headless mode
-The shipped binary can run the full pipeline without launching the GUI. Pass
-`--cli` as the first argument; everything after it is the regular `rallyclip`
-CLI:
-
-```bash
-dist/RallyClip/RallyClip --cli --video match.mp4 --start-time 1240 --duration 180 \
-  --write-csv --csv-output-dir /tmp/out --no-segment-video
-```
-
-`RallyClip --cli --help` prints the full flag reference. Note: YOLO pose
-weights are not bundled; the first headless run downloads them into a
-`models/` folder under the current working directory.
+- Better resolution support: 720p, 1080p, 1440p, 4K. Training models for each, finding out best yolo params etc for them, given that YOLO downscales regardless it might not matter, but will look into.

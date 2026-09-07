@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
+
+pytest.importorskip("sklearn")
 
 from training.metrics.frame import compute_frame_metrics
 
