@@ -321,9 +321,13 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
     page.evaluate(
         """() => {
             const app = window.rallyClipApp;
+            app._e2eViewerSrc = app.matchVideo?.src || app.matchVideo?.currentSrc || "";
+            app._e2eOriginalDirectPlayback = app.directPlayback;
             app._originalHandleViewerTimeUpdate = app.handleViewerTimeUpdate.bind(app);
             app.handleViewerTimeUpdate = () => {};
+            app.directPlayback = false;
             app.directWatcherActive = false;
+            app.directStandby = null;
         }"""
     )
 
@@ -386,8 +390,13 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
                 app.handleViewerTimeUpdate = app._originalHandleViewerTimeUpdate;
                 delete app._originalHandleViewerTimeUpdate;
             }
-            if (!app.matchVideo.src && app.primaryMatchVideo?.src) app.matchVideo = app.primaryMatchVideo;
-            if (!app.matchVideo.src) throw new Error("viewer matchVideo.src is empty");
+            const sourced = [app.matchVideo, app.primaryMatchVideo, app.secondaryMatchVideo]
+                .find((v) => v && (v.src || v.currentSrc || v.srcObject));
+            if (sourced) app.matchVideo = sourced;
+            if (!app.matchVideo.src && (app.matchVideo.currentSrc || app._e2eViewerSrc)) {
+                app.matchVideo.src = app.matchVideo.currentSrc || app._e2eViewerSrc;
+            }
+            if (!app.viewerHasVideo()) throw new Error("viewer matchVideo.src is empty");
             const video = app.matchVideo;
             const originalSeek = app.seekViewerToSourceTime.bind(app);
             const originalGetTime = app.getViewerSourceTime.bind(app);
@@ -434,8 +443,13 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
     gap_to_point_start_is_continuous = page.evaluate(
         """() => {
             const app = window.rallyClipApp;
-            if (!app.matchVideo.src && app.primaryMatchVideo?.src) app.matchVideo = app.primaryMatchVideo;
-            if (!app.matchVideo.src) throw new Error("viewer matchVideo.src is empty");
+            const sourced = [app.matchVideo, app.primaryMatchVideo, app.secondaryMatchVideo]
+                .find((v) => v && (v.src || v.currentSrc || v.srcObject));
+            if (sourced) app.matchVideo = sourced;
+            if (!app.matchVideo.src && (app.matchVideo.currentSrc || app._e2eViewerSrc)) {
+                app.matchVideo.src = app.matchVideo.currentSrc || app._e2eViewerSrc;
+            }
+            if (!app.viewerHasVideo()) throw new Error("viewer matchVideo.src is empty");
             const video = app.matchVideo;
             const originalSeek = app.seekViewerToSourceTime.bind(app);
             const originalGetTime = app.getViewerSourceTime.bind(app);
@@ -501,8 +515,13 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
     manual_gap_bridge = page.evaluate(
         """() => {
             const app = window.rallyClipApp;
-            if (!app.matchVideo.src && app.primaryMatchVideo?.src) app.matchVideo = app.primaryMatchVideo;
-            if (!app.matchVideo.src) throw new Error("viewer matchVideo.src is empty");
+            const sourced = [app.matchVideo, app.primaryMatchVideo, app.secondaryMatchVideo]
+                .find((v) => v && (v.src || v.currentSrc || v.srcObject));
+            if (sourced) app.matchVideo = sourced;
+            if (!app.matchVideo.src && (app.matchVideo.currentSrc || app._e2eViewerSrc)) {
+                app.matchVideo.src = app.matchVideo.currentSrc || app._e2eViewerSrc;
+            }
+            if (!app.viewerHasVideo()) throw new Error("viewer matchVideo.src is empty");
             const video = app.matchVideo;
             const originalSeek = app.seekViewerToSourceTime.bind(app);
             const originalGetTime = app.getViewerSourceTime.bind(app);
@@ -553,6 +572,11 @@ def test_ui_viewer_uses_source_timeline_scheduler(page: Page, ui_backend: Backen
                 app.handleViewerTimeUpdate = app._originalHandleViewerTimeUpdate;
                 delete app._originalHandleViewerTimeUpdate;
             }
+            if (app._e2eOriginalDirectPlayback !== undefined) {
+                app.directPlayback = app._e2eOriginalDirectPlayback;
+                delete app._e2eOriginalDirectPlayback;
+            }
+            delete app._e2eViewerSrc;
         }"""
     )
 

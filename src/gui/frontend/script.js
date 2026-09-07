@@ -1961,7 +1961,8 @@ class RallyClipApp {
     }
 
     viewerHasVideo() {
-        return Boolean(this.matchVideo && this.matchVideo.src);
+        const video = this.matchVideo;
+        return Boolean(video && (video.src || video.currentSrc || video.srcObject));
     }
 
     isViewerActive() {
@@ -2760,7 +2761,7 @@ class RallyClipApp {
     }
 
     handleViewerTimeUpdate() {
-        if (!this.matchVideo.src) return;
+        if (!this.viewerHasVideo()) return;
         const t = this.getViewerSourceTime();
         this.updateViewerTimeline(t);
         if (this.mseActive) this.ensureMsePlaybackRange(t);
@@ -2784,7 +2785,7 @@ class RallyClipApp {
     }
 
     handleViewerWindowEnded() {
-        if (!this.matchVideo.src || !this.viewingItemId) return;
+        if (!this.viewerHasVideo() || !this.viewingItemId) return;
         if (this.mseActive) return;
         const sourceTime = this.videoWindowEnd(this.matchVideo);
         this.updateViewerTimeline(sourceTime);
