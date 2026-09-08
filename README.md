@@ -2,12 +2,6 @@
 
 RallyClip is an open-source tool for tennis video segmentation. It extracts rally/point intervals from full match footage and outputs a segmented video plus optional CSV timestamps.
 
-This repo ships:
-- `rallyclip` CLI for local inference
-- `rallyclip-desktop` for macos desktop app
-- `rallyclip gui` browser-based local UI for development
-- open training pipeline code
-
 ## To run
 
 **macOS with an M-series chip (M1, M2, M3, …)**
