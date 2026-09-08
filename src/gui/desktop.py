@@ -125,7 +125,13 @@ def main() -> int:
         min_size=(960, 600),
         js_api=api,
     )
-    print("RallyClip desktop shell ready", flush=True)
+
+    def _on_dom_ready() -> None:
+        # Fired after WKWebView has loaded the Flask page — not after
+        # create_window(), which only allocates the Python Window object.
+        print("RallyClip desktop shell ready", flush=True)
+
+    api.window.events.loaded += _on_dom_ready
     webview.start()
     return 0
 

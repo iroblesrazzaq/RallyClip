@@ -83,11 +83,18 @@ def test_no_args_takes_gui_path(monkeypatch):
     assert "argv" not in calls
 
 
-def test_gui_path_creates_window_then_starts(monkeypatch, capsys):
-    _stub_backend(monkeypatch)
+class _FakeLoaded:
+    def __init__(self) -> None:
+        self.handlers: list = []
+
+    def __iadd__(self, handler):
+        self.handlers.append(handler)
+        return self
+
+
+def _install_fake_webview(monkeypatch, *, fire_loaded: bool):
     created: dict = {}
     started: list = []
-
     fake = types.ModuleType("webview")
     fake.settings = {}
 
@@ -95,11 +102,26 @@ def test_gui_path_creates_window_then_starts(monkeypatch, capsys):
         created["title"] = title
         created["url"] = url
         created["kwargs"] = kwargs
-        return types.SimpleNamespace(uid="w1")
+        created["window"] = types.SimpleNamespace(
+            uid="w1", events=types.SimpleNamespace(loaded=_FakeLoaded())
+        )
+        return created["window"]
+
+    def start(func=None, args=None, **kwargs):
+        started.append(True)
+        if fire_loaded:
+            for handler in created["window"].events.loaded.handlers:
+                handler()
 
     fake.create_window = create_window
-    fake.start = lambda: started.append(True)
+    fake.start = start
     monkeypatch.setitem(sys.modules, "webview", fake)
+    return created, started
+
+
+def test_gui_path_creates_window_then_starts(monkeypatch, capsys):
+    _stub_backend(monkeypatch)
+    created, started = _install_fake_webview(monkeypatch, fire_loaded=True)
     monkeypatch.setattr(sys, "argv", ["RallyClip"])
 
     assert desktop.main() == 0
@@ -107,6 +129,15 @@ def test_gui_path_creates_window_then_starts(monkeypatch, capsys):
     assert created["url"] == "http://127.0.0.1:8765/"
     assert started == [True]
     assert "RallyClip desktop shell ready" in capsys.readouterr().out
+
+
+def test_gui_ready_line_waits_for_webview_loaded(monkeypatch, capsys):
+    _stub_backend(monkeypatch)
+    _install_fake_webview(monkeypatch, fire_loaded=False)
+    monkeypatch.setattr(sys, "argv", ["RallyClip"])
+
+    assert desktop.main() == 0
+    assert "RallyClip desktop shell ready" not in capsys.readouterr().out
 
 
 def test_backend_only_skips_webview(monkeypatch):

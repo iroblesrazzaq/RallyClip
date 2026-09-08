@@ -136,7 +136,7 @@ jobs:
 
           # Boot the packaged GUI personality: Flask + pywebview (WKWebView).
           # Health can come up before the window; "desktop shell ready" is printed
-          # after create_window and is the check that pywebview actually loaded.
+          # from window.events.loaded after WKWebView has loaded the Flask page.
           export RALLYCLIP_GUI_PORT=8765
           export PYTHONUNBUFFERED=1
           "$BIN" > gui_probe.log 2>&1 &
@@ -151,7 +151,11 @@ jobs:
             sleep 2
           done
           if [ -n "$ok" ]; then
-            curl -s -m 5 http://127.0.0.1:8765/api/config/defaults | grep -q "yolov8n-pose-960-dynamic.onnx" || ok=""
+            if ! kill -0 "$GUI_PID" 2>/dev/null; then
+              ok=""
+            elif ! curl -s -m 5 http://127.0.0.1:8765/api/config/defaults | grep -q "yolov8n-pose-960-dynamic.onnx"; then
+              ok=""
+            fi
           fi
           kill $GUI_PID 2>/dev/null || true
           if [ -z "$ok" ]; then

@@ -18,13 +18,13 @@ _Last updated: 2026-09-08 (session: release GUI probe covers WKWebView)._
 1. GUI path starts Flask and waits for `/api/health` before importing
    pywebview, so a slow WKWebView cannot starve the backend (root cause of
    run 34176081009: `RallyClip backend failed to start.`).
-2. Release probe launches `"$BIN"` (no `--backend-only`) and requires the
-   log line `RallyClip desktop shell ready` after `create_window`, plus
-   health and the defaults ONNX name.
+2. Release probe launches `"$BIN"` (no `--backend-only`) and requires
+   `window.events.loaded` to print `RallyClip desktop shell ready` (WKWebView
+   loaded the Flask page), then `kill -0` plus defaults ONNX name.
 3. `--backend-only` remains a debug flag. Dispatch tests stub Flask for the
    GUI path, fake webview for the ready-line contract, and import `gui.app`
    in a fresh interpreter with webview blocked.
-4. Default gate: **301 passed, 6 skipped, 27 deselected, ~20s**.
+4. Default gate: **302 passed, 6 skipped, 27 deselected, ~20s**.
 
 ## Next steps
 

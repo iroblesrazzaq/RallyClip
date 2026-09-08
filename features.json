@@ -59,7 +59,7 @@
       "name": "CI/CD builds, signs, notarizes, and uploads the macOS desktop DMG",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q tests/test_release_packaging.py -p no:cacheprovider",
-      "evidence": "2026-09-08: release.yml probe launches the packaged GUI binary (not --backend-only). Flask starts before pywebview import; probe requires /api/health plus log line 'RallyClip desktop shell ready' after create_window. tests/test_release_packaging.py 21 passed. Default gate 301 passed, 6 skipped, 27 deselected."
+      "evidence": "2026-09-08: release.yml probe launches the packaged GUI binary (not --backend-only). Flask starts before pywebview import; probe requires /api/health plus log line 'RallyClip desktop shell ready' from window.events.loaded (WKWebView DOM ready), then kill -0. tests/test_release_packaging.py 21 passed. Default gate 302 passed, 6 skipped, 27 deselected."
     },
     {
       "id": "webview-shell",

@@ -198,3 +198,12 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
 - **Rejected:** Keep `--backend-only` as the release probe (misses desktop-shell
   regressions); importing webview before starting Flask (original hang).
 
+## 2026-09-08 — Ready marker is `window.events.loaded`
+
+- **What:** `RallyClip desktop shell ready` prints from `window.events.loaded`
+  (DOM ready in WKWebView). Release probe also `kill -0`s the process after
+  seeing the line. `create_window()` only allocates the Python Window object.
+- **Why:** Greptile P1: a marker before `webview.start()` can pass while native
+  GUI init still fails; CI then kills the process.
+- **Rejected:** Printing after `create_window()` / before `webview.start()`.
+
