@@ -43,11 +43,15 @@ CLI, training, and extra install notes live in [`docs/ENVIRONMENT.md`](docs/ENVI
 ## Current release status
 The current public desktop release is `v0.5.0` for **Apple Silicon macOS only**.
 
-## Features down the road
-In no particular order,
-- OPTIMIZE TF OUTTA THE MODELS TO MAKE THEM FASTER AND BETTER!!!!
-- Mobile app (once I can scale data more to push down model size by expanding the repertoire of architectures I can use, particularly in training more complex deep learning models from scratch)
-- Doubles support (need to label + train on doubles data)
-- Open dataset (once deployed, opt-in for publicly available dataset for open-source community to use)
-- Match scoring
-- Better resolution support: 720p, 1080p, 1440p, 4K. Training models for each, finding out best yolo params etc for them, given that YOLO downscales regardless it might not matter, but will look into.
+## Stuff I'm thinking about
+Current non-user-facing features and long term ideas
+- OPTIMIZE TF OUTTA THE MODELS TO MAKE THEM FASTER AND BETTER!!!! (always)
+- Rework of court annotations: switching from heuristics to DL models, bootstrapping with my heuristic annotations.
+    - current court mask pipeline fails in some edge cases
+    - to improve the model's vision for the far court player(s), we need 2 YOLO passes, one over a zoomed in section and the other one over the whole court. However, this runs into the issue of redundant information: ex the near court player showing up on the zoomed in YOLO. My current goal is to have net annotations so if a player's bounding box goes below the bottom of the net, that identifies them as the near court player and we ignore. This is more hand-crafted and less bitter-lessoney but in a low-data regime, I think its the best step moving forward. Also should be fun training a new type of model
+    - gonna do some sort of pretrained convnet base, then finetune on court images. Not certain about objectives yet. 
+- Match scoring: seems pretty hard. Will need a rework of architecture to track way more stuff (need player identity, tracking who won point, which will require much more advanced arch and more data presumably)
+- 4k support
+- allow for files > 2Gb cuz i fixed memory issue so now we stream and dont load everything into memory lol
+
+My next big push with this project will be training this court model (yay fun) and iOS support (although i have neither knowledge nor passion for mobile dev but let the tokens flow...). 
