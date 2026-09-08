@@ -129,19 +129,25 @@ jobs:
             --write-csv --csv-output-dir ./csv_out --no-segment-video
           test -f csv_out/smoke_segments.csv
           head -1 csv_out/smoke_segments.csv | grep -q "start_time,end_time"
-      - name: Probe GUI backend boot
+      - name: Probe packaged GUI boot
         shell: bash
         run: |
           BIN="$(pwd)/dist/RallyClip.app/Contents/MacOS/RallyClip"
 
-          # Boot the GUI personality and prove Flask + the system webview
-          # (WKWebView) come up in the frozen bundle.
+          # Boot the packaged GUI personality: Flask + pywebview (WKWebView).
+          # Health can come up before the window; "desktop shell ready" is printed
+          # after create_window and is the check that pywebview actually loaded.
           export RALLYCLIP_GUI_PORT=8765
-          "$BIN" --backend-only > gui_probe.log 2>&1 &
+          export PYTHONUNBUFFERED=1
+          "$BIN" > gui_probe.log 2>&1 &
           GUI_PID=$!
           ok=""
           for i in $(seq 1 60); do
-            if curl -s -m 2 http://127.0.0.1:8765/api/health | grep -q '"ok"'; then ok=1; break; fi
+            if curl -s -m 2 http://127.0.0.1:8765/api/health | grep -q '"ok"' \
+              && grep -q "RallyClip desktop shell ready" gui_probe.log; then
+              ok=1
+              break
+            fi
             sleep 2
           done
           if [ -n "$ok" ]; then

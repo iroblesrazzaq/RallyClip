@@ -10,7 +10,7 @@ Chromium ships without proprietary codecs).
 The frozen binary also dispatches headless personalities:
     RallyClip --cli ...              # full analysis CLI (cli.main)
     RallyClip --analysis-worker ...  # GUI job subprocess
-    RallyClip --backend-only        # Flask only (no webview; CI probe)
+    RallyClip --backend-only        # Flask only (no webview)
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ import urllib.error
 import urllib.request
 
 
-def _wait_for_backend(port: int, timeout_sec: float = 30.0) -> bool:
+def _wait_for_backend(port: int, timeout_sec: float = 60.0) -> bool:
     deadline = time.time() + timeout_sec
     url = f"http://127.0.0.1:{port}/api/health"
     while time.time() < deadline:
@@ -50,11 +50,18 @@ def main() -> int:
         return cli_main(force_cli=True)
 
     if len(sys.argv) > 1 and sys.argv[1] == "--backend-only":
-        # Headless Flask for CI. Skip pywebview — WKWebView needs a window
-        # server and can stall backend boot on GitHub-hosted macOS.
+        # Flask without a window. Release CI still boots the real GUI path.
         from gui.app import launch
 
         return launch(open_browser=False)
+
+    # Flask first so /api/health is up even if WKWebView is slow to import.
+    from gui.app import start_backend_thread
+
+    port, _thread = start_backend_thread()
+    if not _wait_for_backend(port):
+        print("RallyClip backend failed to start.", file=sys.stderr)
+        return 1
 
     try:
         import webview
@@ -64,13 +71,6 @@ def main() -> int:
             file=sys.stderr,
         )
         print(f"Details: {exc}", file=sys.stderr)
-        return 1
-
-    from gui.app import start_backend_thread
-
-    port, _thread = start_backend_thread()
-    if not _wait_for_backend(port):
-        print("RallyClip backend failed to start.", file=sys.stderr)
         return 1
 
     # "Export video" / "Download CSV" navigate to Content-Disposition
@@ -125,6 +125,7 @@ def main() -> int:
         min_size=(960, 600),
         js_api=api,
     )
+    print("RallyClip desktop shell ready", flush=True)
     webview.start()
     return 0
 

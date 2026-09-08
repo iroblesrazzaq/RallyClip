@@ -185,3 +185,16 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   the Mac app; putting weights in Application Support next to the library;
   rewriting git history in the same change.
 
+## 2026-09-08 — Release probe boots the real GUI, Flask first
+
+- **What:** Packaged release CI launches `"$BIN"` (no `--backend-only`). Flask
+  starts and `/api/health` can succeed before pywebview/WKWebView is imported.
+  After `create_window`, the binary prints `RallyClip desktop shell ready`; the
+  probe requires that line plus health. `--backend-only` stays as a debug flag.
+- **Why:** v0.5.0 release failed because importing WKWebView on the GitHub
+  Mac runner stalled before Flask came up (30s). Switching the probe to
+  `--backend-only` would not catch a broken pywebview bundle (Greptile P2;
+  agreed).
+- **Rejected:** Keep `--backend-only` as the release probe (misses desktop-shell
+  regressions); importing webview before starting Flask (original hang).
+

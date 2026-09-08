@@ -264,7 +264,9 @@ def test_release_workflow_uses_spec_and_signing_pipeline():
     assert "models/rallyclip_v0.3.1" not in workflow
     assert "python -m runtime.artifact fetch" in workflow
     assert "verify_artifact_dir" in workflow
-    assert '"$BIN" --backend-only' in workflow
+    assert '"$BIN" --backend-only' not in workflow
+    assert "RallyClip desktop shell ready" in workflow
+    assert "Probe packaged GUI boot" in workflow
     assert "timeout-minutes: 180" in workflow
     assert "Require Apple Silicon runner" in workflow
     assert "uname -m" in workflow
