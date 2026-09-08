@@ -137,7 +137,7 @@ jobs:
           # Boot the GUI personality and prove Flask + the system webview
           # (WKWebView) come up in the frozen bundle.
           export RALLYCLIP_GUI_PORT=8765
-          "$BIN" > gui_probe.log 2>&1 &
+          "$BIN" --backend-only > gui_probe.log 2>&1 &
           GUI_PID=$!
           ok=""
           for i in $(seq 1 60); do

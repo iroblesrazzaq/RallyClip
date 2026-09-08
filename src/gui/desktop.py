@@ -7,9 +7,10 @@ OS media stack, so the frontend's plain HTML5 <video> path is used (the old
 QtWebEngine shell needed a separate Qt-Multimedia native player because
 Chromium ships without proprietary codecs).
 
-The frozen binary also dispatches two headless personalities:
+The frozen binary also dispatches headless personalities:
     RallyClip --cli ...              # full analysis CLI (cli.main)
     RallyClip --analysis-worker ...  # GUI job subprocess
+    RallyClip --backend-only        # Flask only (no webview; CI probe)
 """
 
 from __future__ import annotations
@@ -47,6 +48,13 @@ def main() -> int:
 
         sys.argv = [sys.argv[0], *sys.argv[2:]]
         return cli_main(force_cli=True)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--backend-only":
+        # Headless Flask for CI. Skip pywebview — WKWebView needs a window
+        # server and can stall backend boot on GitHub-hosted macOS.
+        from gui.app import launch
+
+        return launch(open_browser=False)
 
     try:
         import webview

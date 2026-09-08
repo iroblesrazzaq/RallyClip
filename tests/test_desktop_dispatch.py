@@ -64,3 +64,20 @@ def test_no_args_takes_gui_path(monkeypatch):
 
     assert desktop.main() == 1
     assert "argv" not in calls
+
+
+def test_backend_only_skips_webview(monkeypatch):
+    launched: dict = {}
+
+    def fake_launch(*, open_browser: bool = True) -> int:
+        launched["open_browser"] = open_browser
+        return 0
+
+    import gui.app as gui_app
+
+    monkeypatch.setattr(gui_app, "launch", fake_launch)
+    _block_webview(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["RallyClip", "--backend-only"])
+
+    assert desktop.main() == 0
+    assert launched["open_browser"] is False
