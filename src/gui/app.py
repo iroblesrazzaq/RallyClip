@@ -2691,18 +2691,23 @@ def start_backend_thread(port: Optional[int] = None) -> tuple[int, threading.Thr
     chosen_port = _choose_gui_port(port)
 
     def _serve() -> None:
-        app.run(host="127.0.0.1", port=chosen_port, debug=False, use_reloader=False, threaded=True)
+        try:
+            app.run(host="127.0.0.1", port=chosen_port, debug=False, use_reloader=False, threaded=True)
+        except Exception:
+            logging.exception("Flask backend crashed on port %s", chosen_port)
+            raise
 
     thread = threading.Thread(target=_serve, daemon=True, name="rallyclip-gui-backend")
     thread.start()
     return chosen_port, thread
 
 
-def launch(port: Optional[int] = None) -> int:
+def launch(port: Optional[int] = None, *, open_browser: bool = True) -> int:
     _configure_gui_logging()
     threading.Thread(target=_sweep_old_jobs, daemon=True, name="rallyclip-job-sweep").start()
     chosen_port = _choose_gui_port(port)
-    threading.Thread(target=_safe_open_browser, args=(chosen_port,), daemon=True).start()
+    if open_browser:
+        threading.Thread(target=_safe_open_browser, args=(chosen_port,), daemon=True).start()
     app.logger.info("Starting GUI on http://127.0.0.1:%s", chosen_port)
     try:
         app.run(host="127.0.0.1", port=chosen_port, debug=False, use_reloader=False, threaded=True)

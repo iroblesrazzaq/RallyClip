@@ -7,9 +7,10 @@ OS media stack, so the frontend's plain HTML5 <video> path is used (the old
 QtWebEngine shell needed a separate Qt-Multimedia native player because
 Chromium ships without proprietary codecs).
 
-The frozen binary also dispatches two headless personalities:
+The frozen binary also dispatches headless personalities:
     RallyClip --cli ...              # full analysis CLI (cli.main)
     RallyClip --analysis-worker ...  # GUI job subprocess
+    RallyClip --backend-only        # Flask only (no webview)
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import urllib.error
 import urllib.request
 
 
-def _wait_for_backend(port: int, timeout_sec: float = 30.0) -> bool:
+def _wait_for_backend(port: int, timeout_sec: float = 60.0) -> bool:
     deadline = time.time() + timeout_sec
     url = f"http://127.0.0.1:{port}/api/health"
     while time.time() < deadline:
@@ -48,6 +49,20 @@ def main() -> int:
         sys.argv = [sys.argv[0], *sys.argv[2:]]
         return cli_main(force_cli=True)
 
+    if len(sys.argv) > 1 and sys.argv[1] == "--backend-only":
+        # Flask without a window. Release CI still boots the real GUI path.
+        from gui.app import launch
+
+        return launch(open_browser=False)
+
+    # Flask first so /api/health is up even if WKWebView is slow to import.
+    from gui.app import start_backend_thread
+
+    port, _thread = start_backend_thread()
+    if not _wait_for_backend(port):
+        print("RallyClip backend failed to start.", file=sys.stderr)
+        return 1
+
     try:
         import webview
     except ImportError as exc:
@@ -56,13 +71,6 @@ def main() -> int:
             file=sys.stderr,
         )
         print(f"Details: {exc}", file=sys.stderr)
-        return 1
-
-    from gui.app import start_backend_thread
-
-    port, _thread = start_backend_thread()
-    if not _wait_for_backend(port):
-        print("RallyClip backend failed to start.", file=sys.stderr)
         return 1
 
     # "Export video" / "Download CSV" navigate to Content-Disposition
@@ -117,6 +125,13 @@ def main() -> int:
         min_size=(960, 600),
         js_api=api,
     )
+
+    def _on_dom_ready() -> None:
+        # Fired after WKWebView has loaded the Flask page — not after
+        # create_window(), which only allocates the Python Window object.
+        print("RallyClip desktop shell ready", flush=True)
+
+    api.window.events.loaded += _on_dom_ready
     webview.start()
     return 0
 

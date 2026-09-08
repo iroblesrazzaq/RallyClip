@@ -1,9 +1,16 @@
+"""CLI vs GUI dispatch for the frozen Mac app."""
+
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 import types
+from pathlib import Path
 
 import gui.desktop as desktop
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _stub_cli_main(monkeypatch, result: int = 0) -> dict:
@@ -24,6 +31,20 @@ def _stub_cli_main(monkeypatch, result: int = 0) -> dict:
     return calls
 
 
+def _block_webview(monkeypatch) -> None:
+    """Make `import webview` fail so the GUI path exits instead of opening a
+    real window (dev venvs used for DMG builds have pywebview installed)."""
+    monkeypatch.setitem(sys.modules, "webview", None)
+
+
+def _stub_backend(monkeypatch) -> None:
+    """GUI path starts Flask before importing webview; do not bind a real port."""
+    import gui.app as gui_app
+
+    monkeypatch.setattr(gui_app, "start_backend_thread", lambda port=None: (8765, None))
+    monkeypatch.setattr(desktop, "_wait_for_backend", lambda port, timeout_sec=60.0: True)
+
+
 def test_cli_flag_dispatches_with_flag_stripped(monkeypatch):
     calls = _stub_cli_main(monkeypatch, result=7)
     monkeypatch.setattr(sys, "argv", ["RallyClip", "--cli", "--video", "match.mp4", "--write-csv"])
@@ -42,14 +63,9 @@ def test_cli_flag_without_args_still_dispatches_to_cli(monkeypatch):
     assert calls["force_cli"] is True
 
 
-def _block_webview(monkeypatch):
-    """Make `import webview` fail so the GUI path exits instead of opening a
-    real window (dev venvs used for DMG builds have pywebview installed)."""
-    monkeypatch.setitem(sys.modules, "webview", None)
-
-
 def test_cli_flag_only_recognized_as_argv1(monkeypatch):
     calls = _stub_cli_main(monkeypatch)
+    _stub_backend(monkeypatch)
     _block_webview(monkeypatch)
     monkeypatch.setattr(sys, "argv", ["RallyClip", "--video", "x.mp4", "--cli"])
 
@@ -59,8 +75,103 @@ def test_cli_flag_only_recognized_as_argv1(monkeypatch):
 
 def test_no_args_takes_gui_path(monkeypatch):
     calls = _stub_cli_main(monkeypatch)
+    _stub_backend(monkeypatch)
     _block_webview(monkeypatch)
     monkeypatch.setattr(sys, "argv", ["RallyClip"])
 
     assert desktop.main() == 1
     assert "argv" not in calls
+
+
+class _FakeLoaded:
+    def __init__(self) -> None:
+        self.handlers: list = []
+
+    def __iadd__(self, handler):
+        self.handlers.append(handler)
+        return self
+
+
+def _install_fake_webview(monkeypatch, *, fire_loaded: bool):
+    created: dict = {}
+    started: list = []
+    fake = types.ModuleType("webview")
+    fake.settings = {}
+
+    def create_window(title, url, **kwargs):
+        created["title"] = title
+        created["url"] = url
+        created["kwargs"] = kwargs
+        created["window"] = types.SimpleNamespace(
+            uid="w1", events=types.SimpleNamespace(loaded=_FakeLoaded())
+        )
+        return created["window"]
+
+    def start(func=None, args=None, **kwargs):
+        started.append(True)
+        if fire_loaded:
+            for handler in created["window"].events.loaded.handlers:
+                handler()
+
+    fake.create_window = create_window
+    fake.start = start
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    return created, started
+
+
+def test_gui_path_creates_window_then_starts(monkeypatch, capsys):
+    _stub_backend(monkeypatch)
+    created, started = _install_fake_webview(monkeypatch, fire_loaded=True)
+    monkeypatch.setattr(sys, "argv", ["RallyClip"])
+
+    assert desktop.main() == 0
+    assert created["title"] == "RallyClip"
+    assert created["url"] == "http://127.0.0.1:8765/"
+    assert started == [True]
+    assert "RallyClip desktop shell ready" in capsys.readouterr().out
+
+
+def test_gui_ready_line_waits_for_webview_loaded(monkeypatch, capsys):
+    _stub_backend(monkeypatch)
+    _install_fake_webview(monkeypatch, fire_loaded=False)
+    monkeypatch.setattr(sys, "argv", ["RallyClip"])
+
+    assert desktop.main() == 0
+    assert "RallyClip desktop shell ready" not in capsys.readouterr().out
+
+
+def test_backend_only_skips_webview(monkeypatch):
+    _block_webview(monkeypatch)
+    launched: dict = {}
+
+    def fake_launch(*, open_browser: bool = True) -> int:
+        launched["open_browser"] = open_browser
+        return 0
+
+    import gui.app as gui_app
+
+    monkeypatch.setattr(gui_app, "launch", fake_launch)
+    monkeypatch.setattr(sys, "argv", ["RallyClip", "--backend-only"])
+
+    assert desktop.main() == 0
+    assert launched["open_browser"] is False
+    assert sys.modules.get("webview") is None
+
+
+def test_gui_app_imports_without_webview():
+    """Fresh interpreter with webview blocked — catches a module-level import."""
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(ROOT / "src")
+    script = (
+        "import sys\n"
+        "sys.modules['webview'] = None\n"
+        "import gui.app\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
