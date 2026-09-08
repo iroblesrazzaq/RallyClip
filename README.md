@@ -52,6 +52,6 @@ Current non-user-facing features and long term ideas
     - gonna do some sort of pretrained convnet base, then finetune on court images. Not certain about objectives yet. 
 - Match scoring: seems pretty hard. Will need a rework of architecture to track way more stuff (need player identity, tracking who won point, which will require much more advanced arch and more data presumably)
 - 4k support
-- allow for files > 2Gb cuz i fixed memory issue so now we stream and dont load everything into memory lol
+- allow for files > 2Gb on desktop (web gui with local backend is fine) cuz i fixed memory issue so now we stream and dont load everything into memory lol
 
 My next big push with this project will be training this court model (yay fun) and iOS support (although i have neither knowledge nor passion for mobile dev but let the tokens flow...). 
