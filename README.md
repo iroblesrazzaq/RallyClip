@@ -43,9 +43,11 @@ CLI, training, and extra install notes live in [`docs/ENVIRONMENT.md`](docs/ENVI
 
 ## Features coming soon (in rough order)
 - iOS mobile app beta coming soon
+- doubles support
+
 
 ## Current release status
-The current public desktop release is `v0.3.0` for **Apple Silicon macOS only**.
+The current public desktop release is `v0.5.0` for **Apple Silicon macOS only**.
 
 ## Features down the road
 In no particular order,
