@@ -217,3 +217,14 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
 - **Rejected:** Sparkle / in-app swap of `/Applications/RallyClip.app`;
   treating the ONNX zip as an app update; unifying web vs app library paths.
 
+## 2026-09-09 — Update check skips artifact releases
+
+- **What:** Status/download list GitHub `/releases` and pick the newest
+  published `v*` tag. Checksum-verify a staging file before replacing any
+  existing DMG in `~/Downloads`. Frozen update button becomes Cancel.
+- **Why:** `/releases/latest` can be `artifact-rallyclip_*`; a failed repeat
+  download must not delete a good installer; a 300s-per-file transfer must
+  stay cancellable.
+- **Rejected:** Trusting `/releases/latest` as the app channel; Sparkle;
+  byte-progress UI (the server downloads, the browser waits on one POST).
+

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import time
 from pathlib import Path
@@ -87,6 +88,63 @@ def test_update_status_endpoint_reports_available(monkeypatch):
     assert payload["error"] is None
     assert payload["install"] == "source"
     assert payload["dmg_url"].endswith("RallyClip-0.1.1-macOS-arm64.dmg")
+
+
+def test_fetch_latest_release_skips_artifact_channel(monkeypatch):
+    from gui import app as gui_app
+
+    body = json.dumps(
+        [
+            {
+                "tag_name": "artifact-rallyclip_v0.5.1",
+                "draft": False,
+                "prerelease": False,
+                "published_at": "2026-09-10T00:00:00Z",
+                "html_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/artifact-rallyclip_v0.5.1",
+                "assets": [],
+            },
+            {
+                "tag_name": "v0.5.1",
+                "draft": False,
+                "prerelease": False,
+                "published_at": "2026-09-09T00:00:00Z",
+                "html_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.5.1",
+                "name": "RallyClip 0.5.1",
+                "assets": [
+                    {
+                        "name": "RallyClip-0.5.1-macOS-arm64.dmg",
+                        "browser_download_url": "https://github.com/iroblesrazzaq/RallyClip/releases/download/v0.5.1/RallyClip-0.5.1-macOS-arm64.dmg",
+                    },
+                    {
+                        "name": "RallyClip-0.5.1-macOS-arm64.dmg.sha256",
+                        "browser_download_url": "https://github.com/iroblesrazzaq/RallyClip/releases/download/v0.5.1/RallyClip-0.5.1-macOS-arm64.dmg.sha256",
+                    },
+                ],
+            },
+        ]
+    ).encode()
+    captured: list[str] = []
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return body
+
+    def fake_urlopen(request, timeout=None):
+        captured.append(getattr(request, "full_url", str(request)))
+        return _Response()
+
+    monkeypatch.setattr(gui_app, "urlopen", fake_urlopen)
+    parsed = gui_app._fetch_latest_release()
+    assert captured and "/releases/latest" not in captured[0]
+    assert "/releases?" in captured[0] or captured[0].endswith("/releases")
+    assert parsed["latest_tag"] == "v0.5.1"
+    assert parsed["dmg_url"].endswith("RallyClip-0.5.1-macOS-arm64.dmg")
 
 
 def test_update_status_endpoint_tolerates_fetch_errors(monkeypatch):

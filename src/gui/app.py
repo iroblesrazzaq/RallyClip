@@ -42,6 +42,7 @@ from gui.update_release import (
     download_and_open_latest_dmg,
     install_channel,
     parse_latest_release,
+    select_latest_app_release,
 )
 from runtime.assets import candidate_roots, resolve_asset
 from runtime.defaults import DEFAULT_ARTIFACT_DIR, build_gui_defaults
@@ -54,7 +55,7 @@ JobDict = Dict[str, Any]
 FIXED_YOLO_MODEL = "yolov8n-pose-960-dynamic.onnx"
 GITHUB_REPO = "iroblesrazzaq/RallyClip"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
-GITHUB_LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+GITHUB_RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=30"
 UPDATE_CHECK_CACHE_SECONDS = 6 * 60 * 60
 
 # Test seams and lazy runtime slots. These names intentionally exist at module
@@ -1887,7 +1888,7 @@ def is_newer_version(latest: str, current: str) -> bool:
 
 def _fetch_latest_release() -> Dict[str, Any]:
     request_obj = Request(
-        GITHUB_LATEST_RELEASE_API,
+        GITHUB_RELEASES_API,
         headers={
             "Accept": "application/vnd.github+json",
             "User-Agent": f"RallyClip/{current_app_version()}",
@@ -1895,9 +1896,10 @@ def _fetch_latest_release() -> Dict[str, Any]:
     )
     with urlopen(request_obj, timeout=3) as response:
         payload = json.loads(response.read().decode("utf-8"))
-    if not isinstance(payload, dict):
-        raise json.JSONDecodeError("latest release was not an object", "{}", 0)
-    return parse_latest_release(payload)
+    selected = select_latest_app_release(payload)
+    if selected is None:
+        return parse_latest_release({})
+    return selected
 
 
 def update_status_payload(*, force: bool = False) -> Dict[str, Any]:

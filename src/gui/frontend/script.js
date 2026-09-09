@@ -108,6 +108,7 @@ class RallyClipApp {
         this.nativeViewer = null;
         this.nativeBridgeReady = false;
         this.updateStatus = null;
+        this.updateDownloadAbort = null;
         this.steps = ["pose", "preprocess", "feature", "inference", "output"];
         this.stepLabels = {
             pose: "Extracting pose",
@@ -402,6 +403,10 @@ class RallyClipApp {
     }
 
     async handleUpdateClick() {
+        if (this.updateDownloadAbort) {
+            this.updateDownloadAbort.abort();
+            return;
+        }
         const install = this.updateStatus?.install || "source";
         if (install === "dmg") {
             await this.downloadUpdate();
@@ -412,16 +417,27 @@ class RallyClipApp {
 
     async downloadUpdate() {
         if (!this.updateBtn) return;
-        this.updateBtn.disabled = true;
-        this.updateBtn.textContent = "Downloading…";
+        const controller = new AbortController();
+        this.updateDownloadAbort = controller;
+        this.updateBtn.disabled = false;
+        this.updateBtn.textContent = "Cancel";
+        this.updateBtn.title = "Downloading to Downloads. Click to cancel.";
         try {
-            const resp = await fetch("/api/update/download", { method: "POST" });
+            const resp = await fetch("/api/update/download", {
+                method: "POST",
+                signal: controller.signal,
+            });
             const payload = await resp.json().catch(() => ({}));
             if (!resp.ok) throw new Error(payload.error || `HTTP ${resp.status}`);
             this.showToast("Open the DMG and replace RallyClip in Applications.", "success");
         } catch (err) {
+            if (err && err.name === "AbortError") {
+                this.showToast("Download cancelled.", "info");
+                return;
+            }
             this.showToast(err.message || "Could not download update.", "error");
         } finally {
+            this.updateDownloadAbort = null;
             this.updateBtn.disabled = false;
             this.renderUpdateStatus(this.updateStatus);
         }

@@ -23,6 +23,7 @@ GITHUB_REPO = "iroblesrazzaq/RallyClip"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
 ASSET_DOWNLOAD_PREFIX = f"https://github.com/{GITHUB_REPO}/releases/download/"
 DMG_NAME_RE = re.compile(r"^RallyClip-.+-macOS-arm64\.dmg$")
+APP_TAG_RE = re.compile(r"^v\d")
 _HASH_CHUNK = 1024 * 1024
 DOWNLOAD_TIMEOUT_SEC = 300
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -58,6 +59,19 @@ def pick_macos_arm64_dmg_assets(assets: Any) -> tuple[Optional[str], Optional[st
     return by_name[dmg_name], by_name.get(f"{dmg_name}.sha256")
 
 
+def is_published_app_release(payload: Any) -> bool:
+    """True for a published app `v*` release, not an inference-artifact tag."""
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("draft") or payload.get("prerelease"):
+        return False
+    tag = str(payload.get("tag_name") or "").strip()
+    lowered = tag.lower()
+    if lowered.startswith("artifact-") or "artifact-rallyclip" in lowered:
+        return False
+    return APP_TAG_RE.match(tag) is not None
+
+
 def parse_latest_release(payload: dict[str, Any]) -> dict[str, Any]:
     tag = str(payload.get("tag_name") or "").strip()
     version = tag[1:] if tag.startswith("v") else tag
@@ -70,6 +84,24 @@ def parse_latest_release(payload: dict[str, Any]) -> dict[str, Any]:
         "dmg_url": dmg_url,
         "sha256_url": sha256_url,
     }
+
+
+def select_latest_app_release(releases: Any) -> Optional[dict[str, Any]]:
+    """Newest published `v*` app release from a GitHub `/releases` list.
+
+    GitHub `/releases/latest` is whichever non-draft, non-prerelease was
+    published last, including `artifact-rallyclip_*` model zips.
+    """
+    if not isinstance(releases, list):
+        return None
+    candidates = [item for item in releases if is_published_app_release(item)]
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda item: str(item.get("published_at") or item.get("created_at") or ""),
+        reverse=True,
+    )
+    return parse_latest_release(candidates[0])
 
 
 def is_allowed_asset_url(url: str) -> bool:
@@ -118,17 +150,16 @@ def open_downloaded_dmg(path: Path) -> None:
 
 
 def _download_url(url: str, dest: Path, *, timeout: float = DOWNLOAD_TIMEOUT_SEC) -> None:
+    """Write `url` to `dest`. Callers pass a staging path, not the user file."""
     if not is_allowed_asset_url(url):
         raise ValueError("refusing to download from an unexpected URL")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + ".partial")
     request = Request(url, headers={"User-Agent": "RallyClip"})
     try:
-        with urlopen(request, timeout=timeout) as response, tmp.open("wb") as out:
+        with urlopen(request, timeout=timeout) as response, dest.open("wb") as out:
             shutil.copyfileobj(response, out)
-        tmp.replace(dest)
     except Exception:
-        tmp.unlink(missing_ok=True)
+        dest.unlink(missing_ok=True)
         raise
 
 
@@ -141,14 +172,21 @@ def download_and_open_latest_dmg(latest: dict[str, Any]) -> dict[str, Any]:
     if not DMG_NAME_RE.fullmatch(dmg_name):
         raise ValueError(f"unexpected DMG name: {dmg_name}")
     dest = downloads_dir() / dmg_name
-    sha_path = dest.with_name(dest.name + ".sha256")
-    _download_url(sha_url, sha_path)
-    expected = parse_dmg_sha256_sidecar(sha_path.read_text(encoding="utf-8"), dmg_name)
-    _download_url(dmg_url, dest)
-    actual = sha256_file(dest)
-    if actual != expected:
-        dest.unlink(missing_ok=True)
-        raise ValueError("DMG checksum mismatch; download discarded.")
+    sha_dest = dest.with_name(dest.name + ".sha256")
+    staging = dest.with_name(dest.name + ".partial")
+    sha_staging = sha_dest.with_name(sha_dest.name + ".partial")
+    try:
+        _download_url(sha_url, sha_staging)
+        expected = parse_dmg_sha256_sidecar(sha_staging.read_text(encoding="utf-8"), dmg_name)
+        _download_url(dmg_url, staging)
+        if sha256_file(staging) != expected:
+            raise ValueError("DMG checksum mismatch; download discarded.")
+        sha_staging.replace(sha_dest)
+        staging.replace(dest)
+    except Exception:
+        staging.unlink(missing_ok=True)
+        sha_staging.unlink(missing_ok=True)
+        raise
     open_downloaded_dmg(dest)
     logging.info("Opened downloaded update DMG %s", dest)
     return {
