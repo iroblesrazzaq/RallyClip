@@ -38,6 +38,11 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
         "rallyclip gui requires Flask. From a checkout: uv sync --extra cpu && uv run rallyclip gui"
     ) from exc
 
+from gui.update_release import (
+    download_and_open_latest_dmg,
+    install_channel,
+    parse_latest_release,
+)
 from runtime.assets import candidate_roots, resolve_asset
 from runtime.defaults import DEFAULT_ARTIFACT_DIR, build_gui_defaults
 from runtime.paths import resolve_frontend_dir
@@ -1890,13 +1895,9 @@ def _fetch_latest_release() -> Dict[str, Any]:
     )
     with urlopen(request_obj, timeout=3) as response:
         payload = json.loads(response.read().decode("utf-8"))
-    tag = str(payload.get("tag_name") or "").strip()
-    return {
-        "latest_version": tag[1:] if tag.startswith("v") else tag,
-        "latest_tag": tag,
-        "release_url": payload.get("html_url") or GITHUB_RELEASES_URL,
-        "release_name": payload.get("name") or tag,
-    }
+    if not isinstance(payload, dict):
+        raise json.JSONDecodeError("latest release was not an object", "{}", 0)
+    return parse_latest_release(payload)
 
 
 def update_status_payload(*, force: bool = False) -> Dict[str, Any]:
@@ -1919,12 +1920,16 @@ def update_status_payload(*, force: bool = False) -> Dict[str, Any]:
         "update_available": False,
         "release_url": GITHUB_RELEASES_URL,
         "release_name": None,
+        "dmg_url": None,
+        "sha256_url": None,
+        "install": install_channel(),
         "checked_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "error": None,
     }
     try:
         latest = _fetch_latest_release()
         payload.update(latest)
+        payload["install"] = install_channel()
         payload["update_available"] = bool(
             payload.get("latest_version")
             and is_newer_version(str(payload["latest_version"]), current)
@@ -1960,8 +1965,25 @@ def update_status() -> tuple[Any, int]:
 
 @app.route("/api/update/open", methods=["POST"])
 def open_update_page() -> tuple[Any, int]:
-    webbrowser.open(GITHUB_RELEASES_URL)
-    return jsonify({"opened": True, "release_url": GITHUB_RELEASES_URL}), 200
+    status = update_status_payload()
+    url = str(status.get("release_url") or GITHUB_RELEASES_URL)
+    webbrowser.open(url)
+    return jsonify({"opened": True, "release_url": url}), 200
+
+
+@app.route("/api/update/download", methods=["POST"])
+def download_update() -> tuple[Any, int]:
+    if install_channel() != "dmg":
+        return jsonify({"error": "DMG download is only available in the packaged Mac app."}), 400
+    try:
+        latest = _fetch_latest_release()
+        result = download_and_open_latest_dmg(latest)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except (HTTPError, URLError, TimeoutError, OSError, subprocess.CalledProcessError) as exc:
+        logging.warning("Update DMG download failed: %s", exc)
+        return jsonify({"error": str(exc)}), 502
+    return jsonify(result), 200
 
 
 @app.route("/api/config/defaults", methods=["GET"])

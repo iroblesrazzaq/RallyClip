@@ -207,3 +207,13 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   GUI init still fails; CI then kills the process.
 - **Rejected:** Printing after `create_window()` / before `webview.start()`.
 
+## 2026-09-09 — Assisted DMG update in the packaged app (v0.5.1)
+
+- **What:** Frozen Mac app downloads the Latest `v*` arm64 DMG into
+  `~/Downloads`, checks SHA-256, and opens it. Localhost GUI opens that
+  release page. App version is 0.5.1; artifact remains `rallyclip_v0.5.0`.
+- **Why:** v0.5.0 only linked the Releases list. Users still replace the app
+  in Applications themselves (running binary cannot overwrite itself).
+- **Rejected:** Sparkle / in-app swap of `/Applications/RallyClip.app`;
+  treating the ONNX zip as an app update; unifying web vs app library paths.
+

@@ -227,6 +227,7 @@ def test_ui_shows_update_action_when_release_is_newer(page: Page, ui_backend: Ba
                 "update_available": True,
                 "release_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.1.1",
                 "release_name": "v0.1.1",
+                "install": "source",
                 "error": None,
             }
         )

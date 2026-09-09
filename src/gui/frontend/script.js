@@ -222,7 +222,7 @@ class RallyClipApp {
     bindEvents() {
         this.welcomeStartBtn.addEventListener("click", () => this.dismissWelcome());
         this.newMatchBtn.addEventListener("click", () => this.showUpload());
-        this.updateBtn.addEventListener("click", () => this.openUpdatePage());
+        this.updateBtn.addEventListener("click", () => this.handleUpdateClick());
         this.backToLibrary.addEventListener("click", () => this.showLibrary());
         this.backFromViewer.addEventListener("click", () => this.showLibrary());
         this.viewerExportBtn.addEventListener("click", () => {
@@ -399,6 +399,32 @@ class RallyClipApp {
         this.updateBtn.textContent = `Update ${latest}`;
         this.updateBtn.title = `RallyClip ${latest} is available`;
         if (payload.release_url) this.updateBtn.dataset.releaseUrl = payload.release_url;
+    }
+
+    async handleUpdateClick() {
+        const install = this.updateStatus?.install || "source";
+        if (install === "dmg") {
+            await this.downloadUpdate();
+            return;
+        }
+        await this.openUpdatePage();
+    }
+
+    async downloadUpdate() {
+        if (!this.updateBtn) return;
+        this.updateBtn.disabled = true;
+        this.updateBtn.textContent = "Downloading…";
+        try {
+            const resp = await fetch("/api/update/download", { method: "POST" });
+            const payload = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(payload.error || `HTTP ${resp.status}`);
+            this.showToast("Open the DMG and replace RallyClip in Applications.", "success");
+        } catch (err) {
+            this.showToast(err.message || "Could not download update.", "error");
+        } finally {
+            this.updateBtn.disabled = false;
+            this.renderUpdateStatus(this.updateStatus);
+        }
     }
 
     async openUpdatePage() {

@@ -68,6 +68,7 @@ def test_frozen_runtime_does_not_fetch_weights():
         ROOT / "RallyClip.spec",
         ROOT / "src" / "gui" / "desktop.py",
         ROOT / "src" / "gui" / "app.py",
+        ROOT / "src" / "gui" / "update_release.py",
         ROOT / "src" / "cli" / "main.py",
         ROOT / "src" / "runtime" / "assets.py",
         ROOT / "src" / "runtime" / "defaults.py",

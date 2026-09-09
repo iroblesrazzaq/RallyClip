@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 from pathlib import Path
@@ -12,6 +13,7 @@ pytest.importorskip("flask")
 from helpers.runtime_fixtures import FEATURE_DIM
 from helpers.runtime_fixtures import write_manifest_model_dir
 from runtime.paths import resolve_frontend_dir
+import gui.update_release as update_release
 
 
 def test_resolve_frontend_dir_finds_repo_assets():
@@ -68,6 +70,8 @@ def test_update_status_endpoint_reports_available(monkeypatch):
             "latest_tag": "v0.1.1",
             "release_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.1.1",
             "release_name": "v0.1.1",
+            "dmg_url": "https://github.com/iroblesrazzaq/RallyClip/releases/download/v0.1.1/RallyClip-0.1.1-macOS-arm64.dmg",
+            "sha256_url": "https://github.com/iroblesrazzaq/RallyClip/releases/download/v0.1.1/RallyClip-0.1.1-macOS-arm64.dmg.sha256",
         },
     )
     gui_app._UPDATE_STATUS_CACHE.update({"checked_at": 0.0, "payload": None})
@@ -81,6 +85,8 @@ def test_update_status_endpoint_reports_available(monkeypatch):
     assert payload["latest_version"] == "0.1.1"
     assert payload["update_available"] is True
     assert payload["error"] is None
+    assert payload["install"] == "source"
+    assert payload["dmg_url"].endswith("RallyClip-0.1.1-macOS-arm64.dmg")
 
 
 def test_update_status_endpoint_tolerates_fetch_errors(monkeypatch):
@@ -105,18 +111,103 @@ def test_update_status_endpoint_tolerates_fetch_errors(monkeypatch):
     assert "offline" in payload["error"]
 
 
+def test_update_status_install_dmg_when_frozen(monkeypatch):
+    from gui import app as gui_app
+
+    monkeypatch.setattr(update_release.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(gui_app, "current_app_version", lambda: "0.1.0")
+    monkeypatch.setattr(
+        gui_app,
+        "_fetch_latest_release",
+        lambda: {
+            "latest_version": "0.1.1",
+            "latest_tag": "v0.1.1",
+            "release_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.1.1",
+            "release_name": "v0.1.1",
+            "dmg_url": "https://github.com/iroblesrazzaq/RallyClip/releases/download/v0.1.1/RallyClip-0.1.1-macOS-arm64.dmg",
+            "sha256_url": "https://github.com/iroblesrazzaq/RallyClip/releases/download/v0.1.1/RallyClip-0.1.1-macOS-arm64.dmg.sha256",
+        },
+    )
+    gui_app._UPDATE_STATUS_CACHE.update({"checked_at": 0.0, "payload": None})
+
+    client = gui_app.app.test_client()
+    payload = client.get("/api/update/status?force=1").get_json()
+    assert payload["install"] == "dmg"
+
+
 def test_update_open_endpoint_opens_releases_page(monkeypatch):
     from gui import app as gui_app
 
     opened = []
     monkeypatch.setattr(gui_app.webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(gui_app, "current_app_version", lambda: "0.1.0")
+    monkeypatch.setattr(
+        gui_app,
+        "_fetch_latest_release",
+        lambda: {
+            "latest_version": "0.1.1",
+            "latest_tag": "v0.1.1",
+            "release_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.1.1",
+            "release_name": "v0.1.1",
+            "dmg_url": None,
+            "sha256_url": None,
+        },
+    )
+    gui_app._UPDATE_STATUS_CACHE.update({"checked_at": 0.0, "payload": None})
 
     client = gui_app.app.test_client()
     response = client.post("/api/update/open")
 
     assert response.status_code == 200
     assert response.get_json()["opened"] is True
-    assert opened == [gui_app.GITHUB_RELEASES_URL]
+    assert opened == ["https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.1.1"]
+
+
+def test_update_download_rejected_when_not_frozen():
+    from gui import app as gui_app
+
+    client = gui_app.app.test_client()
+    response = client.post("/api/update/download")
+    assert response.status_code == 400
+    assert "packaged" in response.get_json()["error"].lower()
+
+
+def test_update_download_opens_verified_dmg(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    dmg_name = "RallyClip-0.5.1-macOS-arm64.dmg"
+    opened: list[Path] = []
+    monkeypatch.setattr(update_release.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(update_release, "downloads_dir", lambda: tmp_path)
+    monkeypatch.setattr(update_release, "open_downloaded_dmg", opened.append)
+
+    def fake_download(url: str, dest: Path, *, timeout: float = 300) -> None:
+        body = b"dmg-bytes"
+        if url.endswith(".sha256"):
+            digest = hashlib.sha256(body).hexdigest()
+            dest.write_text(f"{digest}  {dmg_name}\n", encoding="utf-8")
+            return
+        dest.write_bytes(body)
+
+    monkeypatch.setattr(update_release, "_download_url", fake_download)
+    monkeypatch.setattr(
+        gui_app,
+        "_fetch_latest_release",
+        lambda: {
+            "latest_version": "0.5.1",
+            "latest_tag": "v0.5.1",
+            "release_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.5.1",
+            "dmg_url": f"https://github.com/iroblesrazzaq/RallyClip/releases/download/v0.5.1/{dmg_name}",
+            "sha256_url": f"https://github.com/iroblesrazzaq/RallyClip/releases/download/v0.5.1/{dmg_name}.sha256",
+        },
+    )
+
+    client = gui_app.app.test_client()
+    response = client.post("/api/update/download")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["opened"] is True
+    assert opened == [tmp_path / dmg_name]
 
 
 def test_gui_index_served(tmp_path, monkeypatch):
