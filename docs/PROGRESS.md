@@ -1,6 +1,6 @@
 # PROGRESS — overwrite me at every session end
 
-_Last updated: 2026-09-09 (session: assisted DMG update, Greptile 3/5 fixes)._
+_Last updated: 2026-09-09 (session: assisted DMG update, Greptile cancel + checksum)._
 
 ## Repo state
 
@@ -11,14 +11,14 @@ _Last updated: 2026-09-09 (session: assisted DMG update, Greptile 3/5 fixes)._
 
 ## What shipped this session
 
-1. Latest app release is the newest published `v*` tag from `/releases`, not
-   GitHub `/releases/latest` (skips `artifact-rallyclip_*`).
-2. Frozen app: `POST /api/update/download` stages the DMG, verifies SHA-256,
-   then replaces `~/Downloads`. A failed retry keeps the previous installer.
-3. Update button becomes Cancel during the transfer (AbortController).
-4. Source/GUI: `POST /api/update/open` opens that release URL.
-5. pyproject **0.5.1**; ONNX dir still `models/rallyclip_v0.5.0`.
-6. Default gate: **315 passed, 6 skipped, 27 deselected**.
+1. Latest app release is the newest published `v*` tag from `/releases`.
+2. Frozen app downloads to a unique staging file, verifies SHA-256 (sidecar
+   must name the DMG), then replaces `~/Downloads`.
+3. `POST /api/update/cancel` stops the server-side transfer; the button
+   becomes Cancel.
+4. Source/GUI opens that release URL. App version **0.5.1**; ONNX stays
+   `models/rallyclip_v0.5.0`.
+5. Default gate: **321 passed, 6 skipped, 27 deselected**.
 
 ## Next steps
 
