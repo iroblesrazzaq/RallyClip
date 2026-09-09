@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from pathlib import Path
 
 import pytest
 
 from gui.update_release import (
     ASSET_DOWNLOAD_PREFIX,
+    UpdateDownloadCancelled,
+    begin_update_download,
     download_and_open_latest_dmg,
     install_channel,
     parse_dmg_sha256_sidecar,
     parse_latest_release,
     pick_macos_arm64_dmg_assets,
+    request_update_cancel,
     select_latest_app_release,
 )
 
@@ -127,6 +131,24 @@ def test_parse_dmg_sha256_sidecar_matches_name():
     assert parse_dmg_sha256_sidecar(text, "RallyClip-0.5.1-macOS-arm64.dmg") == "b" * 64
 
 
+def test_parse_dmg_sha256_sidecar_requires_named_digest():
+    dmg_name = "RallyClip-0.5.1-macOS-arm64.dmg"
+    with pytest.raises(ValueError, match="did not contain"):
+        parse_dmg_sha256_sidecar("a" * 64 + "\n", dmg_name)
+    with pytest.raises(ValueError, match="did not contain"):
+        parse_dmg_sha256_sidecar(("a" * 64) + "  other.dmg\n", dmg_name)
+
+
+def test_begin_update_download_cancels_previous():
+    _gen1, first = begin_update_download()
+    _gen2, second = begin_update_download()
+    assert first is not second
+    assert first.is_set()
+    assert not second.is_set()
+    request_update_cancel()
+    assert second.is_set()
+
+
 def test_install_channel_follows_frozen_flag(monkeypatch):
     monkeypatch.setattr("gui.update_release.sys.frozen", False, raising=False)
     assert install_channel() == "source"
@@ -139,7 +161,9 @@ def test_download_opens_dmg_when_hash_matches(tmp_path, monkeypatch):
     opened: list[Path] = []
     monkeypatch.setattr("gui.update_release.downloads_dir", lambda: tmp_path)
 
-    def fake_download(url: str, dest: Path, *, timeout: float = 300) -> None:
+    def fake_download(
+        url: str, dest: Path, *, timeout: float = 300, cancel_event=None
+    ) -> None:
         body = b"dmg-bytes"
         if url.endswith(".sha256"):
             dest.write_text(
@@ -170,7 +194,9 @@ def test_download_discards_dmg_on_hash_mismatch(tmp_path, monkeypatch):
     opened: list[Path] = []
     monkeypatch.setattr("gui.update_release.downloads_dir", lambda: tmp_path)
 
-    def fake_download(url: str, dest: Path, *, timeout: float = 300) -> None:
+    def fake_download(
+        url: str, dest: Path, *, timeout: float = 300, cancel_event=None
+    ) -> None:
         if url.endswith(".sha256"):
             dest.write_text(f"{'0' * 64}  {dmg_name}\n", encoding="utf-8")
             return
@@ -190,7 +216,7 @@ def test_download_discards_dmg_on_hash_mismatch(tmp_path, monkeypatch):
         download_and_open_latest_dmg(latest)
     assert opened == []
     assert not (tmp_path / dmg_name).exists()
-    assert not (tmp_path / f"{dmg_name}.partial").exists()
+    assert list(tmp_path.glob("*.partial")) == []
 
 
 def test_download_preserves_existing_dmg_on_mismatch(tmp_path, monkeypatch):
@@ -200,7 +226,9 @@ def test_download_preserves_existing_dmg_on_mismatch(tmp_path, monkeypatch):
     opened: list[Path] = []
     monkeypatch.setattr("gui.update_release.downloads_dir", lambda: tmp_path)
 
-    def fake_download(url: str, dest_path: Path, *, timeout: float = 300) -> None:
+    def fake_download(
+        url: str, dest_path: Path, *, timeout: float = 300, cancel_event=None
+    ) -> None:
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         if url.endswith(".sha256"):
             dest_path.write_text(f"{'0' * 64}  {dmg_name}\n", encoding="utf-8")
@@ -221,4 +249,71 @@ def test_download_preserves_existing_dmg_on_mismatch(tmp_path, monkeypatch):
         download_and_open_latest_dmg(latest)
     assert opened == []
     assert dest.read_bytes() == b"keep-me"
-    assert not dest.with_name(dest.name + ".partial").exists()
+    assert list(tmp_path.glob("*.partial")) == []
+
+
+def test_download_does_not_open_when_cancelled(tmp_path, monkeypatch):
+    dmg_name = "RallyClip-0.5.1-macOS-arm64.dmg"
+    dest = tmp_path / dmg_name
+    dest.write_bytes(b"keep-me")
+    opened: list[Path] = []
+    cancel = threading.Event()
+    monkeypatch.setattr("gui.update_release.downloads_dir", lambda: tmp_path)
+
+    def fake_download(
+        url: str, dest_path: Path, *, timeout: float = 300, cancel_event=None
+    ) -> None:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        body = b"dmg-bytes"
+        if url.endswith(".sha256"):
+            dest_path.write_text(
+                f"{hashlib.sha256(body).hexdigest()}  {dmg_name}\n",
+                encoding="utf-8",
+            )
+            if cancel_event is not None:
+                cancel_event.set()
+            return
+        dest_path.write_bytes(body)
+
+    monkeypatch.setattr("gui.update_release._download_url", fake_download)
+    monkeypatch.setattr("gui.update_release.open_downloaded_dmg", opened.append)
+
+    latest = parse_latest_release(
+        {
+            "tag_name": "v0.5.1",
+            "html_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.5.1",
+            "assets": [_asset(dmg_name), _asset(f"{dmg_name}.sha256")],
+        }
+    )
+    with pytest.raises(UpdateDownloadCancelled):
+        download_and_open_latest_dmg(latest, cancel_event=cancel)
+    assert opened == []
+    assert dest.read_bytes() == b"keep-me"
+    assert list(tmp_path.glob("*.partial")) == []
+
+
+def test_download_url_stops_on_cancel(tmp_path, monkeypatch):
+    from gui.update_release import _download_url
+
+    cancel = threading.Event()
+    reads = {"n": 0}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self, size):
+            reads["n"] += 1
+            if reads["n"] >= 2:
+                cancel.set()
+            return b"x" * min(size, 64)
+
+    monkeypatch.setattr("gui.update_release.urlopen", lambda *args, **kwargs: _Response())
+    dest = tmp_path / "RallyClip-0.5.1-macOS-arm64.dmg.partial"
+    url = f"{ASSET_DOWNLOAD_PREFIX}v0.5.1/RallyClip-0.5.1-macOS-arm64.dmg"
+    with pytest.raises(UpdateDownloadCancelled):
+        _download_url(url, dest, cancel_event=cancel)
+    assert not dest.exists()

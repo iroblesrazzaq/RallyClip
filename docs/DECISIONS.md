@@ -228,3 +228,12 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
 - **Rejected:** Trusting `/releases/latest` as the app channel; Sparkle;
   byte-progress UI (the server downloads, the browser waits on one POST).
 
+## 2026-09-09 — Cancel stops the server-side DMG download
+
+- **What:** `POST /api/update/cancel` sets an event the download loop checks
+  between chunks. Sidecar checksums must name the selected DMG (no last-hash
+  fallback). Staging files use a unique suffix so a retry cannot share paths.
+- **Why:** Aborting the browser fetch left Flask downloading and `open`ing the
+  DMG. An unnamed sidecar hash could verify the wrong bytes.
+- **Rejected:** Client-only AbortController as the cancel mechanism.
+

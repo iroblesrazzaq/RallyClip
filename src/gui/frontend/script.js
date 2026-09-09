@@ -404,6 +404,9 @@ class RallyClipApp {
 
     async handleUpdateClick() {
         if (this.updateDownloadAbort) {
+            try {
+                await fetch("/api/update/cancel", { method: "POST" });
+            } catch (_) {}
             this.updateDownloadAbort.abort();
             return;
         }
@@ -428,6 +431,10 @@ class RallyClipApp {
                 signal: controller.signal,
             });
             const payload = await resp.json().catch(() => ({}));
+            if (payload.cancelled || resp.status === 409) {
+                this.showToast("Download cancelled.", "info");
+                return;
+            }
             if (!resp.ok) throw new Error(payload.error || `HTTP ${resp.status}`);
             this.showToast("Open the DMG and replace RallyClip in Applications.", "success");
         } catch (err) {

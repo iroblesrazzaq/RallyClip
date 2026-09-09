@@ -239,7 +239,9 @@ def test_update_download_opens_verified_dmg(tmp_path, monkeypatch):
     monkeypatch.setattr(update_release, "downloads_dir", lambda: tmp_path)
     monkeypatch.setattr(update_release, "open_downloaded_dmg", opened.append)
 
-    def fake_download(url: str, dest: Path, *, timeout: float = 300) -> None:
+    def fake_download(
+        url: str, dest: Path, *, timeout: float = 300, cancel_event=None
+    ) -> None:
         body = b"dmg-bytes"
         if url.endswith(".sha256"):
             digest = hashlib.sha256(body).hexdigest()
@@ -266,6 +268,44 @@ def test_update_download_opens_verified_dmg(tmp_path, monkeypatch):
     payload = response.get_json()
     assert payload["opened"] is True
     assert opened == [tmp_path / dmg_name]
+
+
+def test_update_cancel_endpoint_signals_in_flight_event():
+    from gui import app as gui_app
+
+    _generation, event = update_release.begin_update_download()
+    assert not event.is_set()
+    client = gui_app.app.test_client()
+    response = client.post("/api/update/cancel")
+    assert response.status_code == 200
+    assert response.get_json()["cancelled"] is True
+    assert event.is_set()
+
+
+def test_update_download_returns_conflict_when_cancelled(monkeypatch):
+    from gui import app as gui_app
+
+    monkeypatch.setattr(update_release.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(
+        gui_app,
+        "_fetch_latest_release",
+        lambda: {
+            "latest_version": "0.5.1",
+            "latest_tag": "v0.5.1",
+            "release_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.5.1",
+            "dmg_url": "https://github.com/iroblesrazzaq/RallyClip/releases/download/v0.5.1/RallyClip-0.5.1-macOS-arm64.dmg",
+            "sha256_url": "https://github.com/iroblesrazzaq/RallyClip/releases/download/v0.5.1/RallyClip-0.5.1-macOS-arm64.dmg.sha256",
+        },
+    )
+
+    def fake_download(latest, *, cancel_event=None):
+        raise update_release.UpdateDownloadCancelled("Update download cancelled.")
+
+    monkeypatch.setattr(gui_app, "download_and_open_latest_dmg", fake_download)
+    client = gui_app.app.test_client()
+    response = client.post("/api/update/download")
+    assert response.status_code == 409
+    assert response.get_json()["cancelled"] is True
 
 
 def test_gui_index_served(tmp_path, monkeypatch):

@@ -10,9 +10,10 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-import shutil
 import subprocess
 import sys
+import threading
+import uuid
 import webbrowser
 from pathlib import Path
 from typing import Any, Optional
@@ -27,6 +28,13 @@ APP_TAG_RE = re.compile(r"^v\d")
 _HASH_CHUNK = 1024 * 1024
 DOWNLOAD_TIMEOUT_SEC = 300
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_DOWNLOAD_GUARD = threading.Lock()
+_DOWNLOAD_GENERATION = 0
+_DOWNLOAD_CANCEL = threading.Event()
+
+
+class UpdateDownloadCancelled(Exception):
+    """Raised when the user cancels an in-flight DMG download."""
 
 
 def install_channel(*, frozen: Optional[bool] = None) -> str:
@@ -124,7 +132,6 @@ def sha256_file(path: Path) -> str:
 
 
 def parse_dmg_sha256_sidecar(text: str, dmg_name: str) -> str:
-    fallback: Optional[str] = None
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -136,10 +143,26 @@ def parse_dmg_sha256_sidecar(text: str, dmg_name: str) -> str:
         name = Path(rest.strip().lstrip("*")).name if rest.strip() else ""
         if name == dmg_name:
             return digest
-        fallback = digest
-    if fallback:
-        return fallback
     raise ValueError(f"checksum file did not contain a SHA-256 for {dmg_name}")
+
+
+def request_update_cancel() -> None:
+    _DOWNLOAD_CANCEL.set()
+
+
+def begin_update_download() -> tuple[int, threading.Event]:
+    """Invalidate any in-flight download and return a fresh cancel event."""
+    global _DOWNLOAD_GENERATION, _DOWNLOAD_CANCEL
+    with _DOWNLOAD_GUARD:
+        _DOWNLOAD_CANCEL.set()
+        _DOWNLOAD_GENERATION += 1
+        _DOWNLOAD_CANCEL = threading.Event()
+        return _DOWNLOAD_GENERATION, _DOWNLOAD_CANCEL
+
+
+def _raise_if_cancelled(cancel_event: Optional[threading.Event]) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise UpdateDownloadCancelled("Update download cancelled.")
 
 
 def open_downloaded_dmg(path: Path) -> None:
@@ -149,7 +172,13 @@ def open_downloaded_dmg(path: Path) -> None:
     webbrowser.open(path.as_uri())
 
 
-def _download_url(url: str, dest: Path, *, timeout: float = DOWNLOAD_TIMEOUT_SEC) -> None:
+def _download_url(
+    url: str,
+    dest: Path,
+    *,
+    timeout: float = DOWNLOAD_TIMEOUT_SEC,
+    cancel_event: Optional[threading.Event] = None,
+) -> None:
     """Write `url` to `dest`. Callers pass a staging path, not the user file."""
     if not is_allowed_asset_url(url):
         raise ValueError("refusing to download from an unexpected URL")
@@ -157,13 +186,22 @@ def _download_url(url: str, dest: Path, *, timeout: float = DOWNLOAD_TIMEOUT_SEC
     request = Request(url, headers={"User-Agent": "RallyClip"})
     try:
         with urlopen(request, timeout=timeout) as response, dest.open("wb") as out:
-            shutil.copyfileobj(response, out)
+            while True:
+                _raise_if_cancelled(cancel_event)
+                chunk = response.read(_HASH_CHUNK)
+                if not chunk:
+                    break
+                out.write(chunk)
     except Exception:
         dest.unlink(missing_ok=True)
         raise
 
 
-def download_and_open_latest_dmg(latest: dict[str, Any]) -> dict[str, Any]:
+def download_and_open_latest_dmg(
+    latest: dict[str, Any],
+    *,
+    cancel_event: Optional[threading.Event] = None,
+) -> dict[str, Any]:
     dmg_url = str(latest.get("dmg_url") or "")
     sha_url = str(latest.get("sha256_url") or "")
     if not dmg_url or not sha_url:
@@ -173,12 +211,16 @@ def download_and_open_latest_dmg(latest: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"unexpected DMG name: {dmg_name}")
     dest = downloads_dir() / dmg_name
     sha_dest = dest.with_name(dest.name + ".sha256")
-    staging = dest.with_name(dest.name + ".partial")
-    sha_staging = sha_dest.with_name(sha_dest.name + ".partial")
+    token = uuid.uuid4().hex[:8]
+    staging = dest.with_name(f"{dest.name}.{token}.partial")
+    sha_staging = sha_dest.with_name(f"{sha_dest.name}.{token}.partial")
     try:
-        _download_url(sha_url, sha_staging)
+        _raise_if_cancelled(cancel_event)
+        _download_url(sha_url, sha_staging, cancel_event=cancel_event)
         expected = parse_dmg_sha256_sidecar(sha_staging.read_text(encoding="utf-8"), dmg_name)
-        _download_url(dmg_url, staging)
+        _raise_if_cancelled(cancel_event)
+        _download_url(dmg_url, staging, cancel_event=cancel_event)
+        _raise_if_cancelled(cancel_event)
         if sha256_file(staging) != expected:
             raise ValueError("DMG checksum mismatch; download discarded.")
         sha_staging.replace(sha_dest)
@@ -187,6 +229,7 @@ def download_and_open_latest_dmg(latest: dict[str, Any]) -> dict[str, Any]:
         staging.unlink(missing_ok=True)
         sha_staging.unlink(missing_ok=True)
         raise
+    _raise_if_cancelled(cancel_event)
     open_downloaded_dmg(dest)
     logging.info("Opened downloaded update DMG %s", dest)
     return {

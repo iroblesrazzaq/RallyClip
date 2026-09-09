@@ -39,9 +39,12 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
     ) from exc
 
 from gui.update_release import (
+    UpdateDownloadCancelled,
+    begin_update_download,
     download_and_open_latest_dmg,
     install_channel,
     parse_latest_release,
+    request_update_cancel,
     select_latest_app_release,
 )
 from runtime.assets import candidate_roots, resolve_asset
@@ -1973,13 +1976,22 @@ def open_update_page() -> tuple[Any, int]:
     return jsonify({"opened": True, "release_url": url}), 200
 
 
+@app.route("/api/update/cancel", methods=["POST"])
+def cancel_update_download() -> tuple[Any, int]:
+    request_update_cancel()
+    return jsonify({"cancelled": True}), 200
+
+
 @app.route("/api/update/download", methods=["POST"])
 def download_update() -> tuple[Any, int]:
     if install_channel() != "dmg":
         return jsonify({"error": "DMG download is only available in the packaged Mac app."}), 400
+    _, cancel_event = begin_update_download()
     try:
         latest = _fetch_latest_release()
-        result = download_and_open_latest_dmg(latest)
+        result = download_and_open_latest_dmg(latest, cancel_event=cancel_event)
+    except UpdateDownloadCancelled as exc:
+        return jsonify({"error": str(exc), "cancelled": True}), 409
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except (HTTPError, URLError, TimeoutError, OSError, subprocess.CalledProcessError) as exc:
