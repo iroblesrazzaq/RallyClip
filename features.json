@@ -10,7 +10,7 @@
       "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
-      "evidence": "2026-09-07: 298 passed, 6 skipped, 27 deselected, 4 warnings (~19s) on cursor/artifact-registry-plan-5f28 (Linux py3.12). Artifact pack/fetch tests included; ONNX not in git."
+      "evidence": "2026-09-09: 321 passed, 6 skipped, 27 deselected (~20s) on cursor/assisted-dmg-update-5f28 (Linux py3.12). Cancel stops the Flask DMG download; sidecar checksums must name the selected DMG."
     },
     {
       "id": "golden-cli-parity",

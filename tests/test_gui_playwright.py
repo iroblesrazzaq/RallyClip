@@ -227,6 +227,7 @@ def test_ui_shows_update_action_when_release_is_newer(page: Page, ui_backend: Ba
                 "update_available": True,
                 "release_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.1.1",
                 "release_name": "v0.1.1",
+                "install": "source",
                 "error": None,
             }
         )
@@ -246,6 +247,46 @@ def test_ui_shows_update_action_when_release_is_newer(page: Page, ui_backend: Ba
         page.locator("#updateBtn").click()
     assert response_info.value.ok
     assert opened["called"] is True
+
+
+def test_ui_update_download_for_dmg_install(page: Page, ui_backend: BackendClient):
+    """Packaged Mac channel posts /api/update/download instead of opening the release page."""
+    downloaded = {"called": False}
+    opened = {"called": False}
+
+    def fulfill_status(route):
+        route.fulfill(
+            json={
+                "current_version": "0.1.0",
+                "latest_version": "0.1.1",
+                "latest_tag": "v0.1.1",
+                "update_available": True,
+                "release_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.1.1",
+                "release_name": "v0.1.1",
+                "install": "dmg",
+                "error": None,
+            }
+        )
+
+    def fulfill_download(route):
+        downloaded["called"] = True
+        route.fulfill(json={"opened": True, "path": "/tmp/RallyClip-0.1.1-macOS-arm64.dmg"})
+
+    def fulfill_open(route):
+        opened["called"] = True
+        route.fulfill(json={"opened": True, "release_url": "https://github.com/iroblesrazzaq/RallyClip/releases"})
+
+    page.route("**/api/update/status", fulfill_status)
+    page.route("**/api/update/download", fulfill_download)
+    page.route("**/api/update/open", fulfill_open)
+
+    _open_to_library(page, ui_backend.base_url)
+    expect(page.locator("#updateBtn")).to_be_visible()
+    with page.expect_response(lambda response: "/api/update/download" in response.url) as response_info:
+        page.locator("#updateBtn").click()
+    assert response_info.value.ok
+    assert downloaded["called"] is True
+    assert opened["called"] is False
 
 
 def test_ui_library_renders_and_deletes_item(page: Page, ui_backend: BackendClient):

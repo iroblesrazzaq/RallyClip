@@ -108,6 +108,7 @@ class RallyClipApp {
         this.nativeViewer = null;
         this.nativeBridgeReady = false;
         this.updateStatus = null;
+        this.updateDownloadAbort = null;
         this.steps = ["pose", "preprocess", "feature", "inference", "output"];
         this.stepLabels = {
             pose: "Extracting pose",
@@ -222,7 +223,7 @@ class RallyClipApp {
     bindEvents() {
         this.welcomeStartBtn.addEventListener("click", () => this.dismissWelcome());
         this.newMatchBtn.addEventListener("click", () => this.showUpload());
-        this.updateBtn.addEventListener("click", () => this.openUpdatePage());
+        this.updateBtn.addEventListener("click", () => this.handleUpdateClick());
         this.backToLibrary.addEventListener("click", () => this.showLibrary());
         this.backFromViewer.addEventListener("click", () => this.showLibrary());
         this.viewerExportBtn.addEventListener("click", () => {
@@ -399,6 +400,54 @@ class RallyClipApp {
         this.updateBtn.textContent = `Update ${latest}`;
         this.updateBtn.title = `RallyClip ${latest} is available`;
         if (payload.release_url) this.updateBtn.dataset.releaseUrl = payload.release_url;
+    }
+
+    async handleUpdateClick() {
+        if (this.updateDownloadAbort) {
+            try {
+                await fetch("/api/update/cancel", { method: "POST" });
+            } catch (_) {}
+            this.updateDownloadAbort.abort();
+            return;
+        }
+        const install = this.updateStatus?.install || "source";
+        if (install === "dmg") {
+            await this.downloadUpdate();
+            return;
+        }
+        await this.openUpdatePage();
+    }
+
+    async downloadUpdate() {
+        if (!this.updateBtn) return;
+        const controller = new AbortController();
+        this.updateDownloadAbort = controller;
+        this.updateBtn.disabled = false;
+        this.updateBtn.textContent = "Cancel";
+        this.updateBtn.title = "Downloading to Downloads. Click to cancel.";
+        try {
+            const resp = await fetch("/api/update/download", {
+                method: "POST",
+                signal: controller.signal,
+            });
+            const payload = await resp.json().catch(() => ({}));
+            if (payload.cancelled || resp.status === 409) {
+                this.showToast("Download cancelled.", "info");
+                return;
+            }
+            if (!resp.ok) throw new Error(payload.error || `HTTP ${resp.status}`);
+            this.showToast("Open the DMG and replace RallyClip in Applications.", "success");
+        } catch (err) {
+            if (err && err.name === "AbortError") {
+                this.showToast("Download cancelled.", "info");
+                return;
+            }
+            this.showToast(err.message || "Could not download update.", "error");
+        } finally {
+            this.updateDownloadAbort = null;
+            this.updateBtn.disabled = false;
+            this.renderUpdateStatus(this.updateStatus);
+        }
     }
 
     async openUpdatePage() {

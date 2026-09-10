@@ -207,3 +207,33 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   GUI init still fails; CI then kills the process.
 - **Rejected:** Printing after `create_window()` / before `webview.start()`.
 
+## 2026-09-09 — Assisted DMG update in the packaged app (v0.5.1)
+
+- **What:** Frozen Mac app downloads the Latest `v*` arm64 DMG into
+  `~/Downloads`, checks SHA-256, and opens it. Localhost GUI opens that
+  release page. App version is 0.5.1; artifact remains `rallyclip_v0.5.0`.
+- **Why:** v0.5.0 only linked the Releases list. Users still replace the app
+  in Applications themselves (running binary cannot overwrite itself).
+- **Rejected:** Sparkle / in-app swap of `/Applications/RallyClip.app`;
+  treating the ONNX zip as an app update; unifying web vs app library paths.
+
+## 2026-09-09 — Update check skips artifact releases
+
+- **What:** Status/download list GitHub `/releases` and pick the newest
+  published `v*` tag. Checksum-verify a staging file before replacing any
+  existing DMG in `~/Downloads`. Frozen update button becomes Cancel.
+- **Why:** `/releases/latest` can be `artifact-rallyclip_*`; a failed repeat
+  download must not delete a good installer; a 300s-per-file transfer must
+  stay cancellable.
+- **Rejected:** Trusting `/releases/latest` as the app channel; Sparkle;
+  byte-progress UI (the server downloads, the browser waits on one POST).
+
+## 2026-09-09 — Cancel stops the server-side DMG download
+
+- **What:** `POST /api/update/cancel` sets an event the download loop checks
+  between chunks. Sidecar checksums must name the selected DMG (no last-hash
+  fallback). Staging files use a unique suffix so a retry cannot share paths.
+- **Why:** Aborting the browser fetch left Flask downloading and `open`ing the
+  DMG. An unnamed sidecar hash could verify the wrong bytes.
+- **Rejected:** Client-only AbortController as the cancel mechanism.
+

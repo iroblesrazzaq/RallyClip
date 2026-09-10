@@ -38,6 +38,15 @@ except ImportError as exc:  # pragma: no cover - handled at runtime
         "rallyclip gui requires Flask. From a checkout: uv sync --extra cpu && uv run rallyclip gui"
     ) from exc
 
+from gui.update_release import (
+    UpdateDownloadCancelled,
+    begin_update_download,
+    download_and_open_latest_dmg,
+    install_channel,
+    parse_latest_release,
+    request_update_cancel,
+    select_latest_app_release,
+)
 from runtime.assets import candidate_roots, resolve_asset
 from runtime.defaults import DEFAULT_ARTIFACT_DIR, build_gui_defaults
 from runtime.paths import resolve_frontend_dir
@@ -49,7 +58,7 @@ JobDict = Dict[str, Any]
 FIXED_YOLO_MODEL = "yolov8n-pose-960-dynamic.onnx"
 GITHUB_REPO = "iroblesrazzaq/RallyClip"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
-GITHUB_LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+GITHUB_RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=30"
 UPDATE_CHECK_CACHE_SECONDS = 6 * 60 * 60
 
 # Test seams and lazy runtime slots. These names intentionally exist at module
@@ -1882,7 +1891,7 @@ def is_newer_version(latest: str, current: str) -> bool:
 
 def _fetch_latest_release() -> Dict[str, Any]:
     request_obj = Request(
-        GITHUB_LATEST_RELEASE_API,
+        GITHUB_RELEASES_API,
         headers={
             "Accept": "application/vnd.github+json",
             "User-Agent": f"RallyClip/{current_app_version()}",
@@ -1890,13 +1899,10 @@ def _fetch_latest_release() -> Dict[str, Any]:
     )
     with urlopen(request_obj, timeout=3) as response:
         payload = json.loads(response.read().decode("utf-8"))
-    tag = str(payload.get("tag_name") or "").strip()
-    return {
-        "latest_version": tag[1:] if tag.startswith("v") else tag,
-        "latest_tag": tag,
-        "release_url": payload.get("html_url") or GITHUB_RELEASES_URL,
-        "release_name": payload.get("name") or tag,
-    }
+    selected = select_latest_app_release(payload)
+    if selected is None:
+        return parse_latest_release({})
+    return selected
 
 
 def update_status_payload(*, force: bool = False) -> Dict[str, Any]:
@@ -1919,12 +1925,16 @@ def update_status_payload(*, force: bool = False) -> Dict[str, Any]:
         "update_available": False,
         "release_url": GITHUB_RELEASES_URL,
         "release_name": None,
+        "dmg_url": None,
+        "sha256_url": None,
+        "install": install_channel(),
         "checked_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "error": None,
     }
     try:
         latest = _fetch_latest_release()
         payload.update(latest)
+        payload["install"] = install_channel()
         payload["update_available"] = bool(
             payload.get("latest_version")
             and is_newer_version(str(payload["latest_version"]), current)
@@ -1960,8 +1970,34 @@ def update_status() -> tuple[Any, int]:
 
 @app.route("/api/update/open", methods=["POST"])
 def open_update_page() -> tuple[Any, int]:
-    webbrowser.open(GITHUB_RELEASES_URL)
-    return jsonify({"opened": True, "release_url": GITHUB_RELEASES_URL}), 200
+    status = update_status_payload()
+    url = str(status.get("release_url") or GITHUB_RELEASES_URL)
+    webbrowser.open(url)
+    return jsonify({"opened": True, "release_url": url}), 200
+
+
+@app.route("/api/update/cancel", methods=["POST"])
+def cancel_update_download() -> tuple[Any, int]:
+    request_update_cancel()
+    return jsonify({"cancelled": True}), 200
+
+
+@app.route("/api/update/download", methods=["POST"])
+def download_update() -> tuple[Any, int]:
+    if install_channel() != "dmg":
+        return jsonify({"error": "DMG download is only available in the packaged Mac app."}), 400
+    _, cancel_event = begin_update_download()
+    try:
+        latest = _fetch_latest_release()
+        result = download_and_open_latest_dmg(latest, cancel_event=cancel_event)
+    except UpdateDownloadCancelled as exc:
+        return jsonify({"error": str(exc), "cancelled": True}), 409
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except (HTTPError, URLError, TimeoutError, OSError, subprocess.CalledProcessError) as exc:
+        logging.warning("Update DMG download failed: %s", exc)
+        return jsonify({"error": str(exc)}), 502
+    return jsonify(result), 200
 
 
 @app.route("/api/config/defaults", methods=["GET"])
