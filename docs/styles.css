@@ -202,8 +202,30 @@ a:hover {
     background: var(--soft);
 }
 
+.update-entry + .update-entry {
+    margin-top: 28px;
+}
+
 .update-entry h3 {
     margin-top: 0;
+}
+
+.update-entry .katex-display {
+    margin: 22px 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 4px 0;
+}
+
+.update-entry .katex-display > .katex {
+    font-size: 1.12em;
+    color: var(--text);
+    white-space: nowrap;
+}
+
+.update-entry .katex {
+    color: var(--text);
+    font-size: 1.05em;
 }
 
 .update-entry p,

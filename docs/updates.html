@@ -7,7 +7,8 @@
     <meta name="description" content="Informal updates and notes about RallyClip development.">
     <link rel="icon" type="image/png" href="rallyclip_favicon_transparent2.png">
     <link rel="apple-touch-icon" href="rallyclip_favicon_transparent2.png">
-    <link rel="stylesheet" href="styles.css?v=20260621f">
+    <link rel="stylesheet" href="styles.css?v=20260914a">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css">
 </head>
 <body>
     <div class="page">
@@ -34,9 +35,40 @@
         <main class="content">
             <section>
                 <article class="update-entry">
+                    <h3>September 14, 2026</h3>
+                    <p>I've been working a little more on RallyClip while I'm home. I shipped the v0.5.0 Desktop Mac app and the new corresponding local backend + localhost frontend for non-Mac users. This uses both the dilated temporal convolutional net and the new startness and endness loss heads I previously mentioned.</p>
+                    <p>In this post, I'll be going over the loss I've been using for the latest training runs!</p>
+                    <p>Overall, we keep our previous cross-entropy loss of "pointness", but also add heads for startness and endness:</p>
+                    $$
+                    \mathcal{L} = \mathcal{L}_{\mathrm{pointness}} + \lambda_1 \mathcal{L}_{\mathrm{startness}} + \lambda_2 \mathcal{L}_{\mathrm{endness}}
+                    $$
+                    <p>Each objective is binary cross entropy between that head's output and its ground truth:</p>
+                    $$
+                    \begin{aligned}
+                    \mathcal{L}_{\mathrm{pointness}} &= \mathrm{BCE}(\hat{y}^{\mathrm{point}},\, y) \\[0.7em]
+                    \mathcal{L}_{\mathrm{startness}} &= \mathrm{BCE}(\hat{y}^{\mathrm{start}},\, s) \\[0.7em]
+                    \mathcal{L}_{\mathrm{endness}} &= \mathrm{BCE}(\hat{y}^{\mathrm{end}},\, e)
+                    \end{aligned}
+                    $$
+                    <p>The magic in the pudding (not the proof!) is how we define our target startness and endness arrays. Our method for both is as follows, using startness as the example:</p>
+                    <p>We center a Gaussian at each point start &mdash; the first in-point frame after an out-of-point frame. Then the startness of any frame \( t \) is:</p>
+                    $$
+                    \begin{aligned}
+                    S &= \{ t : y_t = 1,\ y_{t-1} = 0 \} \\[0.7em]
+                    d^{s}_{t} &= \min_{s \in S} \lvert t - s \rvert \\[0.9em]
+                    \mathrm{startness}_{t} &= \exp\!\left(-\frac{1}{2}\left(\frac{d^{s}_{t}}{\sigma}\right)^{2}\right)
+                    \end{aligned}
+                    $$
+                    <p>In short &mdash; when we're at a point start, our target is 1, the further we move away from the point start, the lower our target goes. This (hopefully) teaches the model which frames have a high probability of being starts and which have a low probability.</p>
+                    <p>Having an explicit objective for this improved performance compared to doing postprocessing on just the pointness.</p>
+                    <p>Interestingly, I did try training a model with just the startness/endness heads, and it performed worse, indicating that pointness is a very helpful objective to build "good" representations of player poses in tennis points.</p>
+                    <p>- Ismael</p>
+                </article>
+
+                <article class="update-entry">
                     <h3>July 27, 2026</h3>
                     <p>I've made good progress! Finally got my data scaling done which I'd been dreading for a while because it involves slogging through annotating match data. Now I feel confident that I have enough data to train, validate, and test models with deep learning architectures. I've been churning away at some models. I released v0.4.0, which is similar to the previous architecture of a bidirectional LSTM trained only on a "pointness" probability binary cross entropy objective, then postprocessed with hysteresis to yield point start, point end pairs. It's the exact same architecture, but trained with more data.</p>
-                    <p>On the new and exciting stuff - something I've been thinking about is a way to train these models end to end - that is, be able to use the actual point start, point end ground truth in my training set as a direct training objective. After a bit of bouncing around on architectures, I decided on adding two additional heads: predicting the "startness" and "endness" of frames. The general intuition is that our original training loss head predicts how much a frame is in a point vs out of a point, which is very useful for the model to know. But now, we're more directly training the model on what the start and end of points look like - we might imagine that the model learns that a point typically follows a service motion, and typically ends around the time players turn away from the court and walk back. More specifically, for the startness and endness, we train the startness head by creating a gaussian centered at point start time with a tuned standard deviation of 0.5s. The "startness" objective for a given frame is just the value of the gaussian d seconds away from center (forgive loose terminology). In decode, we threshold a point detection on the pointness being above a certain threshold for a long enough duration, then we use soft-argmax over the discrete heatmap values to estimate the point start and end. This is also an area of exploration!</p>
+                    <p>On the new and exciting stuff - something I've been thinking about is a way to train these models end to end - that is, be able to use the actual point start, point end ground truth in my training set as a direct training objective. After a bit of bouncing around on architectures, I decided on adding two additional heads: predicting the "startness" and "endness" of frames. The general intuition is that our original training loss head predicts how much a frame is in a point vs out of a point, which is very useful for the model to know. But now, we're more directly training the model on what the start and end of points look like - we might imagine that the model learns that a point typically follows a service motion, and typically ends around the time players turn away from the court and walk back. More specifically, for the startness and endness, we train the startness head by creating a Gaussian centered at point start time with a tuned standard deviation of 0.5s. The "startness" objective for a given frame is just the value of the Gaussian d seconds away from center (forgive loose terminology). In decode, we threshold a point detection on the pointness being above a certain threshold for a long enough duration, then we use soft-argmax over the discrete heatmap values to estimate the point start and end. This is also an area of exploration!</p>
                     <p>My second area of exploration is with architecture. Currently, I've been using a bidirectional LSTM to map my frame by frame pose inputs to pointness, startness, and endness outputs. However, I was running into issues with these. In my latest training block (and the first one with proper validation and test sets), my LSTM validation loss bottomed out after epoch 1 or 2, indicating serious overfitting. I attribute this to two related factors:</p>
                     <ol>
                         <li>General overparametrization (total parameter count too high)</li>
@@ -70,5 +102,16 @@
             <span>GPL-3.0 License</span>
         </footer>
     </div>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/contrib/auto-render.min.js"></script>
+    <script>
+        renderMathInElement(document.body, {
+            delimiters: [
+                {left: "$$", right: "$$", display: true},
+                {left: "\\(", right: "\\)", display: false}
+            ],
+            throwOnError: false
+        });
+    </script>
 </body>
 </html>
