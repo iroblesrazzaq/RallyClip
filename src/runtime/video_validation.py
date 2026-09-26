@@ -32,6 +32,7 @@ class VideoInfo:
     height: int
     fps: float
     duration_s: float
+    has_audio: bool = False
 
 
 class VideoValidationError(ValueError):
@@ -65,13 +66,16 @@ def probe_video(path) -> VideoInfo:
                 duration_s = float(stream.duration * stream.time_base)
             elif container.duration is not None:
                 duration_s = float(container.duration) * float(av.time_base)
+            has_audio = any(item.type == "audio" for item in container.streams)
         except VideoValidationError:
             raise
         except Exception as exc:
             raise VideoValidationError(f"'{name}' could not be read: {exc}") from exc
     finally:
         container.close()
-    return VideoInfo(width=width, height=height, fps=fps, duration_s=duration_s)
+    return VideoInfo(
+        width=width, height=height, fps=fps, duration_s=duration_s, has_audio=has_audio
+    )
 
 
 def validate_video(path, *, seq_len: int, fps: float, min_height: int = MIN_HEIGHT) -> VideoInfo:

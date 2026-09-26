@@ -440,7 +440,7 @@ def test_folder_start_uses_selection_once(tmp_path, monkeypatch):
     monkeypatch.setattr(
         gui_app,
         "folder_selections",
-        {"token": {"files": [source], "folder_name": "Final", "created_at": 0.0}},
+        {"token": {"files": [source], "folder_name": "Final", "created_at": time.time()}},
     )
     calls = []
     monkeypatch.setattr(
@@ -459,6 +459,92 @@ def test_folder_start_uses_selection_once(tmp_path, monkeypatch):
     assert "token" not in gui_app.folder_selections
 
 
+def test_folder_select_replaces_the_previous_pending_selection(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    folder = tmp_path / "match"
+    folder.mkdir()
+    (folder / "001.mp4").write_bytes(b"video")
+    monkeypatch.setattr(
+        gui_app,
+        "folder_selections",
+        {"stale": {"files": [folder / "001.mp4"], "folder_name": "old", "created_at": time.time()}},
+    )
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/select", json={"folder_path": str(folder)})
+
+    assert response.status_code == 200
+    token = response.get_json()["token"]
+    assert set(gui_app.folder_selections) == {token}
+
+
+def test_folder_start_rejects_an_expired_selection(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    source = tmp_path / "001.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(
+        gui_app,
+        "folder_selections",
+        {
+            "token": {
+                "files": [source],
+                "folder_name": "Final",
+                "created_at": time.time() - gui_app.FOLDER_SELECTION_TTL_SECONDS - 5,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        gui_app,
+        "_start_folder_analysis_job",
+        lambda files, cfg: (_ for _ in ()).throw(AssertionError("expired selection must not start")),
+    )
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/start", json={"token": "token", "config": {}})
+
+    assert response.status_code == 400
+    assert "expired" in response.get_json()["error"].lower()
+    assert "token" not in gui_app.folder_selections
+
+
+def test_folder_preflight_rejects_mixed_audio_before_analysis(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    first = tmp_path / "001.mp4"
+    second = tmp_path / "002.mp4"
+    first.write_bytes(b"video one")
+    second.write_bytes(b"video two")
+
+    class Info:
+        def __init__(self, has_audio):
+            self.width = 1920
+            self.height = 1080
+            self.fps = 30.0
+            self.duration_s = 30.0
+            self.has_audio = has_audio
+
+    infos = {first: Info(True), second: Info(False)}
+
+    class FakeValidation:
+        MIN_HEIGHT = 720
+
+        @staticmethod
+        def probe_video(path):
+            return infos[path]
+
+    monkeypatch.setattr(gui_app, "_load_video_validation_runtime", lambda: FakeValidation)
+    monkeypatch.setattr(
+        gui_app,
+        "_run_pipeline_in_worker_process",
+        lambda _job_id: (_ for _ in ()).throw(AssertionError("mixed audio must not start analysis")),
+    )
+
+    with pytest.raises(ValueError, match="audio"):
+        gui_app._start_folder_analysis_job([first, second], gui_app._normalize_config({}))
+
+
 def test_folder_preflight_accepts_camera_chunks_with_different_reported_fps(tmp_path, monkeypatch):
     from gui import app as gui_app
     from segmentation import proxy as proxy_module
@@ -474,6 +560,7 @@ def test_folder_preflight_accepts_camera_chunks_with_different_reported_fps(tmp_
             self.height = 2160
             self.fps = fps
             self.duration_s = 30.0
+            self.has_audio = True
 
     infos = {first: Info(59.94), second: Info(60.0)}
 

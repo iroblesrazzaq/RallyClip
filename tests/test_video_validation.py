@@ -41,6 +41,7 @@ def test_valid_720p_clip_passes(tmp_path):
     info = validate_video(clip, seq_len=SEQ_LEN, fps=FPS)
     assert (info.width, info.height) == (1280, 720)
     assert info.duration_s >= 20.0
+    assert info.has_audio is False
 
 
 def test_unreadable_file_rejected(tmp_path):

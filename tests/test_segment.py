@@ -11,6 +11,8 @@ np = pytest.importorskip("numpy")
 from segmentation import segment as segment_module
 from segmentation.segment import (
     _in_interval,
+    _keyframe_padded_intervals,
+    _stream_copy_video,
     load_intervals,
     segment_video,
     segment_video_sources,
@@ -158,6 +160,63 @@ def test_segment_carries_audio_and_concatenates(tmp_path):
     kinds, duration = _streams_and_duration(out)
     assert "video" in kinds and "audio" in kinds  # audio carried through (topic 3)
     assert duration == pytest.approx(4.0, abs=0.3)  # frame-accurate concat
+
+
+def _make_video_only_clip(path, seconds=8, fps=10, gop=1):
+    """Video-only H.264 clip with a fixed keyframe interval."""
+    container = av.open(str(path), "w")
+    try:
+        video = container.add_stream("libx264", rate=fps)
+        video.width, video.height, video.pix_fmt = 320, 240, "yuv420p"
+        video.options = {"g": str(gop), "keyint_min": str(gop)}
+        for i in range(seconds * fps):
+            frame = av.VideoFrame.from_ndarray(np.full((240, 320, 3), i % 256, dtype=np.uint8), format="rgb24")
+            frame.pts = i
+            for packet in video.encode(frame):
+                container.mux(packet)
+        for packet in video.encode():
+            container.mux(packet)
+    finally:
+        container.close()
+
+
+def test_keyframe_pads_refuse_ranges_closer_than_two_pads():
+    with pytest.raises(RuntimeError, match="overlap"):
+        _keyframe_padded_intervals([(1.0, 2.0), (2.5, 3.5)], 1.0)
+
+    assert _keyframe_padded_intervals([(1.0, 2.0), (8.0, 9.0)], 1.0) == [
+        (0.0, 3.0),
+        (7.0, 10.0),
+    ]
+
+
+def test_close_video_only_points_fall_back_instead_of_repeating(tmp_path):
+    src = tmp_path / "intra.mp4"
+    try:
+        _make_video_only_clip(src, seconds=8, fps=10, gop=1)
+    except Exception as exc:
+        pytest.skip(f"cannot encode test clip: {exc}")
+    out = tmp_path / "out.mp4"
+
+    segment_video(str(src), [(1.0, 2.0), (2.5, 3.5)], str(out))
+
+    kinds, duration = _streams_and_duration(out)
+    assert kinds == {"video"}
+    # Frame-accurate cuts are 1s + 1s. A padded remux would repeat the overlap
+    # and land well above 2s.
+    assert duration == pytest.approx(2.0, abs=0.35)
+
+
+def test_keyframe_overshoot_refuses_stream_copy(tmp_path):
+    src = tmp_path / "gop.mp4"
+    try:
+        _make_video_only_clip(src, seconds=8, fps=10, gop=40)
+    except Exception as exc:
+        pytest.skip(f"cannot encode test clip: {exc}")
+    out = tmp_path / "out.mp4"
+
+    with pytest.raises(RuntimeError, match="overlap"):
+        _stream_copy_video(str(src), [(0.2, 0.8), (2.0, 2.5)], str(out), keyframe_pad_s=0.3)
 
 
 def test_segment_video_only_input(tmp_path):

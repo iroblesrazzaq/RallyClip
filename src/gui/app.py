@@ -296,6 +296,7 @@ export_jobs: Dict[str, str] = {}
 export_job_errors: Dict[str, str] = {}
 export_job_progress: Dict[str, int] = {}
 folder_selections: Dict[str, Dict[str, Any]] = {}
+FOLDER_SELECTION_TTL_SECONDS = 30 * 60
 _MEMORY_PROCESS = None
 active_preview_item_id: Optional[str] = None
 last_preview_cache_prune = 0.0
@@ -2193,6 +2194,12 @@ def _start_folder_analysis_job(source_paths: list[Path], cfg: Dict[str, Any]) ->
                 f"'{path.name}' is {info.width}x{info.height}, but the first clip is "
                 f"{first.width}x{first.height}. All chunks must use the same resolution."
             )
+    audio_flags = [bool(getattr(info, "has_audio", False)) for info in infos]
+    if any(audio_flags) and not all(audio_flags):
+        raise ValueError(
+            "Every chunk must include audio, or every chunk must omit it. "
+            "Mixed silent and audio clips cannot be exported together."
+        )
     total_duration = sum(max(0.0, info.duration_s) for info in infos)
     minimum_duration = float(cfg["seq_len"]) / float(cfg["fps"])
     if total_duration < minimum_duration:
@@ -2309,6 +2316,9 @@ def select_match_folder():
             return jsonify({"error": "No MP4 files were found in that folder."}), 400
         token = str(uuid.uuid4())
         with jobs_lock:
+            # One pending folder at a time. Abandoned picks must not accumulate
+            # for the life of the process.
+            folder_selections.clear()
             folder_selections[token] = {
                 "files": files,
                 "folder_name": folder.name,
@@ -2333,6 +2343,9 @@ def start_match_folder():
     token = str(payload.get("token") or "")
     with jobs_lock:
         selection = folder_selections.pop(token, None)
+        created_at = float(selection.get("created_at") or 0) if selection is not None else 0.0
+        if selection is not None and time.time() - created_at > FOLDER_SELECTION_TTL_SECONDS:
+            selection = None
     if selection is None:
         return jsonify({"error": "Folder selection expired; please choose it again."}), 400
     cfg = _normalize_config(payload.get("config") or {})

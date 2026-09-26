@@ -327,3 +327,19 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   second proxy encode (unnecessary quality/time cost); a 400x300 cellular preset
   (too little pose detail). The 720p preset uses more proxy disk space, trading
   storage for much faster first-pass processing and smooth 30fps review.
+
+## 2026-09-26 — Refuse unsafe stream-copy and fail mixed folder audio early
+
+- **What:** Keyframe-padded export ranges that overlap or touch, and copied
+  keyframe spans that run into the next cut, raise and fall back to the
+  frame-accurate encoder. Folder preflight rejects a mix of audio and silent
+  chunks before proxy generation. Pending folder selections keep only the
+  latest token, and `/api/folder/start` drops tokens older than 30 minutes.
+- **Why:** The remux fast path appended each padded window independently, so
+  points less than two seconds apart (or a long GOP that overshoots the pad)
+  repeated footage. Mixed-audio folders passed analysis and then failed every
+  export. `folder_selections` stored every unused pick until process exit.
+- **Rejected:** Merging overlapping pads into one remux (would keep the
+  between-point gap inside the export); normalizing missing audio with silence
+  during export (hides a bad folder after the expensive analysis); a TTL-only
+  map with no cap (a burst of folder picks still grows without bound).

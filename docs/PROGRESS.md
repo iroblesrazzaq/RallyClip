@@ -1,15 +1,13 @@
 # PROGRESS — overwrite me at every session end
 
-_Last updated: 2026-09-20 (session: export progress feedback)._
+_Last updated: 2026-09-26 (session: fix Greptile blockers on folder export)._
 
 ## Repo state
 
-- Fork checkout is on `main` with local, uncommitted GUI changes; do not commit
-  directly to `main`.
+- Topic branch `fix/pr59-export-guards`, based on PR #59 (`fa2d55b`). Do not
+  commit to `main`.
 - App version remains **0.5.1** and the inference artifact remains
   `models/rallyclip_v0.5.0`.
-- The source install is running at `http://127.0.0.1:8000/` with CoreML analysis
-  and VideoToolbox proxy/export support active.
 
 ## What changed this session
 
@@ -52,12 +50,19 @@ _Last updated: 2026-09-20 (session: export progress feedback)._
    keyframes safely fall back to the existing exact re-encode. Focused
    verification: **80 passed**.
 
+12. Greptile's three findings on PR #59 are fixed on `fix/pr59-export-guards`:
+   overlapping keyframe pads and keyframe-overshoot ranges refuse stream copy
+   and fall back to frame-accurate encode; mixed-audio folders fail in
+   preflight; a new folder selection replaces the previous one and tokens older
+   than 30 minutes are rejected.
+13. Verification on this host: focused regression tests passed; default gate
+   **338 passed, 11 skipped, 49 deselected** (the extra skips are missing
+   `models/rallyclip_v0.5.0` weights, not these guards); compileall exit 0.
+
 ## Next steps
 
-1. Put the changes on a topic branch before committing or opening a PR; do not
-   commit directly to `main`.
-2. Run one complete real-world import against the user's consecutive 4K camera
-   folder, confirming source ordering, proxy wall time, boundary alignment, final
-   4K dimensions, audio, and export quality.
-3. Consider retaining/reusing a job-level proxy cache when the same source folder
-   is re-imported; the saved match already keeps its review proxy.
+1. Iterate `greptile review --branch main --agent` to 5/5, then open the PR.
+   Do not merge; the user merges.
+2. Run one complete real-world import against a consecutive 4K camera folder,
+   confirming source ordering, proxy wall time, boundary alignment, final
+   dimensions, audio, and export quality.
