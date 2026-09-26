@@ -2,18 +2,6 @@
 
 Format per entry: date — what / why / rejected alternative. Never rewrite old entries.
 
-## 2026-09-20 — Report frame-based progress for lazy exports
-
-- **What:** Export status now includes a percentage calculated from emitted video frames, and the browser displays it on the export button.
-- **Why:** Saved matches may contain thousands of seconds of source footage and require a full re-encode; a spinner-only state gave no indication whether the background job was advancing.
-- **Rejected:** Estimating from output-file size, because the MP4 is written through an encoder and its size is not monotonic with frame completion.
-
-## 2026-09-20 — Prefer keyframe-aligned stream copy for exports
-
-- **What:** Saved-match exports first remux packets between nearby keyframes, padding point intervals by up to one second; the existing frame-accurate encoder remains the fallback.
-- **Why:** Most exports can avoid decoding and re-encoding when the source contains usable keyframes, while the padding preserves the requested point context.
-- **Rejected:** Always stream-copying, because files without a keyframe after an interval end cannot be clipped safely that way and must retain the exact encoder path.
-
 ## 2026-07-03 — Doc harness created in this worktree (RallyClip-perf)
 
 - **What:** AGENTS.md + features.json + docs/{REPO_MAP,PROGRESS,DECISIONS,ENVIRONMENT,testing}.md
@@ -327,6 +315,18 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   second proxy encode (unnecessary quality/time cost); a 400x300 cellular preset
   (too little pose detail). The 720p preset uses more proxy disk space, trading
   storage for much faster first-pass processing and smooth 30fps review.
+
+## 2026-09-20 — Report frame-based progress for lazy exports
+
+- **What:** Export status now includes a percentage calculated from emitted video frames, and the browser displays it on the export button.
+- **Why:** Saved matches may contain thousands of seconds of source footage and require a full re-encode; a spinner-only state gave no indication whether the background job was advancing.
+- **Rejected:** Estimating from output-file size, because the MP4 is written through an encoder and its size is not monotonic with frame completion.
+
+## 2026-09-20 — Prefer keyframe-aligned stream copy for exports
+
+- **What:** Saved-match exports first remux packets between nearby keyframes, padding point intervals by up to one second; the existing frame-accurate encoder remains the fallback.
+- **Why:** Most exports can avoid decoding and re-encoding when the source contains usable keyframes, while the padding preserves the requested point context.
+- **Rejected:** Always stream-copying, because files without a keyframe after an interval end cannot be clipped safely that way and must retain the exact encoder path.
 
 ## 2026-09-26 — Refuse unsafe stream-copy and fail mixed folder audio early
 

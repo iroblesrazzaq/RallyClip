@@ -460,6 +460,26 @@ def test_folder_start_uses_selection_once(tmp_path, monkeypatch):
     assert "token" not in gui_app.folder_selections
 
 
+def test_folder_start_keeps_the_token_when_preflight_fails(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    source = tmp_path / "001.mp4"
+    source.write_bytes(b"video")
+    selection = {"files": [source], "folder_name": "Final", "created_at": time.time()}
+    monkeypatch.setattr(gui_app, "folder_selections", {"token": selection})
+
+    def fail(files, cfg):
+        raise ValueError("mixed audio")
+
+    monkeypatch.setattr(gui_app, "_start_folder_analysis_job", fail)
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/start", json={"token": "token", "config": {}})
+
+    assert response.status_code == 400
+    assert gui_app.folder_selections["token"] is selection
+
+
 def test_folder_select_replaces_the_previous_pending_selection(tmp_path, monkeypatch):
     from gui import app as gui_app
 

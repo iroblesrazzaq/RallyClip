@@ -187,9 +187,10 @@ def _stream_copy_video(
                 start_time = None
                 end_keyframe_seen = False
                 for packet in source.demux(streams):
-                    if packet.dts is None:
+                    shown = packet.pts if packet.pts is not None else packet.dts
+                    if shown is None:
                         continue
-                    packet_time = float(packet.dts * packet.time_base)
+                    packet_time = float(shown * packet.time_base)
                     if packet.stream.type == "video" and packet.is_keyframe:
                         if start_time is None:
                             start_time = packet_time
@@ -204,22 +205,28 @@ def _stream_copy_video(
                         break
                 if start_time is None or not end_keyframe_seen or not packets:
                     raise RuntimeError("Could not find keyframe-bounded export interval")
-                segment_end = max(float(packet.dts * packet.time_base) for packet in packets)
+                segment_end = max(
+                    float((packet.pts if packet.pts is not None else packet.dts) * packet.time_base)
+                    for packet in packets
+                )
                 if copied_until is not None and start_time <= copied_until:
                     raise RuntimeError("Keyframe-bounded intervals overlap; refusing stream copy")
                 if start_time < requested_start - 0.05 or segment_end > requested_end + 0.05:
                     raise RuntimeError("Stream copy would include footage outside the selected interval")
                 copied_until = segment_end
                 segment_duration = max(0.0, segment_end - start_time)
-                packets.sort(key=lambda packet: float(packet.dts * packet.time_base))
+                packets.sort(key=lambda packet: float((packet.pts if packet.pts is not None else packet.dts) * packet.time_base))
                 for packet in packets:
                     out_stream = output_streams[packet.stream.index]
-                    target_time_base = out_stream.time_base or packet.time_base
+                    source_time_base = packet.time_base
+                    target_time_base = out_stream.time_base or source_time_base
+                    source_pts = packet.pts
+                    source_dts = packet.dts
                     packet.stream = out_stream
-                    if packet.pts is not None:
-                        packet.pts = int(round((float(packet.pts * packet.time_base) - start_time + output_time) / target_time_base))
-                    if packet.dts is not None:
-                        packet.dts = int(round((float(packet.dts * packet.time_base) - start_time + output_time) / target_time_base))
+                    if source_pts is not None:
+                        packet.pts = int(round((float(source_pts * source_time_base) - start_time + output_time) / target_time_base))
+                    if source_dts is not None:
+                        packet.dts = int(round((float(source_dts * source_time_base) - start_time + output_time) / target_time_base))
                     packet.time_base = target_time_base
                     output.mux(packet)
                 output_time += segment_duration

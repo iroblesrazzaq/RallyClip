@@ -206,7 +206,8 @@ def _remux_proxy_parts(parts: Sequence[Path], sources: Sequence[dict], output_pa
                         first_time[packet.stream.index] = min(packet.pts, packet.dts)
                     origin = first_time[packet.stream.index]
                     relative_start = float((packet.pts - origin) * packet.time_base)
-                    if relative_start >= original_duration:
+                    relative_end = float((packet.pts - origin + packet.duration) * packet.time_base)
+                    if relative_start < -1e-3 or relative_start >= original_duration or relative_end > original_duration + 1e-3:
                         continue
                     offset_ticks = round(chunk_start / float(packet.time_base))
                     packet.pts = packet.pts - origin + offset_ticks
@@ -285,6 +286,7 @@ def _create_proxy_with_encoder(
                 plane.update(bytes(plane.buffer_size))
             fifo.write(frame)
             remaining -= take
+            drain_audio()
 
     try:
         for source_index, source in enumerate(sources):

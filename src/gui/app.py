@@ -2363,9 +2363,10 @@ def start_match_folder():
     payload = request.get_json(silent=True) or {}
     token = str(payload.get("token") or "")
     with jobs_lock:
-        selection = folder_selections.pop(token, None)
+        selection = folder_selections.get(token)
         created_at = float(selection.get("created_at") or 0) if selection is not None else 0.0
         if selection is not None and time.time() - created_at > FOLDER_SELECTION_TTL_SECONDS:
+            folder_selections.pop(token, None)
             selection = None
     if selection is None:
         return jsonify({"error": "Folder selection expired; please choose it again."}), 400
@@ -2376,6 +2377,9 @@ def start_match_folder():
         job_id = _start_folder_analysis_job(list(selection["files"]), cfg)
     except (ValueError, OSError) as exc:
         return jsonify({"error": str(exc)}), 400
+    with jobs_lock:
+        if folder_selections.get(token) is selection:
+            folder_selections.pop(token, None)
     return jsonify({"job_id": job_id}), 200
 
 
