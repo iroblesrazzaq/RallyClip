@@ -3428,7 +3428,7 @@ class RallyClipApp {
     resetControls() {
         this.isProcessing = false;
         this.currentJobId = null;
-        this.startBtn.disabled = !this.selectedFile;
+        this.startBtn.disabled = !(this.selectedFile || this.selectedFolder);
         this.cancelBtn.disabled = true;
     }
 

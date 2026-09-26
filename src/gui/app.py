@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import uuid
+import signal
 import webbrowser
 import csv
 import inspect
@@ -1454,6 +1455,7 @@ def _run_pipeline_in_worker_process(job_id: str) -> None:
                 stderr=stderr_fh,
                 text=True,
                 bufsize=1,
+                start_new_session=(os.name != "nt"),
             )
             with jobs_lock:
                 if job_id in jobs:
@@ -2244,6 +2246,23 @@ def _job_status_payload(job_id: str) -> Optional[Dict[str, Any]]:
         }
 
 
+def _stop_analysis_process(process) -> None:
+    """Stop a worker and any converter it spawned in the same process group."""
+    if process is None or getattr(process, "poll", lambda: None)() is not None:
+        return
+    pid = getattr(process, "pid", None)
+    if pid and os.name != "nt":
+        try:
+            os.killpg(int(pid), signal.SIGTERM)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    try:
+        process.terminate()
+    except Exception:
+        logging.debug("Could not terminate analysis worker", exc_info=True)
+
+
 def _cancel_analysis_job(job_id: str) -> Optional[Dict[str, Any]]:
     """Cancel a running job, or None for an unknown job. Idempotent."""
     # Mutate under the lock: an unlocked cancelled/status write can race a
@@ -2259,10 +2278,7 @@ def _cancel_analysis_job(job_id: str) -> Optional[Dict[str, Any]]:
             process = job.get("process")
         status = job["status"]
     if process is not None and getattr(process, "poll", lambda: None)() is None:
-        try:
-            process.terminate()
-        except Exception:
-            logging.debug("Could not terminate analysis worker for %s", job_id, exc_info=True)
+        _stop_analysis_process(process)
     return {"status": status}
 
 
@@ -2304,9 +2320,14 @@ def upload_and_start():
 
 @app.route("/api/folder/select", methods=["POST"])
 def select_match_folder():
-    requested = (request.get_json(silent=True) or {}).get("folder_path")
+    """Open the native folder picker.
+
+    A caller-supplied path is ignored. The desktop UI posts an empty body, and
+    accepting ``folder_path`` would let any local process list MP4 names from
+    directories the user never chose.
+    """
     try:
-        folder = Path(str(requested)).expanduser().resolve() if requested else _choose_match_folder()
+        folder = _choose_match_folder()
         if folder is None:
             return jsonify({"cancelled": True}), 200
         if not folder.is_dir():

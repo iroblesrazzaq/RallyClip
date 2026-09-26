@@ -421,9 +421,10 @@ def test_folder_selection_naturally_orders_mp4_chunks(tmp_path, monkeypatch):
     for name in ("DJI_10.MP4", "DJI_2.MP4", "DJI_1.MP4"):
         (folder / name).write_bytes(b"video")
     monkeypatch.setattr(gui_app, "folder_selections", {})
+    monkeypatch.setattr(gui_app, "_choose_match_folder", lambda: folder)
     client = gui_app.app.test_client()
 
-    response = client.post("/api/folder/select", json={"folder_path": str(folder)})
+    response = client.post("/api/folder/select")
 
     assert response.status_code == 200
     payload = response.get_json()
@@ -470,13 +471,31 @@ def test_folder_select_replaces_the_previous_pending_selection(tmp_path, monkeyp
         "folder_selections",
         {"stale": {"files": [folder / "001.mp4"], "folder_name": "old", "created_at": time.time()}},
     )
+    monkeypatch.setattr(gui_app, "_choose_match_folder", lambda: folder)
     client = gui_app.app.test_client()
 
-    response = client.post("/api/folder/select", json={"folder_path": str(folder)})
+    response = client.post("/api/folder/select")
 
     assert response.status_code == 200
     token = response.get_json()["token"]
     assert set(gui_app.folder_selections) == {token}
+
+
+def test_folder_select_ignores_a_client_supplied_path(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    (secret / "private.mp4").write_bytes(b"video")
+    monkeypatch.setattr(gui_app, "folder_selections", {})
+    monkeypatch.setattr(gui_app, "_choose_match_folder", lambda: None)
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/select", json={"folder_path": str(secret)})
+
+    assert response.status_code == 200
+    assert response.get_json()["cancelled"] is True
+    assert gui_app.folder_selections == {}
 
 
 def test_folder_start_rejects_an_expired_selection(tmp_path, monkeypatch):

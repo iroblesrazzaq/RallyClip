@@ -55,9 +55,15 @@ _Last updated: 2026-09-26 (session: fix Greptile blockers on folder export)._
    and fall back to frame-accurate encode; mixed-audio folders fail in
    preflight; a new folder selection replaces the previous one and tokens older
    than 30 minutes are rejected.
-13. Verification on this host: focused regression tests passed; default gate
-   **338 passed, 11 skipped, 49 deselected** (the extra skips are missing
-   `models/rallyclip_v0.5.0` weights, not these guards); compileall exit 0.
+13. Verification on this host: default gate **341 passed, 11 skipped, 49
+   deselected** (artifact-dependent tests skipped; weights not fetched);
+   compileall exit 0.
+14. Stream copy now also refuses any cut whose keyframes would include footage
+   outside the selected interval. Folder select ignores client-supplied paths.
+   Cancelling a job signals the worker process group, so an `avconvert` child
+   does not keep running. Native proxy joins keep each chunk on the original
+   source duration. Proxy silence is written in encoder-sized frames. A failed
+   folder start leaves Start enabled.
 
 ## Next steps
 

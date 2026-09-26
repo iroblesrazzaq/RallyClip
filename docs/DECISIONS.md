@@ -343,3 +343,20 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   between-point gap inside the export); normalizing missing audio with silence
   during export (hides a bad folder after the expensive analysis); a TTL-only
   map with no cap (a burst of folder picks still grows without bound).
+
+## 2026-09-26 — Stream copy stays inside the cut; folder and proxy guards
+
+- **What:** A video-only remux that would include packets outside the selected
+  interval falls back to frame-accurate encode. `/api/folder/select` uses only
+  the native picker. Cancel signals the worker's process group. Native proxy
+  chunks keep the original source duration instead of the packet-derived span.
+  Proxy silence is emitted in frames no larger than one AAC frame. The upload
+  Start button stays enabled when a folder is still selected.
+- **Why:** Keyframe padding shipped extra footage. A JSON `folder_path` let any
+  local caller list MP4 names. `terminate()` on the worker left `avconvert`
+  running. Proxy packet durations drifted later-file export times. One silence
+  allocation could be the size of a missing audio track. Folder preflight
+  errors called `resetControls()`, which only re-enabled Start for a single file.
+- **Rejected:** Deleting the remux path entirely (it is still valid when the
+  keyframes already match the cut); accepting `folder_path` behind a header
+  (the UI never sends a path).

@@ -182,11 +182,12 @@ def _remux_proxy_parts(parts: Sequence[Path], sources: Sequence[dict], output_pa
     output_path.unlink(missing_ok=True)
     output = av.open(str(output_path), "w", options={"movflags": "+faststart"})
     out_streams = {}
-    offsets = {"video": 0.0, "audio": 0.0}
+    timeline = 0.0
     manifest: list[dict] = []
     try:
         for part, source_info in zip(parts, sources):
-            chunk_start = max(offsets.values())
+            original_duration = float(source_info["duration_s"])
+            chunk_start = timeline
             with av.open(str(part)) as source:
                 selected = [stream for stream in source.streams if stream.type in {"video", "audio"}]
                 if not any(stream.type == "video" for stream in selected):
@@ -195,7 +196,6 @@ def _remux_proxy_parts(parts: Sequence[Path], sources: Sequence[dict], output_pa
                     if stream.type not in out_streams:
                         out_streams[stream.type] = output.add_stream_from_template(stream)
                 first_time = {stream.index: None for stream in selected}
-                max_end = {"video": chunk_start, "audio": chunk_start}
                 for packet in source.demux(*selected):
                     if packet.pts is None or packet.dts is None or packet.duration is None:
                         continue
@@ -205,25 +205,22 @@ def _remux_proxy_parts(parts: Sequence[Path], sources: Sequence[dict], output_pa
                     if first_time[packet.stream.index] is None:
                         first_time[packet.stream.index] = min(packet.pts, packet.dts)
                     origin = first_time[packet.stream.index]
+                    relative_start = float((packet.pts - origin) * packet.time_base)
+                    if relative_start >= original_duration:
+                        continue
                     offset_ticks = round(chunk_start / float(packet.time_base))
                     packet.pts = packet.pts - origin + offset_ticks
                     packet.dts = packet.dts - origin + offset_ticks
-                    max_end[stream_type] = max(
-                        max_end[stream_type],
-                        float((packet.pts + packet.duration) * packet.time_base),
-                    )
                     packet.stream = out_streams[stream_type]
                     output.mux(packet)
-                chunk_end = max(max_end.values())
-                chunk_duration = max(0.0, chunk_end - chunk_start)
-                manifest.append(
-                    {
-                        **source_info,
-                        "start_s": chunk_start,
-                        "duration_s": chunk_duration,
-                    }
-                )
-                offsets = {stream_type: chunk_end for stream_type in offsets}
+            manifest.append(
+                {
+                    **source_info,
+                    "start_s": chunk_start,
+                    "duration_s": original_duration,
+                }
+            )
+            timeline += original_duration
     finally:
         output.close()
     return manifest
@@ -277,11 +274,17 @@ def _create_proxy_with_encoder(
                 output.mux(packet)
 
     def write_silence(samples: int) -> None:
-        frame = av.AudioFrame(format=out_a.format.name, layout=out_a.layout, samples=samples)
-        frame.sample_rate = out_a.rate
-        for plane in frame.planes:
-            plane.update(bytes(plane.buffer_size))
-        fifo.write(frame)
+        # One AudioFrame for a multi-hour gap can allocate hundreds of megabytes.
+        chunk = out_a.frame_size or 1024
+        remaining = int(samples)
+        while remaining > 0:
+            take = min(chunk, remaining)
+            frame = av.AudioFrame(format=out_a.format.name, layout=out_a.layout, samples=take)
+            frame.sample_rate = out_a.rate
+            for plane in frame.planes:
+                plane.update(bytes(plane.buffer_size))
+            fifo.write(frame)
+            remaining -= take
 
     try:
         for source_index, source in enumerate(sources):

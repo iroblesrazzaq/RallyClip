@@ -128,23 +128,25 @@ def segment_video(
 def _keyframe_padded_intervals(
     intervals: Sequence[Tuple[float, float]],
     keyframe_pad_s: float,
-) -> List[Tuple[float, float]]:
-    """Pad each cut to the next keyframe, refusing ranges that would remux twice.
+) -> List[Tuple[float, float, float, float]]:
+    """Return (cut start, cut end, search start, search end) for each interval.
 
-    Each interval is expanded by ``keyframe_pad_s`` on both sides so the remux
-    can start and end on a keyframe. Pads that overlap or touch would append
-    the shared packets once per interval, repeating footage. Callers catch this
-    and fall back to frame-accurate encoding.
+    The search window is only where we look for keyframes. Copied packets must
+    still stay inside the requested cut; overlapping search windows are refused
+    because they would remux the same packets twice.
     """
-    padded = [
-        (max(0.0, float(start) - keyframe_pad_s), float(end) + keyframe_pad_s)
-        for start, end in intervals
-    ]
-    padded.sort()
-    for previous, current in zip(padded, padded[1:]):
-        if current[0] <= previous[1]:
+    windows = []
+    for start, end in intervals:
+        start_f = float(start)
+        end_f = float(end)
+        windows.append(
+            (start_f, end_f, max(0.0, start_f - keyframe_pad_s), end_f + keyframe_pad_s)
+        )
+    windows.sort()
+    for previous, current in zip(windows, windows[1:]):
+        if current[2] <= previous[3]:
             raise RuntimeError("Keyframe-padded intervals overlap; refusing stream copy")
-    return padded
+    return windows
 
 
 def _stream_copy_video(
@@ -179,7 +181,7 @@ def _stream_copy_video(
                 output_streams[stream.index] = out_stream
             output_time = 0.0
             copied_until = None
-            for start, end in padded:
+            for requested_start, requested_end, start, end in padded:
                 source.seek(int(start / video.time_base), stream=video, backward=True)
                 packets = []
                 start_time = None
@@ -205,6 +207,8 @@ def _stream_copy_video(
                 segment_end = max(float(packet.dts * packet.time_base) for packet in packets)
                 if copied_until is not None and start_time <= copied_until:
                     raise RuntimeError("Keyframe-bounded intervals overlap; refusing stream copy")
+                if start_time < requested_start - 0.05 or segment_end > requested_end + 0.05:
+                    raise RuntimeError("Stream copy would include footage outside the selected interval")
                 copied_until = segment_end
                 segment_duration = max(0.0, segment_end - start_time)
                 packets.sort(key=lambda packet: float(packet.dts * packet.time_base))

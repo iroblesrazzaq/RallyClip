@@ -185,8 +185,8 @@ def test_keyframe_pads_refuse_ranges_closer_than_two_pads():
         _keyframe_padded_intervals([(1.0, 2.0), (2.5, 3.5)], 1.0)
 
     assert _keyframe_padded_intervals([(1.0, 2.0), (8.0, 9.0)], 1.0) == [
-        (0.0, 3.0),
-        (7.0, 10.0),
+        (1.0, 2.0, 0.0, 3.0),
+        (8.0, 9.0, 7.0, 10.0),
     ]
 
 
@@ -215,7 +215,7 @@ def test_keyframe_overshoot_refuses_stream_copy(tmp_path):
         pytest.skip(f"cannot encode test clip: {exc}")
     out = tmp_path / "out.mp4"
 
-    with pytest.raises(RuntimeError, match="overlap"):
+    with pytest.raises(RuntimeError, match="outside"):
         _stream_copy_video(str(src), [(0.2, 0.8), (2.0, 2.5)], str(out), keyframe_pad_s=0.3)
 
 
@@ -245,6 +245,32 @@ def test_segment_no_video_stream_raises_without_leaving_a_file(tmp_path):
     with pytest.raises(RuntimeError):
         segment_video(str(src), [(0.5, 1.0)], str(out))
     assert not out.exists()  # no corrupt/zero-byte output left behind
+
+
+def test_proxy_silence_uses_bounded_frames(tmp_path, monkeypatch):
+    sizes = []
+    real_frame = av.AudioFrame
+
+    def bounded_frame(*args, **kwargs):
+        samples = kwargs.get("samples")
+        if samples is None and len(args) >= 3:
+            samples = args[2]
+        sizes.append(int(samples or 0))
+        if samples and int(samples) > 4096:
+            raise AssertionError(f"silence frame too large: {samples}")
+        return real_frame(*args, **kwargs)
+
+    monkeypatch.setattr(proxy_module.av, "AudioFrame", bounded_frame)
+    src = tmp_path / "silent.mp4"
+    try:
+        _make_clip(src, seconds=1, fps=10, with_audio=False)
+    except Exception as exc:
+        pytest.skip(f"cannot encode test clip: {exc}")
+
+    create_analysis_proxy(probe_video_sources([src]), tmp_path / "proxy.mp4", fps=10)
+
+    assert sizes
+    assert max(sizes) <= 4096
 
 
 def test_timeline_intervals_split_cleanly_across_chunk_boundary():

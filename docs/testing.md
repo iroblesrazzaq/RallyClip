@@ -16,12 +16,11 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-09-20, Apple Silicon source install, Python 3.12):
-**338 passed, 5 skipped, 27 deselected, 24.87s**. The CoreML and VideoToolbox
-tests require normal host hardware/cache access; release-script subprocesses
-require the project venv first on `PATH` when Apple's `/usr/bin/python3` is
-unavailable. On this host the system Git is also blocked until the Xcode licence
-is accepted, so the bundled fallback Git must precede it on `PATH`.
+Last known (2026-09-26, Apple Silicon, weights not fetched):
+**341 passed, 11 skipped, 49 deselected**. The extra skips are missing
+`models/rallyclip_v0.5.0` artifacts. CoreML and VideoToolbox tests require
+normal host hardware/cache access; release-script subprocesses require the
+project venv first on `PATH` when Apple's `/usr/bin/python3` is unavailable.
 
 ## Compile gate (cheap, run with the default gate)
 
