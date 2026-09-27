@@ -220,9 +220,9 @@ def download_and_open_latest_dmg(
         expected = parse_dmg_sha256_sidecar(sha_staging.read_text(encoding="utf-8"), dmg_name)
         _raise_if_cancelled(cancel_event)
         _download_url(dmg_url, staging, cancel_event=cancel_event)
-        _raise_if_cancelled(cancel_event)
         if sha256_file(staging) != expected:
             raise ValueError("DMG checksum mismatch; download discarded.")
+        _raise_if_cancelled(cancel_event)
         sha_staging.replace(sha_dest)
         staging.replace(dest)
     except Exception:

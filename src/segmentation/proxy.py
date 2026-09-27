@@ -17,15 +17,24 @@ from .segment import (
 ProgressCallback = Callable[[int, int, str, int], None]
 
 
+def _one_track(streams: Sequence, kind: str, name: str):
+    """Return the only track of kind, or None when audio is absent."""
+    matches = [stream for stream in streams if stream.type == kind]
+    if kind == "video" and len(matches) != 1:
+        raise ValueError(f"'{name}' has {len(matches)} video tracks; expected one.")
+    if kind == "audio" and len(matches) > 1:
+        raise ValueError(f"'{name}' has {len(matches)} audio tracks; expected at most one.")
+    return matches[0] if matches else None
+
+
 def probe_video_sources(source_paths: Sequence[Path]) -> list[dict]:
     """Return a continuous-timeline manifest for ordered camera chunks."""
     sources: list[dict] = []
     offset = 0.0
     for path in source_paths:
         with av.open(str(path)) as container:
-            stream = next((item for item in container.streams if item.type == "video"), None)
-            if stream is None:
-                raise ValueError(f"No video stream found in {path.name}")
+            stream = _one_track(container.streams, "video", path.name)
+            _one_track(container.streams, "audio", path.name)
             duration = 0.0
             if stream.duration is not None and stream.time_base is not None:
                 duration = float(stream.duration * stream.time_base)
@@ -148,11 +157,12 @@ def _create_proxy_with_encoder(
             drain_audio()
 
     first_video_t = None
+    chunk_audio_start = 0.0
 
     def write_timed_audio(source_time: float | None, converted: av.AudioFrame) -> None:
         """Place source audio on the proxy timeline, padding a late start with silence."""
         if source_time is not None and first_video_t is not None:
-            written = (audio_pts + fifo.samples) / float(out_a.rate)
+            written = (audio_pts + fifo.samples) / float(out_a.rate) - chunk_audio_start
             gap = (source_time - first_video_t) - written
             if gap > 0.02:
                 write_silence(max(0, int(round(gap * out_a.rate))))
@@ -164,6 +174,7 @@ def _create_proxy_with_encoder(
     try:
         for source_index, source in enumerate(sources):
             source_start_frame = video_index
+            chunk_audio_start = source_start_frame / fps
             expected_duration = float(source["duration_s"])
             target_chunk_frames = max(1, int(round(expected_duration * fps)))
             encoded_chunk_frames = 0
@@ -171,10 +182,8 @@ def _create_proxy_with_encoder(
             if progress_callback:
                 progress_callback(source_index, len(sources), path.name, 0)
             with av.open(str(path)) as container:
-                in_v = next((item for item in container.streams if item.type == "video"), None)
-                in_a = next((item for item in container.streams if item.type == "audio"), None)
-                if in_v is None:
-                    raise ValueError(f"No video stream found in {path.name}")
+                in_v = _one_track(container.streams, "video", path.name)
+                in_a = _one_track(container.streams, "audio", path.name)
                 try:
                     in_v.thread_type = "AUTO"
                 except Exception:

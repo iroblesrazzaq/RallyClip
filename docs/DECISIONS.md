@@ -399,3 +399,17 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   export requests could both observe "missing" and each start work.
 - **Rejected:** Turning stream copy off; padding the audio gap at the end of
   the chunk; letting the extra export thread wait on the encode lock.
+
+## 2026-09-26 — Remux only keyframe-aligned cuts; keep each clip's audio
+
+- **What:** Stream copy succeeds only when a keyframe already sits on the cut.
+  Packets stay in decode order, and nothing outside the cut is muxed. Proxy
+  audio timing is measured inside each clip. A cancel during DMG hashing does
+  not replace the installer. More than one video or audio track is an error.
+- **Why:** Treating the one-second pad as allowed footage still exported
+  unselected video, and requiring the pad made every remux fall back. The
+  second camera clip's timestamps restarted at zero and were discarded. Hashing
+  a DMG is slow enough for cancel to land after the download and before the
+  file replace. The first of several camera tracks is not a safe guess.
+- **Rejected:** Including the pad as export context; sorting remux packets by
+  presentation time; picking track zero when a file has several.

@@ -17,7 +17,7 @@ PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovi
 ```
 
 Last known (2026-09-26, Apple Silicon, weights not fetched):
-**345 passed, 11 skipped, 50 deselected** with
+**348 passed, 11 skipped, 50 deselected** with
 `-k "not test_preview_window_generation_latency_benchmark"`. The extra skips
 are missing `models/rallyclip_v0.5.0` artifacts. That preview benchmark is
 outside this diff and took 18.5–22.6s on this host against a 10s budget.

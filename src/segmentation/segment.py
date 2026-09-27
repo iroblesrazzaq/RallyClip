@@ -149,6 +149,17 @@ def _keyframe_padded_intervals(
     return windows
 
 
+def _only_track(container, kind: str, path: str):
+    """Return the only track of this kind. Audio may be absent; video may not."""
+    name = Path(path).name
+    matches = [stream for stream in container.streams if stream.type == kind]
+    if kind == "video" and len(matches) != 1:
+        raise RuntimeError(f"'{name}' has {len(matches)} video tracks; expected one.")
+    if kind == "audio" and len(matches) > 1:
+        raise RuntimeError(f"'{name}' has {len(matches)} audio tracks; expected at most one.")
+    return matches[0] if matches else None
+
+
 def _stream_copy_video(
     input_video: str,
     intervals: Sequence[Tuple[float, float]],
@@ -159,9 +170,7 @@ def _stream_copy_video(
     """Remux keyframe-bounded intervals without decoding or re-encoding."""
     padded = _keyframe_padded_intervals(intervals, keyframe_pad_s)
     with av.open(input_video) as source:
-        video = next((stream for stream in source.streams if stream.type == "video"), None)
-        if video is None:
-            raise RuntimeError(f"No video stream found in {input_video}")
+        video = _only_track(source, "video", input_video)
         if any(stream.type == "audio" for stream in source.streams):
             raise RuntimeError("Stream-copy export requires video-only input for timestamp safety")
         streams = [stream for stream in source.streams if stream.type in {"video", "audio"}]
@@ -181,8 +190,8 @@ def _stream_copy_video(
                 output_streams[stream.index] = out_stream
             output_time = 0.0
             copied_until = None
-            for requested_start, requested_end, start, end in padded:
-                source.seek(int(start / video.time_base), stream=video, backward=True)
+            for requested_start, requested_end, _start, _end in padded:
+                source.seek(int(requested_start / video.time_base), stream=video, backward=True)
                 packets = []
                 start_time = None
                 end_keyframe_seen = False
@@ -194,16 +203,18 @@ def _stream_copy_video(
                     if packet.stream.type == "video" and packet.is_keyframe:
                         if start_time is None:
                             start_time = packet_time
-                        elif packet_time >= end:
+                            if start_time < requested_start - 1e-3:
+                                raise RuntimeError(
+                                    "Stream copy would include footage outside the selected interval"
+                                )
+                        elif packet_time >= requested_end - 1e-3:
                             end_keyframe_seen = True
                     if start_time is None:
                         continue
-                    # The keyframe at the padded end closes the GOP. It is not
-                    # part of the copy, or every successful remux would extend
-                    # past the allowed window and fall back to a re-encode.
+                    # The keyframe at the cut end closes the GOP and is not copied.
                     if end_keyframe_seen:
                         break
-                    if packet_time < start_time:
+                    if packet_time < requested_start - 1e-3 or packet_time >= requested_end - 1e-3:
                         continue
                     packets.append(packet)
                 if start_time is None or not end_keyframe_seen or not packets:
@@ -220,13 +231,10 @@ def _stream_copy_video(
                 )
                 if copied_until is not None and start_time <= copied_until:
                     raise RuntimeError("Keyframe-bounded intervals overlap; refusing stream copy")
-                # `start`/`end` already include keyframe_pad_s. Footage inside
-                # that pad is the fast path; anything further is a long GOP.
-                if start_time < start - 1e-3 or segment_end > end + 0.05:
+                if segment_end > requested_end + 0.05:
                     raise RuntimeError("Stream copy would include footage outside the selected interval")
                 copied_until = segment_end
                 segment_duration = max(0.0, segment_end - start_time)
-                packets.sort(key=lambda packet: float((packet.pts if packet.pts is not None else packet.dts) * packet.time_base))
                 for packet in packets:
                     out_stream = output_streams[packet.stream.index]
                     source_time_base = packet.time_base
@@ -374,16 +382,14 @@ def _segment_video_sources_with_encoder(
     first_path = selections[0][0]
     in_container = av.open(first_path)
     try:
-        in_v = next((s for s in in_container.streams if s.type == 'video'), None)
-        if in_v is None:
-            raise RuntimeError(f"No video stream found in {first_path}")
+        in_v = _only_track(in_container, "video", first_path)
         # Keep software decode parallel while VideoToolbox handles encode. This
         # also benefits the libx264 fallback on high-frame-rate inputs.
         try:
             in_v.thread_type = "AUTO"
         except Exception:
             pass
-        in_a = next((s for s in in_container.streams if s.type == 'audio'), None)
+        in_a = _only_track(in_container, "audio", first_path)
         # Open the output only after validating the input, so a no-video input doesn't
         # leave a zero-byte file behind and a failed open doesn't leak in_container.
         out_container = av.open(output_path, 'w')
@@ -470,9 +476,7 @@ def _segment_video_sources_with_encoder(
             if source_index:
                 in_container.close()
                 in_container = av.open(input_video)
-                in_v = next((s for s in in_container.streams if s.type == 'video'), None)
-                if in_v is None:
-                    raise RuntimeError(f"No video stream found in {input_video}")
+                in_v = _only_track(in_container, "video", input_video)
                 try:
                     in_v.thread_type = "AUTO"
                 except Exception:
@@ -482,7 +486,7 @@ def _segment_video_sources_with_encoder(
                     or in_v.codec_context.height != out_v.height
                 ):
                     raise ValueError("All match chunks must use the same resolution")
-                in_a = next((s for s in in_container.streams if s.type == 'audio'), None)
+                in_a = _only_track(in_container, "audio", input_video)
                 if (out_a is None) != (in_a is None):
                     raise ValueError("All match chunks must either include audio or omit it")
 

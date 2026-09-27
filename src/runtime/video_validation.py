@@ -52,9 +52,15 @@ def probe_video(path) -> VideoInfo:
     except Exception as exc:  # av raises a variety of errors for bad input
         raise VideoValidationError(f"'{name}' could not be opened as a video file.") from exc
     try:
-        stream = next((s for s in container.streams if s.type == "video"), None)
-        if stream is None:
-            raise VideoValidationError(f"'{name}' has no video stream.")
+        videos = [item for item in container.streams if item.type == "video"]
+        audios = [item for item in container.streams if item.type == "audio"]
+        if len(videos) != 1:
+            if not videos:
+                raise VideoValidationError(f"'{name}' has no video stream.")
+            raise VideoValidationError(f"'{name}' has {len(videos)} video tracks; expected one.")
+        if len(audios) > 1:
+            raise VideoValidationError(f"'{name}' has {len(audios)} audio tracks; expected at most one.")
+        stream = videos[0]
         try:
             cc = stream.codec_context
             width = int(getattr(cc, "width", 0) or 0)
@@ -66,7 +72,7 @@ def probe_video(path) -> VideoInfo:
                 duration_s = float(stream.duration * stream.time_base)
             elif container.duration is not None:
                 duration_s = float(container.duration) * float(av.time_base)
-            has_audio = any(item.type == "audio" for item in container.streams)
+            has_audio = bool(audios)
         except VideoValidationError:
             raise
         except Exception as exc:

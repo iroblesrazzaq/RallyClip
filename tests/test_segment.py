@@ -207,7 +207,7 @@ def test_close_video_only_points_fall_back_instead_of_repeating(tmp_path):
     assert duration == pytest.approx(2.0, abs=0.35)
 
 
-def test_video_only_export_uses_keyframe_pad(tmp_path):
+def test_keyframe_aligned_cut_stream_copies_without_extra_footage(tmp_path):
     src = tmp_path / "intra.mp4"
     try:
         _make_video_only_clip(src, seconds=8, fps=10, gop=1)
@@ -215,12 +215,11 @@ def test_video_only_export_uses_keyframe_pad(tmp_path):
         pytest.skip(f"cannot encode test clip: {exc}")
     out = tmp_path / "out.mp4"
 
-    segment_video(str(src), [(2.0, 3.0)], str(out))
+    _stream_copy_video(str(src), [(2.0, 3.0)], str(out))
 
     kinds, duration = _streams_and_duration(out)
     assert kinds == {"video"}
-    # One second of keyframe context on each side. A re-encode fallback is ~1s.
-    assert duration == pytest.approx(3.0, abs=0.35)
+    assert duration == pytest.approx(1.0, abs=0.35)
 
 
 def test_keyframe_overshoot_refuses_stream_copy(tmp_path):
@@ -355,6 +354,40 @@ def test_proxy_keeps_a_late_audio_start(tmp_path):
 
     assert _audio_rms_between(output, 0.0, 0.6) < 0.02
     assert _audio_rms_between(output, 1.3, 1.8) > 0.02
+
+
+def test_proxy_keeps_audio_on_a_later_clip(tmp_path):
+    first = tmp_path / "001.mp4"
+    second = tmp_path / "002.mp4"
+    try:
+        _make_clip(first, seconds=1, fps=10, with_audio=True)
+        _make_clip(second, seconds=1, fps=10, with_audio=True)
+    except Exception as exc:
+        pytest.skip(f"cannot encode test clips: {exc}")
+    output = tmp_path / "proxy.mp4"
+
+    create_analysis_proxy(probe_video_sources([first, second]), output, fps=10)
+
+    assert _audio_rms_between(output, 0.15, 0.7) > 0.02
+    assert _audio_rms_between(output, 1.15, 1.7) > 0.02
+
+
+def test_proxy_and_export_reject_multiple_video_tracks():
+    class _Stream:
+        def __init__(self, kind):
+            self.type = kind
+
+    tracks = [_Stream("video"), _Stream("video"), _Stream("audio")]
+    with pytest.raises(ValueError, match="video tracks"):
+        proxy_module._one_track(tracks, "video", "clip.mp4")
+    with pytest.raises(RuntimeError, match="video tracks"):
+        segment_module._only_track(type("Box", (), {"streams": tracks})(), "video", "clip.mp4")
+    with pytest.raises(RuntimeError, match="audio tracks"):
+        segment_module._only_track(
+            type("Box", (), {"streams": [_Stream("video"), _Stream("audio"), _Stream("audio")]})(),
+            "audio",
+            "clip.mp4",
+        )
 
 
 def test_timeline_intervals_split_cleanly_across_chunk_boundary():
