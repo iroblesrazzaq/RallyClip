@@ -3130,6 +3130,7 @@ class RallyClipApp {
 
     processFile(file) {
         // Accept any video; the backend validates by content (codec/resolution).
+        const replaced = this.selectedFolder && this.selectedFolder.token;
         this.selectedFile = file;
         this.selectedFolder = null;
         this.fileName.textContent = file.name;
@@ -3137,9 +3138,20 @@ class RallyClipApp {
         this.dropZone.hidden = true;
         this.selectedFileDiv.hidden = false;
         this.startBtn.disabled = false;
+        this.dismissFolderToken(replaced);
+    }
+
+    dismissFolderToken(token) {
+        if (!token) return;
+        fetch("/api/folder/dismiss", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+        }).catch(() => {});
     }
 
     removeFile() {
+        const token = this.selectedFolder && this.selectedFolder.token;
         this.selectedFile = null;
         this.selectedFolder = null;
         this.fileInput.value = "";
@@ -3147,6 +3159,7 @@ class RallyClipApp {
         this.selectedFileDiv.hidden = true;
         this.startBtn.disabled = true;
         this.resetProgress();
+        this.dismissFolderToken(token);
     }
 
     async chooseFolder() {
@@ -3156,9 +3169,11 @@ class RallyClipApp {
             const payload = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(payload.error || "Could not select that folder.");
             if (payload.cancelled) return;
+            const previous = this.selectedFolder && this.selectedFolder.token;
             this.selectedFile = null;
             this.fileInput.value = "";
             this.selectedFolder = payload;
+            if (previous && previous !== payload.token) this.dismissFolderToken(previous);
             this.fileName.textContent = `${payload.folder_name} — ${payload.file_count} MP4 clips`;
             this.fileSize.textContent = `${this.formatFileSize(payload.total_bytes)} · consecutive match timeline`;
             this.dropZone.hidden = true;

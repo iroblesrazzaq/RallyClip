@@ -374,3 +374,15 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   skipped the converter's `finally` and left part files behind.
 - **Rejected:** Keeping a single global folder token (breaks two windows);
   capping proxy packets by decode time (drops displayed frames).
+
+## 2026-09-26 — Folder dismiss frees a slot; proxies stay on PyAV
+
+- **What:** Removing a chosen folder, replacing it with a file, or choosing a
+  different folder posts `/api/folder/dismiss` and drops that token. Analysis
+  proxies are created only with PyAV (VideoToolbox, then libx264).
+- **Why:** A cap of eight pending selections blocked a new import for 30 minutes
+  once the UI forgot the tokens. `/usr/bin/avconvert` decoded and encoded outside
+  PyAV, which is the runtime media rule.
+- **Rejected:** Evicting the oldest token to make room (invalidates another
+  window); keeping avconvert behind a macOS check (still leaves the runtime
+  decode path).

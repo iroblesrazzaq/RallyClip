@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import logging
-import re
-import subprocess
-import sys
 from fractions import Fraction
 from pathlib import Path
 from typing import Callable, Sequence
@@ -12,15 +9,12 @@ import av
 
 from .segment import (
     DEFAULT_CRF,
-    SOFTWARE_ENCODER,
     VIDEOTOOLBOX_ENCODER,
     _video_encoder_candidates,
     _videotoolbox_bitrate,
 )
 
 ProgressCallback = Callable[[int, int, str, int], None]
-AVCONVERT_PATH = Path("/usr/bin/avconvert")
-AVCONVERT_PRESET = "PresetAppleM4V720pHD"
 
 
 def probe_video_sources(source_paths: Sequence[Path]) -> list[dict]:
@@ -72,18 +66,6 @@ def create_analysis_proxy(
     if not sources:
         raise ValueError("No source videos provided")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    if _can_use_avconvert(sources):
-        try:
-            return _create_proxy_with_avconvert(
-                sources,
-                output_path,
-                progress_callback=progress_callback,
-            )
-        except Exception as exc:
-            output_path.unlink(missing_ok=True)
-            if exc.__class__.__name__ in {"PipelineCancelled", "PoseExtractionCancelled"}:
-                raise
-            logging.warning("Native Apple proxy creation failed (%s); using PyAV fallback.", exc)
     for encoder in _video_encoder_candidates():
         output_path.unlink(missing_ok=True)
         try:
@@ -102,130 +84,6 @@ def create_analysis_proxy(
                 raise
             logging.warning("VideoToolbox proxy creation failed (%s); retrying with libx264.", exc)
     raise RuntimeError("Could not create analysis proxy")
-
-
-def _can_use_avconvert(sources: Sequence[dict]) -> bool:
-    if sys.platform != "darwin" or not AVCONVERT_PATH.is_file():
-        return False
-    return any(int(source.get("width") or 0) > 1280 or int(source.get("height") or 0) > 720 for source in sources)
-
-
-def _create_proxy_with_avconvert(
-    sources: Sequence[dict],
-    output_path: Path,
-    *,
-    progress_callback: ProgressCallback | None,
-) -> list[dict]:
-    """Use AVFoundation's media-engine transcode, then packet-join the parts."""
-    parts: list[Path] = []
-    try:
-        for index, source in enumerate(sources):
-            part = output_path.parent / f".analysis-proxy-{index:04d}.m4v"
-            part.unlink(missing_ok=True)
-            parts.append(part)
-            command = [
-                str(AVCONVERT_PATH),
-                "--source",
-                str(source["path"]),
-                "--preset",
-                AVCONVERT_PRESET,
-                "--output",
-                str(part),
-                "--replace",
-                "--progress",
-            ]
-            process = subprocess.Popen(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-            captured: list[str] = []
-            fragment = ""
-            try:
-                assert process.stdout is not None
-                while True:
-                    char = process.stdout.read(1)
-                    if char == "" and process.poll() is not None:
-                        break
-                    if char not in {"\r", "\n", ""}:
-                        fragment += char
-                        continue
-                    if fragment:
-                        captured.append(fragment)
-                        match = re.search(r"([0-9]+(?:\.[0-9]+)?)% complete", fragment)
-                        if match and progress_callback:
-                            progress_callback(index, len(sources), str(source["name"]), int(float(match.group(1))))
-                        fragment = ""
-                return_code = process.wait()
-                if return_code != 0 or not part.exists():
-                    detail = " ".join(captured[-3:]).strip()
-                    raise RuntimeError(f"avconvert failed for {source['name']}: {detail or return_code}")
-            except BaseException:
-                if process.poll() is None:
-                    process.terminate()
-                    process.wait(timeout=5)
-                raise
-            if progress_callback:
-                progress_callback(index, len(sources), str(source["name"]), 100)
-        return _remux_proxy_parts(parts, sources, output_path)
-    finally:
-        for part in parts:
-            part.unlink(missing_ok=True)
-
-
-def _remux_proxy_parts(parts: Sequence[Path], sources: Sequence[dict], output_path: Path) -> list[dict]:
-    """Join compatible AVFoundation proxy parts by rewriting timestamps only."""
-    if len(parts) != len(sources):
-        raise ValueError("Proxy part/source count mismatch")
-    output_path.unlink(missing_ok=True)
-    output = av.open(str(output_path), "w", options={"movflags": "+faststart"})
-    out_streams = {}
-    timeline = 0.0
-    manifest: list[dict] = []
-    try:
-        for part, source_info in zip(parts, sources):
-            original_duration = float(source_info["duration_s"])
-            chunk_start = timeline
-            with av.open(str(part)) as source:
-                selected = [stream for stream in source.streams if stream.type in {"video", "audio"}]
-                if not any(stream.type == "video" for stream in selected):
-                    raise ValueError(f"No video stream in proxy for {source_info['name']}")
-                for stream in selected:
-                    if stream.type not in out_streams:
-                        out_streams[stream.type] = output.add_stream_from_template(stream)
-                first_pts: dict[int, int] = {}
-                buffered = []
-                for packet in source.demux(*selected):
-                    if packet.pts is None or packet.dts is None or packet.duration is None:
-                        continue
-                    if packet.stream.type not in out_streams:
-                        continue
-                    buffered.append(packet)
-                    previous = first_pts.get(packet.stream.index)
-                    first_pts[packet.stream.index] = packet.pts if previous is None else min(previous, packet.pts)
-                for packet in buffered:
-                    origin = first_pts[packet.stream.index]
-                    relative_start = float((packet.pts - origin) * packet.time_base)
-                    if relative_start >= original_duration:
-                        continue
-                    offset_ticks = round(chunk_start / float(packet.time_base))
-                    packet.pts = packet.pts - origin + offset_ticks
-                    packet.dts = packet.dts - origin + offset_ticks
-                    packet.stream = out_streams[packet.stream.type]
-                    output.mux(packet)
-            manifest.append(
-                {
-                    **source_info,
-                    "start_s": chunk_start,
-                    "duration_s": original_duration,
-                }
-            )
-            timeline += original_duration
-    finally:
-        output.close()
-    return manifest
 
 
 def _create_proxy_with_encoder(

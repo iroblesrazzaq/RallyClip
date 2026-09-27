@@ -59,10 +59,9 @@ The GUI's consecutive-folder importer uses a native macOS folder chooser. It
 references the original MP4 files in place, stores their absolute paths in the
 saved match's `sources.json`, and creates a 720p/30 H.264/AAC analysis proxy in
 the library. Keep the original folder mounted and unchanged until final export.
-On macOS, source footage above 720p is proxy-transcoded per chunk with the system
-`/usr/bin/avconvert` (`PresetAppleM4V720pHD`) so AVFoundation can use Apple media
-decode/encode hardware; the encoded parts are packet-remuxed into one MP4. PyAV
-software decode/VideoToolbox encode is the cross-platform fallback.
+The analysis proxy is always created with PyAV: VideoToolbox H.264 when that
+encoder is available, otherwise `libx264`, with AAC audio. Runtime video decode
+stays on PyAV.
 
 ## Model assets
 

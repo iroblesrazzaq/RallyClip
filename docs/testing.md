@@ -17,10 +17,13 @@ PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovi
 ```
 
 Last known (2026-09-26, Apple Silicon, weights not fetched):
-**341 passed, 11 skipped, 49 deselected**. The extra skips are missing
-`models/rallyclip_v0.5.0` artifacts. CoreML and VideoToolbox tests require
-normal host hardware/cache access; release-script subprocesses require the
-project venv first on `PATH` when Apple's `/usr/bin/python3` is unavailable.
+**342 passed, 11 skipped, 50 deselected** with
+`-k "not test_preview_window_generation_latency_benchmark"`. The extra skips
+are missing `models/rallyclip_v0.5.0` artifacts. That preview benchmark is
+outside this diff and took 18.5–22.6s on this host against a 10s budget.
+CoreML and VideoToolbox tests require normal host hardware/cache access;
+release-script subprocesses require the project venv first on `PATH` when
+Apple's `/usr/bin/python3` is unavailable.
 
 ## Compile gate (cheap, run with the default gate)
 
@@ -28,7 +31,7 @@ project venv first on `PATH` when Apple's `/usr/bin/python3` is unavailable.
 $PY -m compileall -q src tests
 ```
 
-Last known (2026-09-20): exit 0 with the local source-install venv.
+Last known (2026-09-26): exit 0 with `.venv-train`.
 
 ## Golden CLI parity (run when touching pipeline/engine/extraction/decode)
 
@@ -36,7 +39,7 @@ Last known (2026-09-20): exit 0 with the local source-install venv.
 PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_cli_golden_parity.py
 ```
 
-Last known (2026-09-20): **1 passed, 7.71s**. Boundaries compared at 0.5s tolerance;
+Last known (2026-09-26): **1 skipped** (artifact weights not fetched). Boundaries compared at 0.5s tolerance;
 byte-exact only holds on the machine+env the golden was generated on. ubuntu/windows
 ORT can split a TCN point across a 1-frame pointness dip; v0.5.0 ships
 `merge_gap_sec: 0.5` so those fragments become one segment.

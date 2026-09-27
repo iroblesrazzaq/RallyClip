@@ -2285,7 +2285,7 @@ def _cancel_analysis_job(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _remove_orphan_proxy_parts(job_id: str) -> None:
-    """Delete avconvert leftovers after a cancel that skipped worker cleanup."""
+    """Delete leftover proxy part files after a cancel that skipped worker cleanup."""
     with jobs_lock:
         job = jobs.get(job_id) or {}
         raw = (job.get("paths") or {}).get("job_dir")
@@ -2381,6 +2381,15 @@ def select_match_folder():
         ), 200
     except (OSError, RuntimeError) as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/folder/dismiss", methods=["POST"])
+def dismiss_match_folder():
+    """Drop a pending folder token when the user removes it in the UI."""
+    token = str((request.get_json(silent=True) or {}).get("token") or "")
+    with jobs_lock:
+        folder_selections.pop(token, None)
+    return jsonify({"ok": True}), 200
 
 
 @app.route("/api/folder/start", methods=["POST"])

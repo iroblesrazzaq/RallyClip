@@ -535,6 +535,24 @@ def test_folder_select_refuses_a_ninth_pending_token(tmp_path, monkeypatch):
     assert set(gui_app.folder_selections) == set(pending)
 
 
+def test_folder_dismiss_releases_a_pending_token(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    source = tmp_path / "001.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(
+        gui_app,
+        "folder_selections",
+        {"token": {"files": [source], "folder_name": "match", "created_at": time.time()}},
+    )
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/dismiss", json={"token": "token"})
+
+    assert response.status_code == 200
+    assert "token" not in gui_app.folder_selections
+
+
 def test_folder_select_ignores_a_client_supplied_path(tmp_path, monkeypatch):
     from gui import app as gui_app
 
