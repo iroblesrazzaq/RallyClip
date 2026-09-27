@@ -38,6 +38,7 @@ CLI, training, and extra install notes live in [`docs/ENVIRONMENT.md`](docs/ENVI
 ## Features coming soon (in rough order)
 - iOS mobile app beta coming soon
 - doubles support
+- improved court detector + model performance
 
 
 ## Current release status
