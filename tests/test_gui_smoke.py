@@ -480,7 +480,7 @@ def test_folder_start_keeps_the_token_when_preflight_fails(tmp_path, monkeypatch
     assert gui_app.folder_selections["token"] is selection
 
 
-def test_folder_select_replaces_the_previous_pending_selection(tmp_path, monkeypatch):
+def test_folder_select_keeps_other_fresh_tokens_and_drops_expired(tmp_path, monkeypatch):
     from gui import app as gui_app
 
     folder = tmp_path / "match"
@@ -489,7 +489,14 @@ def test_folder_select_replaces_the_previous_pending_selection(tmp_path, monkeyp
     monkeypatch.setattr(
         gui_app,
         "folder_selections",
-        {"stale": {"files": [folder / "001.mp4"], "folder_name": "old", "created_at": time.time()}},
+        {
+            "other": {"files": [folder / "001.mp4"], "folder_name": "other", "created_at": time.time()},
+            "expired": {
+                "files": [folder / "001.mp4"],
+                "folder_name": "old",
+                "created_at": time.time() - gui_app.FOLDER_SELECTION_TTL_SECONDS - 5,
+            },
+        },
     )
     monkeypatch.setattr(gui_app, "_choose_match_folder", lambda: folder)
     client = gui_app.app.test_client()
@@ -498,7 +505,9 @@ def test_folder_select_replaces_the_previous_pending_selection(tmp_path, monkeyp
 
     assert response.status_code == 200
     token = response.get_json()["token"]
-    assert set(gui_app.folder_selections) == {token}
+    assert token in gui_app.folder_selections
+    assert "other" in gui_app.folder_selections
+    assert "expired" not in gui_app.folder_selections
 
 
 def test_folder_select_ignores_a_client_supplied_path(tmp_path, monkeypatch):

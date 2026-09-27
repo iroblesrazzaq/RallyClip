@@ -298,6 +298,7 @@ export_job_errors: Dict[str, str] = {}
 export_job_progress: Dict[str, int] = {}
 folder_selections: Dict[str, Dict[str, Any]] = {}
 FOLDER_SELECTION_TTL_SECONDS = 30 * 60
+FOLDER_SELECTION_MAX = 8
 _MEMORY_PROCESS = None
 active_preview_item_id: Optional[str] = None
 last_preview_cache_prune = 0.0
@@ -2279,7 +2280,22 @@ def _cancel_analysis_job(job_id: str) -> Optional[Dict[str, Any]]:
         status = job["status"]
     if process is not None and getattr(process, "poll", lambda: None)() is None:
         _stop_analysis_process(process)
+    _remove_orphan_proxy_parts(job_id)
     return {"status": status}
+
+
+def _remove_orphan_proxy_parts(job_id: str) -> None:
+    """Delete avconvert leftovers after a cancel that skipped worker cleanup."""
+    with jobs_lock:
+        job = jobs.get(job_id) or {}
+        raw = (job.get("paths") or {}).get("job_dir")
+    if not raw:
+        return
+    job_dir = Path(str(raw))
+    if not job_dir.is_dir():
+        return
+    for part in job_dir.glob(".analysis-proxy-*.m4v"):
+        part.unlink(missing_ok=True)
 
 
 @app.route("/api/upload-and-start", methods=["POST"])
@@ -2336,15 +2352,29 @@ def select_match_folder():
         if not files:
             return jsonify({"error": "No MP4 files were found in that folder."}), 400
         token = str(uuid.uuid4())
+        now = time.time()
         with jobs_lock:
-            # One pending folder at a time. Abandoned picks must not accumulate
-            # for the life of the process.
-            folder_selections.clear()
+            expired = [
+                pending
+                for pending, item in folder_selections.items()
+                if now - float(item.get("created_at") or 0) > FOLDER_SELECTION_TTL_SECONDS
+            ]
+            for pending in expired:
+                del folder_selections[pending]
             folder_selections[token] = {
                 "files": files,
                 "folder_name": folder.name,
-                "created_at": time.time(),
+                "created_at": now,
             }
+            overflow = len(folder_selections) - FOLDER_SELECTION_MAX
+            if overflow > 0:
+                oldest = sorted(
+                    folder_selections,
+                    key=lambda pending: float(folder_selections[pending].get("created_at") or 0),
+                )
+                for pending in oldest[:overflow]:
+                    if pending != token:
+                        del folder_selections[pending]
         return jsonify(
             {
                 "token": token,

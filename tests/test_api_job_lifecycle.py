@@ -82,6 +82,18 @@ def test_cancel_while_running_terminates_worker(services, job):
     assert services.cancel_job("job-1") == {"status": "cancelled"}
 
 
+def test_cancel_removes_orphan_proxy_parts(services, job, tmp_path):
+    job_dir = tmp_path / "job-1"
+    job_dir.mkdir()
+    leftover = job_dir / ".analysis-proxy-0000.m4v"
+    leftover.write_bytes(b"partial")
+    job["paths"]["job_dir"] = str(job_dir)
+    job["status"] = "in_progress"
+
+    assert services.cancel_job("job-1") == {"status": "cancelled"}
+    assert not leftover.exists()
+
+
 def test_cancel_stops_a_worker_process_group(services, job, tmp_path):
     child_pid = tmp_path / "child.pid"
     worker = subprocess.Popen(

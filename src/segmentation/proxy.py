@@ -195,24 +195,25 @@ def _remux_proxy_parts(parts: Sequence[Path], sources: Sequence[dict], output_pa
                 for stream in selected:
                     if stream.type not in out_streams:
                         out_streams[stream.type] = output.add_stream_from_template(stream)
-                first_time = {stream.index: None for stream in selected}
+                first_pts: dict[int, int] = {}
+                buffered = []
                 for packet in source.demux(*selected):
                     if packet.pts is None or packet.dts is None or packet.duration is None:
                         continue
-                    stream_type = packet.stream.type
-                    if stream_type not in out_streams:
+                    if packet.stream.type not in out_streams:
                         continue
-                    if first_time[packet.stream.index] is None:
-                        first_time[packet.stream.index] = min(packet.pts, packet.dts)
-                    origin = first_time[packet.stream.index]
+                    buffered.append(packet)
+                    previous = first_pts.get(packet.stream.index)
+                    first_pts[packet.stream.index] = packet.pts if previous is None else min(previous, packet.pts)
+                for packet in buffered:
+                    origin = first_pts[packet.stream.index]
                     relative_start = float((packet.pts - origin) * packet.time_base)
-                    relative_end = float((packet.pts - origin + packet.duration) * packet.time_base)
-                    if relative_start < -1e-3 or relative_start >= original_duration or relative_end > original_duration + 1e-3:
+                    if relative_start >= original_duration:
                         continue
                     offset_ticks = round(chunk_start / float(packet.time_base))
                     packet.pts = packet.pts - origin + offset_ticks
                     packet.dts = packet.dts - origin + offset_ticks
-                    packet.stream = out_streams[stream_type]
+                    packet.stream = out_streams[packet.stream.type]
                     output.mux(packet)
             manifest.append(
                 {

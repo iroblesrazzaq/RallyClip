@@ -211,7 +211,7 @@ def _stream_copy_video(
                 )
                 if copied_until is not None and start_time <= copied_until:
                     raise RuntimeError("Keyframe-bounded intervals overlap; refusing stream copy")
-                if start_time < requested_start - 0.05 or segment_end > requested_end + 0.05:
+                if start_time < requested_start - 1e-3 or segment_end > requested_end + 1e-3:
                     raise RuntimeError("Stream copy would include footage outside the selected interval")
                 copied_until = segment_end
                 segment_duration = max(0.0, segment_end - start_time)

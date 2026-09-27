@@ -360,3 +360,16 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
 - **Rejected:** Deleting the remux path entirely (it is still valid when the
   keyframes already match the cut); accepting `folder_path` behind a header
   (the UI never sends a path).
+
+## 2026-09-26 — Proxy join uses presentation time; folder picks stay bounded
+
+- **What:** Native proxy remux measures each part from its earliest presentation
+  timestamp and drops only packets that start after the original duration.
+  Pending folder selections expire after 30 minutes and are capped at 8, without
+  clearing another window's token. Cancel deletes leftover `.analysis-proxy-*.m4v`
+  parts. Stream copy allows at most 1 ms outside the selected interval.
+- **Why:** Using decode timestamps as the origin discarded the end of B-frame
+  parts. Replacing every pending token broke a second window. Killing the worker
+  skipped the converter's `finally` and left part files behind.
+- **Rejected:** Keeping a single global folder token (breaks two windows);
+  capping proxy packets by decode time (drops displayed frames).
