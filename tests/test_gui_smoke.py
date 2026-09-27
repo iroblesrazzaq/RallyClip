@@ -510,6 +510,31 @@ def test_folder_select_keeps_other_fresh_tokens_and_drops_expired(tmp_path, monk
     assert "expired" not in gui_app.folder_selections
 
 
+def test_folder_select_refuses_a_ninth_pending_token(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    folder = tmp_path / "match"
+    folder.mkdir()
+    (folder / "001.mp4").write_bytes(b"video")
+    pending = {
+        f"token-{index}": {
+            "files": [folder / "001.mp4"],
+            "folder_name": "match",
+            "created_at": time.time(),
+        }
+        for index in range(gui_app.FOLDER_SELECTION_MAX)
+    }
+    monkeypatch.setattr(gui_app, "folder_selections", pending)
+    monkeypatch.setattr(gui_app, "_choose_match_folder", lambda: folder)
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/select")
+
+    assert response.status_code == 400
+    assert "waiting" in response.get_json()["error"].lower()
+    assert set(gui_app.folder_selections) == set(pending)
+
+
 def test_folder_select_ignores_a_client_supplied_path(tmp_path, monkeypatch):
     from gui import app as gui_app
 

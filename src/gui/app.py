@@ -298,6 +298,7 @@ export_job_errors: Dict[str, str] = {}
 export_job_progress: Dict[str, int] = {}
 folder_selections: Dict[str, Dict[str, Any]] = {}
 FOLDER_SELECTION_TTL_SECONDS = 30 * 60
+FOLDER_SELECTION_MAX = 8
 _MEMORY_PROCESS = None
 active_preview_item_id: Optional[str] = None
 last_preview_cache_prune = 0.0
@@ -2360,6 +2361,10 @@ def select_match_folder():
             ]
             for pending in expired:
                 del folder_selections[pending]
+            if len(folder_selections) >= FOLDER_SELECTION_MAX:
+                raise RuntimeError(
+                    "Too many folders are waiting to start. Start or dismiss one, then choose again."
+                )
             folder_selections[token] = {
                 "files": files,
                 "folder_name": folder.name,

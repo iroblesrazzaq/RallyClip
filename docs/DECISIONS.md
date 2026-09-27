@@ -365,8 +365,9 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
 
 - **What:** Native proxy remux measures each part from its earliest presentation
   timestamp and drops only packets that start after the original duration.
-  Pending folder selections expire after 30 minutes and are capped at 8, without
-  clearing another window's token. Cancel deletes leftover `.analysis-proxy-*.m4v`
+  Pending folder selections expire after 30 minutes. At most eight unused
+  selections are kept; a further selection is refused instead of evicting
+  another window's token. Cancel deletes leftover `.analysis-proxy-*.m4v`
   parts. Stream copy allows at most 1 ms outside the selected interval.
 - **Why:** Using decode timestamps as the origin discarded the end of B-frame
   parts. Replacing every pending token broke a second window. Killing the worker
