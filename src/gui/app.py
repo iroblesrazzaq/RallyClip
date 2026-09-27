@@ -298,7 +298,6 @@ export_job_errors: Dict[str, str] = {}
 export_job_progress: Dict[str, int] = {}
 folder_selections: Dict[str, Dict[str, Any]] = {}
 FOLDER_SELECTION_TTL_SECONDS = 30 * 60
-FOLDER_SELECTION_MAX = 8
 _MEMORY_PROCESS = None
 active_preview_item_id: Optional[str] = None
 last_preview_cache_prune = 0.0
@@ -2366,15 +2365,6 @@ def select_match_folder():
                 "folder_name": folder.name,
                 "created_at": now,
             }
-            overflow = len(folder_selections) - FOLDER_SELECTION_MAX
-            if overflow > 0:
-                oldest = sorted(
-                    folder_selections,
-                    key=lambda pending: float(folder_selections[pending].get("created_at") or 0),
-                )
-                for pending in oldest[:overflow]:
-                    if pending != token:
-                        del folder_selections[pending]
         return jsonify(
             {
                 "token": token,

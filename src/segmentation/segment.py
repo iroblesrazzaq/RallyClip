@@ -206,7 +206,13 @@ def _stream_copy_video(
                 if start_time is None or not end_keyframe_seen or not packets:
                     raise RuntimeError("Could not find keyframe-bounded export interval")
                 segment_end = max(
-                    float((packet.pts if packet.pts is not None else packet.dts) * packet.time_base)
+                    float(
+                        (
+                            (packet.pts if packet.pts is not None else packet.dts)
+                            + (packet.duration or 0)
+                        )
+                        * packet.time_base
+                    )
                     for packet in packets
                 )
                 if copied_until is not None and start_time <= copied_until:
