@@ -386,3 +386,16 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
 - **Rejected:** Evicting the oldest token to make room (invalidates another
   window); keeping avconvert behind a macOS check (still leaves the runtime
   decode path).
+
+## 2026-09-26 — Stream copy keeps the pad; proxy audio stays in place
+
+- **What:** A video-only remux copies packets inside the keyframe pad and stops
+  before the closing keyframe. Proxy audio that starts after the picture is
+  preceded by silence. Cancel deletes `analysis_proxy.mp4`. A second export
+  start does not spawn another thread once the item is already processing.
+- **Why:** Comparing the remux to the exact cut rejected the pad, so every
+  stream copy fell back to a re-encode. Late source audio was written at the
+  start of the proxy chunk. Killing the worker left the partial proxy. Two
+  export requests could both observe "missing" and each start work.
+- **Rejected:** Turning stream copy off; padding the audio gap at the end of
+  the chunk; letting the extra export thread wait on the encode lock.

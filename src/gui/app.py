@@ -2285,17 +2285,15 @@ def _cancel_analysis_job(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def _remove_orphan_proxy_parts(job_id: str) -> None:
-    """Delete leftover proxy part files after a cancel that skipped worker cleanup."""
+    """Delete a partial analysis proxy when cancel kills the worker first."""
     with jobs_lock:
         job = jobs.get(job_id) or {}
-        raw = (job.get("paths") or {}).get("job_dir")
+        raw = (job.get("paths") or {}).get("upload")
     if not raw:
         return
-    job_dir = Path(str(raw))
-    if not job_dir.is_dir():
-        return
-    for part in job_dir.glob(".analysis-proxy-*.m4v"):
-        part.unlink(missing_ok=True)
+    upload = Path(str(raw))
+    if upload.name == "analysis_proxy.mp4":
+        upload.unlink(missing_ok=True)
 
 
 @app.route("/api/upload-and-start", methods=["POST"])
@@ -2703,8 +2701,12 @@ def _start_export_background(item_id: str) -> str:
     state = _export_state(item_id)
     if state in {"ready", "processing"}:
         return state
-    # A new explicit request retries a previous failure.
+    # Claim the item before starting a thread. Two requests can both observe
+    # "missing" before either marks it processing.
     with jobs_lock:
+        current = export_jobs.get(item_id)
+        if current in {"ready", "processing"}:
+            return current
         export_jobs[item_id] = "processing"
         export_job_progress[item_id] = 0
         export_job_errors.pop(item_id, None)

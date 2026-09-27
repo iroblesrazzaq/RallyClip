@@ -198,11 +198,14 @@ def _stream_copy_video(
                             end_keyframe_seen = True
                     if start_time is None:
                         continue
+                    # The keyframe at the padded end closes the GOP. It is not
+                    # part of the copy, or every successful remux would extend
+                    # past the allowed window and fall back to a re-encode.
+                    if end_keyframe_seen:
+                        break
                     if packet_time < start_time:
                         continue
                     packets.append(packet)
-                    if end_keyframe_seen:
-                        break
                 if start_time is None or not end_keyframe_seen or not packets:
                     raise RuntimeError("Could not find keyframe-bounded export interval")
                 segment_end = max(
@@ -217,7 +220,9 @@ def _stream_copy_video(
                 )
                 if copied_until is not None and start_time <= copied_until:
                     raise RuntimeError("Keyframe-bounded intervals overlap; refusing stream copy")
-                if start_time < requested_start - 1e-3 or segment_end > requested_end + 1e-3:
+                # `start`/`end` already include keyframe_pad_s. Footage inside
+                # that pad is the fast path; anything further is a long GOP.
+                if start_time < start - 1e-3 or segment_end > end + 0.05:
                     raise RuntimeError("Stream copy would include footage outside the selected interval")
                 copied_until = segment_end
                 segment_duration = max(0.0, segment_end - start_time)

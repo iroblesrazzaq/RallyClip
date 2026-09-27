@@ -147,6 +147,20 @@ def _create_proxy_with_encoder(
             remaining -= take
             drain_audio()
 
+    first_video_t = None
+
+    def write_timed_audio(source_time: float | None, converted: av.AudioFrame) -> None:
+        """Place source audio on the proxy timeline, padding a late start with silence."""
+        if source_time is not None and first_video_t is not None:
+            written = (audio_pts + fifo.samples) / float(out_a.rate)
+            gap = (source_time - first_video_t) - written
+            if gap > 0.02:
+                write_silence(max(0, int(round(gap * out_a.rate))))
+            elif gap < -0.02:
+                return
+        fifo.write(converted)
+        drain_audio()
+
     try:
         for source_index, source in enumerate(sources):
             source_start_frame = video_index
@@ -172,7 +186,21 @@ def _create_proxy_with_encoder(
                 )
                 first_video_t = None
                 last_output_local_index = -1
+                held_audio: list[tuple[float | None, av.AudioFrame]] = []
                 streams = [item for item in (in_v, in_a) if item is not None]
+
+                def take_audio(frame: av.AudioFrame) -> None:
+                    source_time = None
+                    if frame.pts is not None and frame.time_base is not None:
+                        source_time = float(frame.pts * frame.time_base)
+                    frame.pts = None
+                    for converted in resampler.resample(frame):
+                        converted.pts = None
+                        if first_video_t is None:
+                            held_audio.append((source_time, converted))
+                        else:
+                            write_timed_audio(source_time, converted)
+
                 for frame in container.decode(*streams):
                     if isinstance(frame, av.VideoFrame):
                         if frame.pts is None:
@@ -180,6 +208,10 @@ def _create_proxy_with_encoder(
                         t = float(frame.pts * frame.time_base)
                         if first_video_t is None:
                             first_video_t = t
+                            pending_audio = held_audio[:]
+                            held_audio.clear()
+                            for source_time, converted in pending_audio:
+                                write_timed_audio(source_time, converted)
                         local_t = max(0.0, t - first_video_t)
                         local_index = int(local_t * fps + 1e-6)
                         if local_index <= last_output_local_index or local_index >= target_chunk_frames:
@@ -196,11 +228,7 @@ def _create_proxy_with_encoder(
                             percent = min(99, int((local_t / max(expected_duration, 0.001)) * 100))
                             progress_callback(source_index, len(sources), path.name, percent)
                     elif isinstance(frame, av.AudioFrame):
-                        frame.pts = None
-                        for converted in resampler.resample(frame):
-                            converted.pts = None
-                            fifo.write(converted)
-                        drain_audio()
+                        take_audio(frame)
                 if resampler is not None:
                     for converted in resampler.resample(None):
                         converted.pts = None

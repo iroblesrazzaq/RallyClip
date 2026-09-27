@@ -85,9 +85,10 @@ def test_cancel_while_running_terminates_worker(services, job):
 def test_cancel_removes_orphan_proxy_parts(services, job, tmp_path):
     job_dir = tmp_path / "job-1"
     job_dir.mkdir()
-    leftover = job_dir / ".analysis-proxy-0000.m4v"
+    leftover = job_dir / "analysis_proxy.mp4"
     leftover.write_bytes(b"partial")
     job["paths"]["job_dir"] = str(job_dir)
+    job["paths"]["upload"] = str(leftover)
     job["status"] = "in_progress"
 
     assert services.cancel_job("job-1") == {"status": "cancelled"}

@@ -207,6 +207,22 @@ def test_close_video_only_points_fall_back_instead_of_repeating(tmp_path):
     assert duration == pytest.approx(2.0, abs=0.35)
 
 
+def test_video_only_export_uses_keyframe_pad(tmp_path):
+    src = tmp_path / "intra.mp4"
+    try:
+        _make_video_only_clip(src, seconds=8, fps=10, gop=1)
+    except Exception as exc:
+        pytest.skip(f"cannot encode test clip: {exc}")
+    out = tmp_path / "out.mp4"
+
+    segment_video(str(src), [(2.0, 3.0)], str(out))
+
+    kinds, duration = _streams_and_duration(out)
+    assert kinds == {"video"}
+    # One second of keyframe context on each side. A re-encode fallback is ~1s.
+    assert duration == pytest.approx(3.0, abs=0.35)
+
+
 def test_keyframe_overshoot_refuses_stream_copy(tmp_path):
     src = tmp_path / "gop.mp4"
     try:
@@ -271,6 +287,74 @@ def test_proxy_silence_uses_bounded_frames(tmp_path, monkeypatch):
 
     assert sizes
     assert max(sizes) <= 4096
+
+
+def _make_delayed_audio_clip(path, seconds=2, fps=10, delay_s=1.0, sample_rate=48000):
+    """Video from t=0 and a tone whose timestamps begin at delay_s."""
+    container = av.open(str(path), "w")
+    try:
+        video = container.add_stream("libx264", rate=fps)
+        video.width, video.height, video.pix_fmt = 320, 240, "yuv420p"
+        audio = container.add_stream("aac", rate=sample_rate)
+        audio.layout = "stereo"
+        for i in range(seconds * fps):
+            frame = av.VideoFrame.from_ndarray(np.full((240, 320, 3), 32, dtype=np.uint8), format="rgb24")
+            frame.pts = i
+            for packet in video.encode(frame):
+                container.mux(packet)
+        for packet in video.encode():
+            container.mux(packet)
+        start_sample = int(delay_s * sample_rate)
+        chunk = 1024
+        for start in range(start_sample, seconds * sample_rate, chunk):
+            n = min(chunk, seconds * sample_rate - start)
+            tone = (0.2 * np.sin(2 * np.pi * 440 * np.arange(n) / sample_rate)).astype("float32")
+            frame = av.AudioFrame.from_ndarray(np.stack([tone, tone]), format="fltp", layout="stereo")
+            frame.sample_rate = sample_rate
+            frame.pts = start
+            frame.time_base = Fraction(1, sample_rate)
+            for packet in audio.encode(frame):
+                container.mux(packet)
+        for packet in audio.encode():
+            container.mux(packet)
+    finally:
+        container.close()
+
+
+def _audio_rms_between(path, start_s, end_s):
+    pieces = []
+    with av.open(str(path)) as container:
+        stream = next(item for item in container.streams if item.type == "audio")
+        cursor = 0.0
+        for frame in container.decode(stream):
+            if frame.pts is not None and frame.time_base is not None:
+                cursor = float(frame.pts * frame.time_base)
+            duration = frame.samples / float(frame.sample_rate)
+            if cursor + duration <= start_s:
+                cursor += duration
+                continue
+            if cursor >= end_s:
+                break
+            pieces.append(frame.to_ndarray().astype("float32").reshape(-1))
+            cursor += duration
+    if not pieces:
+        return 0.0
+    stacked = np.concatenate(pieces)
+    return float(np.sqrt(np.mean(np.square(stacked))))
+
+
+def test_proxy_keeps_a_late_audio_start(tmp_path):
+    src = tmp_path / "late.mp4"
+    try:
+        _make_delayed_audio_clip(src)
+    except Exception as exc:
+        pytest.skip(f"cannot encode delayed-audio clip: {exc}")
+    output = tmp_path / "proxy.mp4"
+
+    create_analysis_proxy(probe_video_sources([src]), output, fps=10)
+
+    assert _audio_rms_between(output, 0.0, 0.6) < 0.02
+    assert _audio_rms_between(output, 1.3, 1.8) > 0.02
 
 
 def test_timeline_intervals_split_cleanly_across_chunk_boundary():

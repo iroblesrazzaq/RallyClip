@@ -1217,6 +1217,47 @@ def test_library_folder_export_cuts_original_chunks_not_proxy(tmp_path, monkeypa
     assert calls == [(sources, [(9.0, 11.0)], str(item_dir / "export.tmp.mp4"))]
 
 
+def test_overlapping_background_exports_start_once(monkeypatch):
+    import threading
+
+    from gui import app as gui_app
+
+    monkeypatch.setattr(gui_app, "export_jobs", {})
+    monkeypatch.setattr(gui_app, "export_job_progress", {})
+    monkeypatch.setattr(gui_app, "export_job_errors", {})
+    gate = threading.Barrier(2)
+
+    def both_missing(_item_id):
+        gate.wait(timeout=2)
+        return "missing"
+
+    monkeypatch.setattr(gui_app, "_export_state", both_missing)
+    started = []
+    real_thread = threading.Thread
+
+    class IdleThread:
+        def __init__(self, *args, **kwargs):
+            started.append(kwargs.get("name"))
+
+        def start(self):
+            return None
+
+    monkeypatch.setattr(gui_app.threading, "Thread", IdleThread)
+    results = []
+
+    def start():
+        results.append(gui_app._start_export_background("item"))
+
+    threads = [real_thread(target=start) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert results == ["processing", "processing"]
+    assert len(started) == 1
+
+
 def test_library_export_background_reports_processing_then_ready(tmp_path, monkeypatch):
     from gui import app as gui_app
 

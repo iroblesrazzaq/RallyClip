@@ -11,15 +11,15 @@ _Last updated: 2026-09-26 (session: dismiss folder tokens and drop avconvert)._
 
 ## What changed this session
 
-1. Stream copy refuses overlapping pads and any packet that would display
-   outside the selected cut, then falls back to frame-accurate encode.
+1. Stream copy keeps footage inside the keyframe pad and falls back when a GOP
+   runs past that pad or two pads overlap. The closing keyframe is not muxed.
 2. Folder preflight rejects mixed audio before analysis. Tokens expire after
    30 minutes, a ninth pending selection is refused, and the UI posts
    `/api/folder/dismiss` when the user removes, replaces, or re-chooses a folder.
 3. Analysis proxies are created only with PyAV (VideoToolbox, then libx264).
-   `/usr/bin/avconvert` is no longer on the runtime path.
-4. Cancel still signals the worker process group. Proxy silence stays chunked
-   to one AAC frame.
+   Audio that starts after the picture is preceded by silence.
+4. Cancel signals the worker process group and deletes a partial
+   `analysis_proxy.mp4`. A second export start does not spawn another thread.
 
 ## Next steps
 
