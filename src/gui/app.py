@@ -13,14 +13,16 @@ import sys
 import threading
 import time
 import uuid
+import signal
 import webbrowser
 import csv
+import inspect
 from datetime import datetime, timedelta
 from importlib import metadata as importlib_metadata
 from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -78,6 +80,7 @@ run_windowed_inference_average_torch_stream = None
 write_segments_csv = None
 apply_pose_device = None
 segment_video = None
+segment_video_sources = None
 
 _ANALYSIS_RUNTIME = None
 _ANALYSIS_RUNTIME_LOCK = threading.Lock()
@@ -251,7 +254,6 @@ ADVANCED_WARNINGS = {
 }
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/")
-app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB — matches UI cap
 CORS(
     app,
     resources={
@@ -291,6 +293,12 @@ jobs: Dict[str, JobDict] = {}
 preview_locks: Dict[str, threading.Lock] = {}
 preview_jobs: Dict[str, str] = {}
 preview_job_errors: Dict[str, str] = {}
+export_jobs: Dict[str, str] = {}
+export_job_errors: Dict[str, str] = {}
+export_job_progress: Dict[str, int] = {}
+folder_selections: Dict[str, Dict[str, Any]] = {}
+FOLDER_SELECTION_TTL_SECONDS = 30 * 60
+FOLDER_SELECTION_MAX = 8
 _MEMORY_PROCESS = None
 active_preview_item_id: Optional[str] = None
 last_preview_cache_prune = 0.0
@@ -324,9 +332,19 @@ def _load_numpy():
 
 
 def _load_video_validation_runtime():
-    from runtime.video_validation import VideoValidationError, validate_video  # noqa: WPS433
+    from runtime.video_validation import (  # noqa: WPS433
+        MIN_HEIGHT,
+        VideoValidationError,
+        probe_video,
+        validate_video,
+    )
 
-    return SimpleNamespace(VideoValidationError=VideoValidationError, validate_video=validate_video)
+    return SimpleNamespace(
+        MIN_HEIGHT=MIN_HEIGHT,
+        VideoValidationError=VideoValidationError,
+        probe_video=probe_video,
+        validate_video=validate_video,
+    )
 
 
 def _load_segment_video():
@@ -337,6 +355,16 @@ def _load_segment_video():
 
     segment_video = loaded_segment_video
     return loaded_segment_video
+
+
+def _load_segment_video_sources():
+    global segment_video_sources
+    if segment_video_sources is not None:
+        return segment_video_sources
+    from segmentation.segment import segment_video_sources as loaded  # noqa: WPS433
+
+    segment_video_sources = loaded
+    return loaded
 
 
 def _load_device_runtime():
@@ -1231,6 +1259,28 @@ def _read_library_items() -> list[Dict[str, Any]]:
     return _library_store().list_items()
 
 
+SOURCES_MANIFEST_FILENAME = "sources.json"
+
+
+def _read_sources_manifest(item_id: str) -> list[Dict[str, Any]]:
+    path = _resolve_library_file(item_id, SOURCES_MANIFEST_FILENAME)
+    if path is None:
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError("Could not read the original-source manifest") from exc
+    sources = payload.get("sources") if isinstance(payload, dict) else None
+    if not isinstance(sources, list):
+        raise ValueError("Invalid original-source manifest")
+    normalized = []
+    for source in sources:
+        if not isinstance(source, dict) or not source.get("path"):
+            raise ValueError("Invalid original-source manifest")
+        normalized.append(dict(source))
+    return normalized
+
+
 def _persist_library_item(
     *,
     upload_path: Path,
@@ -1239,6 +1289,7 @@ def _persist_library_item(
     intervals_sec: list[tuple[float, float]],
     fps: float,
     job: JobDict,
+    source_manifest: Optional[list[Dict[str, Any]]] = None,
 ) -> tuple[str, Path, Path]:
     """Write one saved match folder, removing it again if any write fails.
 
@@ -1256,13 +1307,21 @@ def _persist_library_item(
         write_point_intervals(csv_out, intervals_sec)
         source_out = item_dir / "source.mp4"
         shutil.copy2(upload_path, source_out)
+        if source_manifest:
+            (item_dir / SOURCES_MANIFEST_FILENAME).write_text(
+                json.dumps({"version": 1, "sources": source_manifest}, indent=2),
+                encoding="utf-8",
+            )
         _set_step(job, "output", "in_progress", 70)
         _write_thumbnail(source_out, item_dir / "thumb.jpg")
         full_duration_s = _estimate_duration_seconds(source_out)
         meta = {
             "id": library_id,
             "name": base_name,
-            "source_name": upload_path.name,
+            "source_name": (
+                f"{len(source_manifest)} consecutive clips" if source_manifest else upload_path.name
+            ),
+            "source_count": len(source_manifest) if source_manifest else 1,
             "created": datetime.now().isoformat(timespec="seconds"),
             "created_ts": time.time(),
             "duration_s": round(full_duration_s, 2) if full_duration_s > 0 else 0.0,
@@ -1287,6 +1346,7 @@ def _new_job_state(job_id: str, cfg: Dict[str, Any]) -> JobDict:
         "cancelled": False,
         "config": cfg,
         "steps": {
+            "proxy": {"status": "completed", "progress": 100},
             "pose": {"status": "waiting", "progress": 0},
             "preprocess": {"status": "waiting", "progress": 0},
             "feature": {"status": "waiting", "progress": 0},
@@ -1396,6 +1456,7 @@ def _run_pipeline_in_worker_process(job_id: str) -> None:
                 stderr=stderr_fh,
                 text=True,
                 bufsize=1,
+                start_new_session=(os.name != "nt"),
             )
             with jobs_lock:
                 if job_id in jobs:
@@ -1604,6 +1665,32 @@ def _estimate_stream_window_count(num_frames: int, sequence_length: int, overlap
     return max(1, count)
 
 
+def _prepare_folder_proxy(job: JobDict) -> None:
+    sources = job.get("source_manifest")
+    if not sources:
+        return
+    from segmentation.proxy import create_analysis_proxy  # noqa: WPS433
+
+    proxy_path = Path(job["paths"]["upload"])
+    _set_step(job, "proxy", "in_progress", 0)
+
+    def progress(source_index: int, source_count: int, source_name: str, percent: int) -> None:
+        _check_cancel(job)
+        completed = source_index + (max(0, min(100, percent)) / 100.0)
+        overall = int((completed / max(1, source_count)) * 100)
+        _set_step(job, "proxy", "in_progress", overall)
+        job["proxy_file"] = source_name
+        job["proxy_file_index"] = source_index + 1
+        job["proxy_file_count"] = source_count
+
+    job["source_manifest"] = create_analysis_proxy(
+        sources,
+        proxy_path,
+        progress_callback=progress,
+    )
+    _set_step(job, "proxy", "completed", 100)
+
+
 def _run_pipeline(job_id: str) -> None:
     with jobs_lock:
         job = jobs.get(job_id)
@@ -1621,6 +1708,7 @@ def _run_pipeline(job_id: str) -> None:
         upload_path = Path(job["paths"]["upload"])
         job_dir = Path(job["paths"]["job_dir"])
         job_dir.mkdir(parents=True, exist_ok=True)
+        _prepare_folder_proxy(job)
         raw_output_name = cfg.get("output_name") or upload_path.stem
         base_name = Path(str(raw_output_name)).name or upload_path.stem
         pipeline_start = time.perf_counter()
@@ -1634,6 +1722,9 @@ def _run_pipeline(job_id: str) -> None:
         elif cfg.get("duration") and cfg["duration"] > 0:
             duration_seconds = min(duration_seconds, float(cfg["duration"]))
         weights = _compute_weights(duration_seconds)
+        if job.get("source_manifest"):
+            weights = {step: weight * 0.85 for step, weight in weights.items()}
+            weights["proxy"] = 0.15
         job["weights"] = weights
 
         yolo_weights = _resolve_yolo_weights(cfg)
@@ -1741,6 +1832,7 @@ def _run_pipeline(job_id: str) -> None:
                 intervals_sec=intervals_sec,
                 fps=float(cfg["fps"]),
                 job=job,
+                source_manifest=job.get("source_manifest"),
             )
             job["paths"]["video"] = str(source_out)
             job["paths"]["csv"] = str(csv_out)
@@ -2056,6 +2148,84 @@ def _start_analysis_job(upload_path: Path, cfg: Dict[str, Any]) -> str:
     return job_id
 
 
+def _natural_filename_key(path: Path) -> list[object]:
+    return [int(part) if part.isdigit() else part.casefold() for part in re.split(r"(\d+)", path.name)]
+
+
+def _video_files_in_folder(folder: Path) -> list[Path]:
+    return sorted(
+        [path.resolve() for path in folder.iterdir() if path.is_file() and path.suffix.casefold() == ".mp4"],
+        key=_natural_filename_key,
+    )
+
+
+def _choose_match_folder() -> Optional[Path]:
+    if sys.platform == "darwin":
+        result = subprocess.run(
+            [
+                "osascript",
+                "-e",
+                'POSIX path of (choose folder with prompt "Choose the folder containing consecutive match clips")',
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            if "User canceled" in (result.stderr or ""):
+                return None
+            raise RuntimeError((result.stderr or "Could not open the folder picker").strip())
+        return Path(result.stdout.strip()).expanduser().resolve()
+    raise RuntimeError("Native folder selection is currently available on macOS")
+
+
+def _start_folder_analysis_job(source_paths: list[Path], cfg: Dict[str, Any]) -> str:
+    from segmentation.proxy import probe_video_sources  # noqa: WPS433
+
+    validation = _load_video_validation_runtime()
+    infos = [validation.probe_video(path) for path in source_paths]
+    for path, info in zip(source_paths, infos):
+        if info.height < validation.MIN_HEIGHT:
+            raise ValueError(
+                f"'{path.name}' is {info.width}x{info.height}; every chunk must be at least "
+                f"{validation.MIN_HEIGHT}p."
+            )
+    first = infos[0]
+    for path, info in zip(source_paths[1:], infos[1:]):
+        if (info.width, info.height) != (first.width, first.height):
+            raise ValueError(
+                f"'{path.name}' is {info.width}x{info.height}, but the first clip is "
+                f"{first.width}x{first.height}. All chunks must use the same resolution."
+            )
+    audio_flags = [bool(getattr(info, "has_audio", False)) for info in infos]
+    if any(audio_flags) and not all(audio_flags):
+        raise ValueError(
+            "Every chunk must include audio, or every chunk must omit it. "
+            "Mixed silent and audio clips cannot be exported together."
+        )
+    total_duration = sum(max(0.0, info.duration_s) for info in infos)
+    minimum_duration = float(cfg["seq_len"]) / float(cfg["fps"])
+    if total_duration < minimum_duration:
+        raise ValueError(
+            f"The selected match is too short ({total_duration:.0f}s); the model needs at least "
+            f"{minimum_duration:.0f}s."
+        )
+
+    job_id = str(uuid.uuid4())
+    job_dir = _ensure_job_dir(job_id)
+    job_dir.mkdir(parents=True, exist_ok=True)
+    state = _new_job_state(job_id, cfg)
+    state["steps"]["proxy"] = {"status": "waiting", "progress": 0}
+    state["paths"]["upload"] = str(job_dir / "analysis_proxy.mp4")
+    state["source_manifest"] = probe_video_sources(source_paths)
+    worker = threading.Thread(target=_run_pipeline_in_worker_process, args=(job_id,), daemon=True)
+    state["thread"] = worker
+    with jobs_lock:
+        jobs[job_id] = state
+    worker.start()
+    return job_id
+
+
 def _job_status_payload(job_id: str) -> Optional[Dict[str, Any]]:
     """Client-facing job progress payload, or None for an unknown job."""
     # Build the payload while still holding the lock: _merge_worker_job does
@@ -2077,6 +2247,23 @@ def _job_status_payload(job_id: str) -> Optional[Dict[str, Any]]:
         }
 
 
+def _stop_analysis_process(process) -> None:
+    """Stop a worker and any converter it spawned in the same process group."""
+    if process is None or getattr(process, "poll", lambda: None)() is not None:
+        return
+    pid = getattr(process, "pid", None)
+    if pid and os.name != "nt":
+        try:
+            os.killpg(int(pid), signal.SIGTERM)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    try:
+        process.terminate()
+    except Exception:
+        logging.debug("Could not terminate analysis worker", exc_info=True)
+
+
 def _cancel_analysis_job(job_id: str) -> Optional[Dict[str, Any]]:
     """Cancel a running job, or None for an unknown job. Idempotent."""
     # Mutate under the lock: an unlocked cancelled/status write can race a
@@ -2092,11 +2279,21 @@ def _cancel_analysis_job(job_id: str) -> Optional[Dict[str, Any]]:
             process = job.get("process")
         status = job["status"]
     if process is not None and getattr(process, "poll", lambda: None)() is None:
-        try:
-            process.terminate()
-        except Exception:
-            logging.debug("Could not terminate analysis worker for %s", job_id, exc_info=True)
+        _stop_analysis_process(process)
+    _remove_orphan_proxy_parts(job_id)
     return {"status": status}
+
+
+def _remove_orphan_proxy_parts(job_id: str) -> None:
+    """Delete a partial analysis proxy when cancel kills the worker first."""
+    with jobs_lock:
+        job = jobs.get(job_id) or {}
+        raw = (job.get("paths") or {}).get("upload")
+    if not raw:
+        return
+    upload = Path(str(raw))
+    if upload.name == "analysis_proxy.mp4":
+        upload.unlink(missing_ok=True)
 
 
 @app.route("/api/upload-and-start", methods=["POST"])
@@ -2132,6 +2329,89 @@ def upload_and_start():
         _api_services().start_job(upload_path, cfg)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    return jsonify({"job_id": job_id}), 200
+
+
+@app.route("/api/folder/select", methods=["POST"])
+def select_match_folder():
+    """Open the native folder picker.
+
+    A caller-supplied path is ignored. The desktop UI posts an empty body, and
+    accepting ``folder_path`` would let any local process list MP4 names from
+    directories the user never chose.
+    """
+    try:
+        folder = _choose_match_folder()
+        if folder is None:
+            return jsonify({"cancelled": True}), 200
+        if not folder.is_dir():
+            return jsonify({"error": "The selected folder is not available."}), 400
+        files = _video_files_in_folder(folder)
+        if not files:
+            return jsonify({"error": "No MP4 files were found in that folder."}), 400
+        token = str(uuid.uuid4())
+        now = time.time()
+        with jobs_lock:
+            expired = [
+                pending
+                for pending, item in folder_selections.items()
+                if now - float(item.get("created_at") or 0) > FOLDER_SELECTION_TTL_SECONDS
+            ]
+            for pending in expired:
+                del folder_selections[pending]
+            if len(folder_selections) >= FOLDER_SELECTION_MAX:
+                raise RuntimeError(
+                    "Too many folders are waiting to start. Start or dismiss one, then choose again."
+                )
+            folder_selections[token] = {
+                "files": files,
+                "folder_name": folder.name,
+                "created_at": now,
+            }
+        return jsonify(
+            {
+                "token": token,
+                "folder_name": folder.name,
+                "file_count": len(files),
+                "total_bytes": sum(path.stat().st_size for path in files),
+                "files": [path.name for path in files],
+            }
+        ), 200
+    except (OSError, RuntimeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route("/api/folder/dismiss", methods=["POST"])
+def dismiss_match_folder():
+    """Drop a pending folder token when the user removes it in the UI."""
+    token = str((request.get_json(silent=True) or {}).get("token") or "")
+    with jobs_lock:
+        folder_selections.pop(token, None)
+    return jsonify({"ok": True}), 200
+
+
+@app.route("/api/folder/start", methods=["POST"])
+def start_match_folder():
+    payload = request.get_json(silent=True) or {}
+    token = str(payload.get("token") or "")
+    with jobs_lock:
+        selection = folder_selections.get(token)
+        created_at = float(selection.get("created_at") or 0) if selection is not None else 0.0
+        if selection is not None and time.time() - created_at > FOLDER_SELECTION_TTL_SECONDS:
+            folder_selections.pop(token, None)
+            selection = None
+    if selection is None:
+        return jsonify({"error": "Folder selection expired; please choose it again."}), 400
+    cfg = _normalize_config(payload.get("config") or {})
+    if not cfg.get("output_name"):
+        cfg["output_name"] = str(selection.get("folder_name") or "Tennis match")
+    try:
+        job_id = _start_folder_analysis_job(list(selection["files"]), cfg)
+    except (ValueError, OSError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    with jobs_lock:
+        if folder_selections.get(token) is selection:
+            folder_selections.pop(token, None)
     return jsonify({"job_id": job_id}), 200
 
 
@@ -2354,7 +2634,127 @@ def _export_lock(item_id: str) -> threading.Lock:
         return _export_locks.setdefault(item_id, threading.Lock())
 
 
-def _export_library_video(item_id: str) -> Path:
+def _source_dependency_mtime(item_id: str, source_path: Path) -> float:
+    newest = source_path.stat().st_mtime
+    manifest_path = _resolve_library_file(item_id, SOURCES_MANIFEST_FILENAME)
+    if manifest_path is None:
+        return newest
+    newest = max(newest, manifest_path.stat().st_mtime)
+    for source in _read_sources_manifest(item_id):
+        original = Path(str(source["path"]))
+        if original.exists():
+            newest = max(newest, original.stat().st_mtime)
+    return newest
+
+
+def _export_state(item_id: str) -> str:
+    """Return missing/processing/ready/error for a lazy library export."""
+    source_path = _resolve_library_source(item_id)
+    if source_path is None:
+        raise FileNotFoundError("Video not available")
+    csv_path = _resolve_library_segments(item_id)
+    if csv_path is None:
+        if source_path.name == "video.mp4":
+            return "ready"
+        raise FileNotFoundError("CSV not available")
+
+    with jobs_lock:
+        state = export_jobs.get(item_id, "missing")
+        if state in {"processing", "error"}:
+            return state
+
+    export_path = _library_item_dir(item_id) / "export.mp4"
+    ready = (
+        export_path.exists()
+        and export_path.stat().st_mtime >= _source_dependency_mtime(item_id, source_path)
+        and export_path.stat().st_mtime >= csv_path.stat().st_mtime
+    )
+    if ready:
+        with jobs_lock:
+            export_jobs[item_id] = "ready"
+            export_job_errors.pop(item_id, None)
+        return "ready"
+    with jobs_lock:
+        if export_jobs.get(item_id) == "ready":
+            export_jobs.pop(item_id, None)
+    return "missing"
+
+
+def _prepare_export_background(item_id: str) -> None:
+    try:
+        _export_library_video(
+            item_id,
+            progress_callback=lambda progress: _set_export_progress(item_id, progress),
+        )
+        with jobs_lock:
+            export_jobs[item_id] = "ready"
+            export_job_progress[item_id] = 100
+            export_job_errors.pop(item_id, None)
+    except Exception as exc:
+        with jobs_lock:
+            export_jobs[item_id] = "error"
+            export_job_errors[item_id] = f"Could not export video: {exc}"
+        logging.exception("Could not prepare library export %s", item_id)
+
+
+def _start_export_background(item_id: str) -> str:
+    state = _export_state(item_id)
+    if state in {"ready", "processing"}:
+        return state
+    # Claim the item before starting a thread. Two requests can both observe
+    # "missing" before either marks it processing.
+    with jobs_lock:
+        current = export_jobs.get(item_id)
+        if current in {"ready", "processing"}:
+            return current
+        export_jobs[item_id] = "processing"
+        export_job_progress[item_id] = 0
+        export_job_errors.pop(item_id, None)
+    threading.Thread(
+        target=_prepare_export_background,
+        args=(item_id,),
+        daemon=True,
+        name=f"rallyclip-export-{item_id}",
+    ).start()
+    return "processing"
+
+
+def _export_status_payload(item_id: str, state: str) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "status": state,
+        "ready": state == "ready",
+        "download_url": f"/api/library/{item_id}/video" if state == "ready" else None,
+        "progress": 100 if state == "ready" else _export_progress(item_id) if state == "processing" else 0,
+    }
+    if state == "error":
+        with jobs_lock:
+            payload["error"] = export_job_errors.get(item_id, "Could not export video.")
+    return payload
+
+
+def _export_progress(item_id: str) -> int:
+    with jobs_lock:
+        return export_job_progress.get(item_id, 0)
+
+
+def _set_export_progress(item_id: str, progress: int) -> None:
+    with jobs_lock:
+        export_job_progress[item_id] = max(0, min(99, int(progress)))
+
+
+def _export_call_kwargs(exporter: Callable[..., Any], progress_callback: Optional[Callable[[int], None]]) -> Dict[str, Any]:
+    if progress_callback is None:
+        return {}
+    if "progress_callback" not in inspect.signature(exporter).parameters:
+        return {}
+    return {"progress_callback": progress_callback}
+
+
+def _export_library_video(
+    item_id: str,
+    *,
+    progress_callback: Optional[Callable[[int], None]] = None,
+) -> Path:
     """Return the downloadable cut video for a saved match, generating it lazily.
 
     Raises FileNotFoundError when the item/source/CSV/intervals are missing and
@@ -2372,18 +2772,52 @@ def _export_library_video(item_id: str) -> Path:
 
     item_dir = _library_item_dir(item_id)
     export_path = item_dir / "export.mp4"
+    pending_path = item_dir / "export.tmp.mp4"
     # Serialize per item so simultaneous export requests don't both run the
     # slow re-encode; the loser of the race re-checks freshness and reuses.
     with _export_lock(item_id):
         needs_export = not export_path.exists()
         if not needs_export:
             export_mtime = export_path.stat().st_mtime
-            needs_export = source_path.stat().st_mtime > export_mtime or csv_path.stat().st_mtime > export_mtime
+            needs_export = (
+                _source_dependency_mtime(item_id, source_path) > export_mtime
+                or csv_path.stat().st_mtime > export_mtime
+            )
         if needs_export:
             intervals = _sorted_point_intervals(csv_path)
             if not intervals:
                 raise FileNotFoundError("No point intervals available")
-            _load_segment_video()(str(source_path), intervals, str(export_path))
+            pending_path.unlink(missing_ok=True)
+            try:
+                source_manifest = _read_sources_manifest(item_id)
+                if source_manifest:
+                    missing = [Path(str(source["path"])).name for source in source_manifest if not Path(str(source["path"])).is_file()]
+                    if missing:
+                        preview = ", ".join(missing[:3])
+                        suffix = "…" if len(missing) > 3 else ""
+                        raise FileNotFoundError(
+                            f"Original match clips are unavailable: {preview}{suffix}"
+                        )
+                    exporter = _load_segment_video_sources()
+                    export_kwargs = _export_call_kwargs(exporter, progress_callback)
+                    exporter(
+                        source_manifest,
+                        intervals,
+                        str(pending_path),
+                        **export_kwargs,
+                    )
+                else:
+                    exporter = _load_segment_video()
+                    export_kwargs = _export_call_kwargs(exporter, progress_callback)
+                    exporter(
+                        str(source_path),
+                        intervals,
+                        str(pending_path),
+                        **export_kwargs,
+                    )
+                pending_path.replace(export_path)
+            finally:
+                pending_path.unlink(missing_ok=True)
     return export_path
 
 
@@ -2399,6 +2833,30 @@ def library_video(item_id: str):
     except Exception as exc:
         logging.exception("Could not export library video %s", item_id)
         return jsonify({"error": f"Could not export video: {exc}"}), 500
+
+
+@app.route("/api/library/<item_id>/export", methods=["POST"])
+def library_export_start(item_id: str):
+    """Start a lazy export without holding the browser request open."""
+    try:
+        state = _start_export_background(item_id)
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(_export_status_payload(item_id, state)), 200 if state == "ready" else 202
+
+
+@app.route("/api/library/<item_id>/export/status", methods=["GET"])
+def library_export_status(item_id: str):
+    """Report background export state for responsive browser feedback."""
+    try:
+        state = _export_state(item_id)
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(_export_status_payload(item_id, state)), 200
 
 
 @app.route("/api/library/<item_id>/preview", methods=["GET"])

@@ -1,26 +1,32 @@
 # PROGRESS — overwrite me at every session end
 
-_Last updated: 2026-09-09 (session: assisted DMG update, Greptile cancel + checksum)._
+_Last updated: 2026-09-26 (session: dismiss folder tokens and drop avconvert)._
 
 ## Repo state
 
-- `main` has published app **v0.5.0**. Inference artifact stays
-  `artifact-rallyclip_v0.5.0`.
-- Active work: assisted update (`cursor/assisted-dmg-update-5f28`) as app **0.5.1**.
-- PR: https://github.com/iroblesrazzaq/RallyClip/pull/58
+- Topic branch `fix/pr59-export-guards`, based on PR #59 (`fa2d55b`). Do not
+  commit to `main`. The user merges.
+- App version remains **0.5.1** and the inference artifact remains
+  `models/rallyclip_v0.5.0`.
 
-## What shipped this session
+## What changed this session
 
-1. Latest app release is the newest published `v*` tag from `/releases`.
-2. Frozen app downloads to a unique staging file, verifies SHA-256 (sidecar
-   must name the DMG), then replaces `~/Downloads`.
-3. `POST /api/update/cancel` stops the server-side transfer; the button
-   becomes Cancel.
-4. Source/GUI opens that release URL. App version **0.5.1**; ONNX stays
-   `models/rallyclip_v0.5.0`.
-5. Default gate: **321 passed, 6 skipped, 27 deselected**.
+1. Stream copy remuxes a video-only cut only when a keyframe already sits on
+   the boundary, in decode order, and otherwise falls back to encode.
+2. Folder preflight rejects mixed audio before analysis. Tokens expire after
+   30 minutes, a ninth pending selection is refused, and the UI posts
+   `/api/folder/dismiss` when the user removes, replaces, or re-chooses a folder.
+3. Analysis proxies are created only with PyAV. Each clip's audio stays on
+   that clip's timeline, including a late start. Multiple video or audio
+   tracks are rejected.
+4. Cancel signals the worker process group, deletes a partial
+   `analysis_proxy.mp4`, and does not replace an installer if hashing is
+   cancelled. A second export start does not spawn another thread.
 
 ## Next steps
 
-1. Greptile 5/5, then user merges.
-2. Tag `v0.5.1` (do not retag `v0.5.0`; do not re-upload the ONNX zip).
+1. Run `greptile review --branch main --agent` until Confidence is 5/5, then
+   open the PR. Do not merge.
+2. Run one complete real-world import against a consecutive 4K camera folder,
+   confirming source ordering, proxy wall time, boundary alignment, final
+   dimensions, audio, and export quality.

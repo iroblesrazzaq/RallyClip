@@ -252,6 +252,50 @@ def test_download_preserves_existing_dmg_on_mismatch(tmp_path, monkeypatch):
     assert list(tmp_path.glob("*.partial")) == []
 
 
+def test_download_does_not_replace_installer_when_cancelled_during_hash(tmp_path, monkeypatch):
+    dmg_name = "RallyClip-0.5.1-macOS-arm64.dmg"
+    dest = tmp_path / dmg_name
+    dest.write_bytes(b"keep-me")
+    opened: list[Path] = []
+    cancel = threading.Event()
+    body = b"dmg-bytes"
+    monkeypatch.setattr("gui.update_release.downloads_dir", lambda: tmp_path)
+
+    def fake_download(
+        url: str, dest_path: Path, *, timeout: float = 300, cancel_event=None
+    ) -> None:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        if url.endswith(".sha256"):
+            dest_path.write_text(
+                f"{hashlib.sha256(body).hexdigest()}  {dmg_name}\n",
+                encoding="utf-8",
+            )
+            return
+        dest_path.write_bytes(body)
+
+    def fake_hash(_path: Path) -> str:
+        cancel.set()
+        return hashlib.sha256(body).hexdigest()
+
+    monkeypatch.setattr("gui.update_release._download_url", fake_download)
+    monkeypatch.setattr("gui.update_release.sha256_file", fake_hash)
+    monkeypatch.setattr("gui.update_release.open_downloaded_dmg", opened.append)
+    latest = parse_latest_release(
+        {
+            "tag_name": "v0.5.1",
+            "html_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.5.1",
+            "assets": [_asset(dmg_name), _asset(f"{dmg_name}.sha256")],
+        }
+    )
+
+    with pytest.raises(UpdateDownloadCancelled):
+        download_and_open_latest_dmg(latest, cancel_event=cancel)
+
+    assert opened == []
+    assert dest.read_bytes() == b"keep-me"
+    assert list(tmp_path.glob("*.partial")) == []
+
+
 def test_download_does_not_open_when_cancelled(tmp_path, monkeypatch):
     dmg_name = "RallyClip-0.5.1-macOS-arm64.dmg"
     dest = tmp_path / dmg_name

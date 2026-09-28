@@ -8,7 +8,10 @@ lazy export behavior.
 from __future__ import annotations
 
 import os
+import signal
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -77,6 +80,48 @@ def test_cancel_while_running_terminates_worker(services, job):
     assert process.terminated is True
     # Idempotent: cancelling again reports the same terminal status.
     assert services.cancel_job("job-1") == {"status": "cancelled"}
+
+
+def test_cancel_removes_orphan_proxy_parts(services, job, tmp_path):
+    job_dir = tmp_path / "job-1"
+    job_dir.mkdir()
+    leftover = job_dir / "analysis_proxy.mp4"
+    leftover.write_bytes(b"partial")
+    job["paths"]["job_dir"] = str(job_dir)
+    job["paths"]["upload"] = str(leftover)
+    job["status"] = "in_progress"
+
+    assert services.cancel_job("job-1") == {"status": "cancelled"}
+    assert not leftover.exists()
+
+
+def test_cancel_stops_a_worker_process_group(services, job, tmp_path):
+    child_pid = tmp_path / "child.pid"
+    worker = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import subprocess, pathlib, time, sys; "
+            "child = subprocess.Popen(['sleep', '30']); "
+            "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); "
+            "time.sleep(30)",
+            str(child_pid),
+        ],
+        start_new_session=True,
+    )
+    deadline = time.time() + 5
+    while not child_pid.exists() and time.time() < deadline:
+        time.sleep(0.05)
+    job["process"] = worker
+    try:
+        assert services.cancel_job("job-1") == {"status": "cancelled"}
+        worker.wait(timeout=2)
+        grandchild = int(child_pid.read_text())
+        with pytest.raises(ProcessLookupError):
+            os.kill(grandchild, 0)
+    finally:
+        if worker.poll() is None:
+            os.killpg(worker.pid, signal.SIGTERM)
 
 
 def test_cancel_finished_job_keeps_status(services, job):

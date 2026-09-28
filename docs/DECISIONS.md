@@ -237,3 +237,179 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   DMG. An unnamed sidecar hash could verify the wrong bytes.
 - **Rejected:** Client-only AbortController as the cancel mechanism.
 
+## 2026-09-20 — Local video uploads have no fixed byte-size ceiling
+
+- **What:** Removed the browser's 2 GiB selection guard and Flask's matching
+  `MAX_CONTENT_LENGTH`; the upload interface now states the 720p input-quality
+  floor instead of advertising MP4-only / 2 GB restrictions.
+- **Why:** Analysis is streaming and memory-bounded, and the app is a local-only
+  service. The old cap was a legacy defensive limit rather than a model,
+  decoder, or export constraint.
+- **Rejected:** Raising the arbitrary ceiling to 4 or 8 GiB (the same problem at
+  a different threshold); retaining a frontend-only warning that disagrees with
+  the server. Available local disk space is now the practical upload bound.
+
+## 2026-09-20 — Apple exports prefer VideoToolbox with libx264 fallback
+
+- **What:** macOS exports try `h264_videotoolbox` first, using a resolution- and
+  frame-rate-aware bitrate derived from the existing CRF preference. Input decode
+  uses FFmpeg auto threading. Any VideoToolbox setup/runtime failure deletes the
+  partial output and retries the same intervals with `libx264`.
+- **Why:** The M1 Max media encoder was idle. On the user's real 14-cut 1080p60
+  match, the prior software path took 159.16s; VideoToolbox plus parallel decode
+  produced the same 165.48s, 1920x1080 H.264/AAC timeline in 32.09s (4.96x
+  faster). Audio-sync and frame-duration regression tests pass on real hardware.
+- **Rejected:** VideoToolbox decode (60s of the actual H.264 source took 19.43s
+  versus 3.10s with FFmpeg software threading because frames must return to CPU
+  memory); replacing `libx264` outright (hardware sessions/codecs can be absent);
+  a fixed bitrate that would underserve 4K or bloat 720p.
+
+## 2026-09-20 — Consecutive folders use a proxy timeline and external originals
+
+- **What:** A macOS folder picker imports directly referenced, naturally sorted
+  MP4 chunks as one continuous match. RallyClip creates one 1280x720-or-smaller,
+  30 fps H.264/AAC proxy for analysis and review, saves exact per-file offsets in
+  `sources.json`, and maps edited global point intervals back onto the original
+  files for a single VideoToolbox export.
+- **Why:** Multi-hour 4K matches should not be uploaded/copied one chunk at a time
+  or analysed at 4K/60 when the model consumes 720p at 5 fps. A continuous proxy
+  also allows model windows and points to cross camera-file boundaries while
+  preserving the originals' resolution and audio in the final cut.
+- **Rejected:** Concatenating or copying all 4K sources into the library
+  (duplicates very large footage); analysing each chunk independently (loses
+  boundary-spanning points and rejects short final chunks); exporting from the
+  proxy (quality loss).
+- **Tradeoff:** Originals are referenced in place and must remain available until
+  export. Matching resolution/frame rate is required across consecutive chunks
+  so one output stream can be encoded without scaling or cadence changes.
+
+## 2026-09-20 — Consecutive chunks may report different frame rates
+
+- **What:** Folder preflight requires matching dimensions but no longer requires
+  equal average-frame-rate metadata. Multi-source export maps each decoded frame's
+  source timestamp onto the output time base, dropping duplicate output ticks or
+  leaving presentation gaps as needed while keeping every cut's real duration.
+- **Why:** Cameras can report 59.94 versus 60.00 (or slightly different calculated
+  averages) across otherwise compatible consecutive MP4 chunks. Rejecting these
+  prevented valid matches; emitting every frame sequentially at the first clip's
+  rate would instead introduce speed and audio-sync errors.
+- **Rejected:** A wider arbitrary FPS tolerance (still rejects legitimate changes
+  and leaves a cliff); ignoring the mismatch while using sequential output PTS
+  (changes playback speed). Resolution changes remain rejected until export has
+  an explicit output-resolution policy rather than silently scaling originals.
+
+## 2026-09-20 — macOS proxies use AVFoundation hardware transcode plus packet remux
+
+- **What:** For inputs above 720p on macOS, each source chunk is transcoded with
+  `/usr/bin/avconvert` and `PresetAppleM4V720pHD` (960x720/30 for the user's 4:3
+  DJI files). PyAV then joins the encoded H.264/AAC packets by rewriting PTS/DTS;
+  it does not decode or encode them again. The prior PyAV proxy builder remains
+  the fallback on other platforms or if native conversion fails.
+- **Why:** The initial implementation used the M1 Max media encoder but software-
+  decoded and CPU-scaled every 4K60 frame, measuring about 0.33x realtime on the
+  live 102-minute match. Native AVFoundation processed 60 seconds of the exact
+  source in 9.06s (6.6x realtime, 1.73s user CPU), and packet-remux joined two
+  proxy minutes in 0.30s. This actually engages Apple's media decode path.
+- **Rejected:** PyAV VideoToolbox decode plus CPU frame transfer (previous 1080p
+  benchmark was slower than software decode); native transcode followed by a
+  second proxy encode (unnecessary quality/time cost); a 400x300 cellular preset
+  (too little pose detail). The 720p preset uses more proxy disk space, trading
+  storage for much faster first-pass processing and smooth 30fps review.
+
+## 2026-09-20 — Report frame-based progress for lazy exports
+
+- **What:** Export status now includes a percentage calculated from emitted video frames, and the browser displays it on the export button.
+- **Why:** Saved matches may contain thousands of seconds of source footage and require a full re-encode; a spinner-only state gave no indication whether the background job was advancing.
+- **Rejected:** Estimating from output-file size, because the MP4 is written through an encoder and its size is not monotonic with frame completion.
+
+## 2026-09-20 — Prefer keyframe-aligned stream copy for exports
+
+- **What:** Saved-match exports first remux packets between nearby keyframes, padding point intervals by up to one second; the existing frame-accurate encoder remains the fallback.
+- **Why:** Most exports can avoid decoding and re-encoding when the source contains usable keyframes, while the padding preserves the requested point context.
+- **Rejected:** Always stream-copying, because files without a keyframe after an interval end cannot be clipped safely that way and must retain the exact encoder path.
+
+## 2026-09-26 — Refuse unsafe stream-copy and fail mixed folder audio early
+
+- **What:** Keyframe-padded export ranges that overlap or touch, and copied
+  keyframe spans that run into the next cut, raise and fall back to the
+  frame-accurate encoder. Folder preflight rejects a mix of audio and silent
+  chunks before proxy generation. Pending folder selections keep only the
+  latest token, and `/api/folder/start` drops tokens older than 30 minutes.
+- **Why:** The remux fast path appended each padded window independently, so
+  points less than two seconds apart (or a long GOP that overshoots the pad)
+  repeated footage. Mixed-audio folders passed analysis and then failed every
+  export. `folder_selections` stored every unused pick until process exit.
+- **Rejected:** Merging overlapping pads into one remux (would keep the
+  between-point gap inside the export); normalizing missing audio with silence
+  during export (hides a bad folder after the expensive analysis); a TTL-only
+  map with no cap (a burst of folder picks still grows without bound).
+
+## 2026-09-26 — Stream copy stays inside the cut; folder and proxy guards
+
+- **What:** A video-only remux that would include packets outside the selected
+  interval falls back to frame-accurate encode. `/api/folder/select` uses only
+  the native picker. Cancel signals the worker's process group. Native proxy
+  chunks keep the original source duration instead of the packet-derived span.
+  Proxy silence is emitted in frames no larger than one AAC frame. The upload
+  Start button stays enabled when a folder is still selected.
+- **Why:** Keyframe padding shipped extra footage. A JSON `folder_path` let any
+  local caller list MP4 names. `terminate()` on the worker left `avconvert`
+  running. Proxy packet durations drifted later-file export times. One silence
+  allocation could be the size of a missing audio track. Folder preflight
+  errors called `resetControls()`, which only re-enabled Start for a single file.
+- **Rejected:** Deleting the remux path entirely (it is still valid when the
+  keyframes already match the cut); accepting `folder_path` behind a header
+  (the UI never sends a path).
+
+## 2026-09-26 — Proxy join uses presentation time; folder picks stay bounded
+
+- **What:** Native proxy remux measures each part from its earliest presentation
+  timestamp and drops only packets that start after the original duration.
+  Pending folder selections expire after 30 minutes. At most eight unused
+  selections are kept; a further selection is refused instead of evicting
+  another window's token. Cancel deletes leftover `.analysis-proxy-*.m4v`
+  parts. Stream copy allows at most 1 ms outside the selected interval.
+- **Why:** Using decode timestamps as the origin discarded the end of B-frame
+  parts. Replacing every pending token broke a second window. Killing the worker
+  skipped the converter's `finally` and left part files behind.
+- **Rejected:** Keeping a single global folder token (breaks two windows);
+  capping proxy packets by decode time (drops displayed frames).
+
+## 2026-09-26 — Folder dismiss frees a slot; proxies stay on PyAV
+
+- **What:** Removing a chosen folder, replacing it with a file, or choosing a
+  different folder posts `/api/folder/dismiss` and drops that token. Analysis
+  proxies are created only with PyAV (VideoToolbox, then libx264).
+- **Why:** A cap of eight pending selections blocked a new import for 30 minutes
+  once the UI forgot the tokens. `/usr/bin/avconvert` decoded and encoded outside
+  PyAV, which is the runtime media rule.
+- **Rejected:** Evicting the oldest token to make room (invalidates another
+  window); keeping avconvert behind a macOS check (still leaves the runtime
+  decode path).
+
+## 2026-09-26 — Stream copy keeps the pad; proxy audio stays in place
+
+- **What:** A video-only remux copies packets inside the keyframe pad and stops
+  before the closing keyframe. Proxy audio that starts after the picture is
+  preceded by silence. Cancel deletes `analysis_proxy.mp4`. A second export
+  start does not spawn another thread once the item is already processing.
+- **Why:** Comparing the remux to the exact cut rejected the pad, so every
+  stream copy fell back to a re-encode. Late source audio was written at the
+  start of the proxy chunk. Killing the worker left the partial proxy. Two
+  export requests could both observe "missing" and each start work.
+- **Rejected:** Turning stream copy off; padding the audio gap at the end of
+  the chunk; letting the extra export thread wait on the encode lock.
+
+## 2026-09-26 — Remux only keyframe-aligned cuts; keep each clip's audio
+
+- **What:** Stream copy succeeds only when a keyframe already sits on the cut.
+  Packets stay in decode order, and nothing outside the cut is muxed. Proxy
+  audio timing is measured inside each clip. A cancel during DMG hashing does
+  not replace the installer. More than one video or audio track is an error.
+- **Why:** Treating the one-second pad as allowed footage still exported
+  unselected video, and requiring the pad made every remux fall back. The
+  second camera clip's timestamps restarted at zero and were discarded. Hashing
+  a DMG is slow enough for cancel to land after the download and before the
+  file replace. The first of several camera tracks is not a safe guess.
+- **Rejected:** Including the pad as export context; sorting remux packets by
+  presentation time; picking track zero when a file has several.

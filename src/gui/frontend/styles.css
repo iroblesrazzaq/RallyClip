@@ -958,6 +958,32 @@ select {
     cursor: not-allowed;
 }
 
+.btn.is-busy {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
+}
+
+.btn.is-busy:disabled {
+    opacity: 0.82;
+}
+
+.btn.is-busy::before {
+    content: "";
+    width: 0.8rem;
+    height: 0.8rem;
+    flex: 0 0 auto;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: export-spin 0.75s linear infinite;
+}
+
+@keyframes export-spin {
+    to { transform: rotate(360deg); }
+}
+
 .btn-primary {
     background: var(--accent);
     border-color: var(--accent);

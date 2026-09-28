@@ -23,6 +23,15 @@ def test_resolve_frontend_dir_finds_repo_assets():
     assert (frontend / "index.html").exists()
 
 
+def test_gui_upload_has_no_fixed_file_size_limit():
+    from gui import app as gui_app
+
+    assert gui_app.app.config.get("MAX_CONTENT_LENGTH") is None
+    script = (resolve_frontend_dir() / "script.js").read_text(encoding="utf-8")
+    assert "File must be under 2GB." not in script
+    assert "2 * 1024 * 1024 * 1024" not in script
+
+
 def test_gui_health_and_defaults(tmp_path, monkeypatch):
     model_dir = write_manifest_model_dir(tmp_path / "models" / "rallyclip_v0.3.1")
     monkeypatch.chdir(tmp_path)
@@ -402,6 +411,274 @@ def test_persist_library_item_saves_source_without_cutting(tmp_path, monkeypatch
     assert csv_out.read_text(encoding="utf-8") == "start_time,end_time\n1.234,5.678\n"
     assert not (item_dir / "video.mp4").exists()
     assert not (item_dir / "export.mp4").exists()
+
+
+def test_folder_selection_naturally_orders_mp4_chunks(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    folder = tmp_path / "match"
+    folder.mkdir()
+    for name in ("DJI_10.MP4", "DJI_2.MP4", "DJI_1.MP4"):
+        (folder / name).write_bytes(b"video")
+    monkeypatch.setattr(gui_app, "folder_selections", {})
+    monkeypatch.setattr(gui_app, "_choose_match_folder", lambda: folder)
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/select")
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["file_count"] == 3
+    assert payload["files"] == ["DJI_1.MP4", "DJI_2.MP4", "DJI_10.MP4"]
+    assert payload["token"] in gui_app.folder_selections
+
+
+def test_folder_start_uses_selection_once(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    source = tmp_path / "001.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(
+        gui_app,
+        "folder_selections",
+        {"token": {"files": [source], "folder_name": "Final", "created_at": time.time()}},
+    )
+    calls = []
+    monkeypatch.setattr(
+        gui_app,
+        "_start_folder_analysis_job",
+        lambda files, cfg: calls.append((files, cfg)) or "job-folder",
+    )
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/start", json={"token": "token", "config": {}})
+
+    assert response.status_code == 200
+    assert response.get_json() == {"job_id": "job-folder"}
+    assert calls[0][0] == [source]
+    assert calls[0][1]["output_name"] == "Final"
+    assert "token" not in gui_app.folder_selections
+
+
+def test_folder_start_keeps_the_token_when_preflight_fails(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    source = tmp_path / "001.mp4"
+    source.write_bytes(b"video")
+    selection = {"files": [source], "folder_name": "Final", "created_at": time.time()}
+    monkeypatch.setattr(gui_app, "folder_selections", {"token": selection})
+
+    def fail(files, cfg):
+        raise ValueError("mixed audio")
+
+    monkeypatch.setattr(gui_app, "_start_folder_analysis_job", fail)
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/start", json={"token": "token", "config": {}})
+
+    assert response.status_code == 400
+    assert gui_app.folder_selections["token"] is selection
+
+
+def test_folder_select_keeps_other_fresh_tokens_and_drops_expired(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    folder = tmp_path / "match"
+    folder.mkdir()
+    (folder / "001.mp4").write_bytes(b"video")
+    monkeypatch.setattr(
+        gui_app,
+        "folder_selections",
+        {
+            "other": {"files": [folder / "001.mp4"], "folder_name": "other", "created_at": time.time()},
+            "expired": {
+                "files": [folder / "001.mp4"],
+                "folder_name": "old",
+                "created_at": time.time() - gui_app.FOLDER_SELECTION_TTL_SECONDS - 5,
+            },
+        },
+    )
+    monkeypatch.setattr(gui_app, "_choose_match_folder", lambda: folder)
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/select")
+
+    assert response.status_code == 200
+    token = response.get_json()["token"]
+    assert token in gui_app.folder_selections
+    assert "other" in gui_app.folder_selections
+    assert "expired" not in gui_app.folder_selections
+
+
+def test_folder_select_refuses_a_ninth_pending_token(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    folder = tmp_path / "match"
+    folder.mkdir()
+    (folder / "001.mp4").write_bytes(b"video")
+    pending = {
+        f"token-{index}": {
+            "files": [folder / "001.mp4"],
+            "folder_name": "match",
+            "created_at": time.time(),
+        }
+        for index in range(gui_app.FOLDER_SELECTION_MAX)
+    }
+    monkeypatch.setattr(gui_app, "folder_selections", pending)
+    monkeypatch.setattr(gui_app, "_choose_match_folder", lambda: folder)
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/select")
+
+    assert response.status_code == 400
+    assert "waiting" in response.get_json()["error"].lower()
+    assert set(gui_app.folder_selections) == set(pending)
+
+
+def test_folder_dismiss_releases_a_pending_token(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    source = tmp_path / "001.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(
+        gui_app,
+        "folder_selections",
+        {"token": {"files": [source], "folder_name": "match", "created_at": time.time()}},
+    )
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/dismiss", json={"token": "token"})
+
+    assert response.status_code == 200
+    assert "token" not in gui_app.folder_selections
+
+
+def test_folder_select_ignores_a_client_supplied_path(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    (secret / "private.mp4").write_bytes(b"video")
+    monkeypatch.setattr(gui_app, "folder_selections", {})
+    monkeypatch.setattr(gui_app, "_choose_match_folder", lambda: None)
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/select", json={"folder_path": str(secret)})
+
+    assert response.status_code == 200
+    assert response.get_json()["cancelled"] is True
+    assert gui_app.folder_selections == {}
+
+
+def test_folder_start_rejects_an_expired_selection(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    source = tmp_path / "001.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(
+        gui_app,
+        "folder_selections",
+        {
+            "token": {
+                "files": [source],
+                "folder_name": "Final",
+                "created_at": time.time() - gui_app.FOLDER_SELECTION_TTL_SECONDS - 5,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        gui_app,
+        "_start_folder_analysis_job",
+        lambda files, cfg: (_ for _ in ()).throw(AssertionError("expired selection must not start")),
+    )
+    client = gui_app.app.test_client()
+
+    response = client.post("/api/folder/start", json={"token": "token", "config": {}})
+
+    assert response.status_code == 400
+    assert "expired" in response.get_json()["error"].lower()
+    assert "token" not in gui_app.folder_selections
+
+
+def test_folder_preflight_rejects_mixed_audio_before_analysis(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    first = tmp_path / "001.mp4"
+    second = tmp_path / "002.mp4"
+    first.write_bytes(b"video one")
+    second.write_bytes(b"video two")
+
+    class Info:
+        def __init__(self, has_audio):
+            self.width = 1920
+            self.height = 1080
+            self.fps = 30.0
+            self.duration_s = 30.0
+            self.has_audio = has_audio
+
+    infos = {first: Info(True), second: Info(False)}
+
+    class FakeValidation:
+        MIN_HEIGHT = 720
+
+        @staticmethod
+        def probe_video(path):
+            return infos[path]
+
+    monkeypatch.setattr(gui_app, "_load_video_validation_runtime", lambda: FakeValidation)
+    monkeypatch.setattr(
+        gui_app,
+        "_run_pipeline_in_worker_process",
+        lambda _job_id: (_ for _ in ()).throw(AssertionError("mixed audio must not start analysis")),
+    )
+
+    with pytest.raises(ValueError, match="audio"):
+        gui_app._start_folder_analysis_job([first, second], gui_app._normalize_config({}))
+
+
+def test_folder_preflight_accepts_camera_chunks_with_different_reported_fps(tmp_path, monkeypatch):
+    from gui import app as gui_app
+    from segmentation import proxy as proxy_module
+
+    first = tmp_path / "001.mp4"
+    second = tmp_path / "002.mp4"
+    first.write_bytes(b"video one")
+    second.write_bytes(b"video two")
+
+    class Info:
+        def __init__(self, fps):
+            self.width = 3840
+            self.height = 2160
+            self.fps = fps
+            self.duration_s = 30.0
+            self.has_audio = True
+
+    infos = {first: Info(59.94), second: Info(60.0)}
+
+    class FakeValidation:
+        MIN_HEIGHT = 720
+
+        @staticmethod
+        def probe_video(path):
+            return infos[path]
+
+    manifest = [
+        {"path": str(first), "name": first.name, "start_s": 0.0, "duration_s": 30.0},
+        {"path": str(second), "name": second.name, "start_s": 30.0, "duration_s": 30.0},
+    ]
+    monkeypatch.setattr(gui_app, "JOBS_DIR", tmp_path / "jobs")
+    monkeypatch.setattr(gui_app, "jobs", {})
+    monkeypatch.setattr(gui_app, "_load_video_validation_runtime", lambda: FakeValidation)
+    monkeypatch.setattr(proxy_module, "probe_video_sources", lambda paths: manifest)
+    monkeypatch.setattr(gui_app, "_run_pipeline_in_worker_process", lambda _job_id: None)
+
+    job_id = gui_app._start_folder_analysis_job(
+        [first, second],
+        gui_app._normalize_config({}),
+    )
+    gui_app.jobs[job_id]["thread"].join(timeout=2)
+
+    assert gui_app.jobs[job_id]["source_manifest"] == manifest
 
 
 def test_library_preview_streams_video_inline(tmp_path, monkeypatch):
@@ -901,8 +1178,160 @@ def test_library_video_export_generates_cut_on_demand(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert response.data == b"cut video"
-    assert calls == [(str(source), [(1.0, 3.0), (4.0, 5.0)], str(item_dir / "export.mp4"))]
+    assert calls == [(str(source), [(1.0, 3.0), (4.0, 5.0)], str(item_dir / "export.tmp.mp4"))]
     assert (item_dir / "export.mp4").read_bytes() == b"cut video"
+
+
+def test_library_folder_export_cuts_original_chunks_not_proxy(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "folder-match"
+    item_dir.mkdir(parents=True)
+    proxy = item_dir / "source.mp4"
+    proxy.write_bytes(b"720p proxy")
+    first = tmp_path / "001.mp4"
+    second = tmp_path / "002.mp4"
+    first.write_bytes(b"4k one")
+    second.write_bytes(b"4k two")
+    sources = [
+        {"path": str(first), "name": first.name, "start_s": 0.0, "duration_s": 10.0},
+        {"path": str(second), "name": second.name, "start_s": 10.0, "duration_s": 10.0},
+    ]
+    (item_dir / "sources.json").write_text(json.dumps({"version": 1, "sources": sources}), encoding="utf-8")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n9.0,11.0\n", encoding="utf-8")
+    (item_dir / "meta.json").write_text('{"name": "Folder match"}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    calls = []
+
+    def fake_segment_sources(source_manifest, intervals, output_path):
+        calls.append((source_manifest, intervals, output_path))
+        Path(output_path).write_bytes(b"combined 4k cut")
+
+    monkeypatch.setattr(gui_app, "segment_video_sources", fake_segment_sources)
+
+    response = gui_app.app.test_client().get("/api/library/folder-match/video")
+
+    assert response.status_code == 200
+    assert response.data == b"combined 4k cut"
+    assert calls == [(sources, [(9.0, 11.0)], str(item_dir / "export.tmp.mp4"))]
+
+
+def test_overlapping_background_exports_start_once(monkeypatch):
+    import threading
+
+    from gui import app as gui_app
+
+    monkeypatch.setattr(gui_app, "export_jobs", {})
+    monkeypatch.setattr(gui_app, "export_job_progress", {})
+    monkeypatch.setattr(gui_app, "export_job_errors", {})
+    gate = threading.Barrier(2)
+
+    def both_missing(_item_id):
+        gate.wait(timeout=2)
+        return "missing"
+
+    monkeypatch.setattr(gui_app, "_export_state", both_missing)
+    started = []
+    real_thread = threading.Thread
+
+    class IdleThread:
+        def __init__(self, *args, **kwargs):
+            started.append(kwargs.get("name"))
+
+        def start(self):
+            return None
+
+    monkeypatch.setattr(gui_app.threading, "Thread", IdleThread)
+    results = []
+
+    def start():
+        results.append(gui_app._start_export_background("item"))
+
+    threads = [real_thread(target=start) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert results == ["processing", "processing"]
+    assert len(started) == 1
+
+
+def test_library_export_background_reports_processing_then_ready(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-background"
+    item_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"full video")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
+    (item_dir / "meta.json").write_text('{"name": "Match"}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    monkeypatch.setattr(gui_app, "export_jobs", {})
+    monkeypatch.setattr(gui_app, "export_job_errors", {})
+
+    def fake_segment_video(input_video, intervals_sec, output_video):
+        Path(output_video).write_bytes(b"cut video")
+
+    monkeypatch.setattr(gui_app, "segment_video", fake_segment_video)
+    client = gui_app.app.test_client()
+
+    started = client.post("/api/library/match-background/export")
+    assert started.status_code == 202
+    assert started.get_json() == {
+        "status": "processing",
+        "ready": False,
+        "download_url": None,
+        "progress": 0,
+    }
+
+    payload = None
+    for _ in range(100):
+        payload = client.get("/api/library/match-background/export/status").get_json()
+        if payload["status"] == "ready":
+            break
+        time.sleep(0.01)
+    assert payload == {
+        "status": "ready",
+        "ready": True,
+        "download_url": "/api/library/match-background/video",
+        "progress": 100,
+    }
+
+
+def test_library_export_background_surfaces_encoder_error(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-error"
+    item_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"full video")
+    (item_dir / "segments.csv").write_text("start_time,end_time\n1.0,3.0\n", encoding="utf-8")
+    (item_dir / "meta.json").write_text('{"name": "Match"}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    monkeypatch.setattr(gui_app, "export_jobs", {})
+    monkeypatch.setattr(gui_app, "export_job_errors", {})
+
+    def fail_segment_video(input_video, intervals_sec, output_video):
+        raise RuntimeError("encoder unavailable")
+
+    monkeypatch.setattr(gui_app, "segment_video", fail_segment_video)
+    client = gui_app.app.test_client()
+    assert client.post("/api/library/match-error/export").status_code == 202
+
+    payload = None
+    for _ in range(100):
+        payload = client.get("/api/library/match-error/export/status").get_json()
+        if payload["status"] == "error":
+            break
+        time.sleep(0.01)
+    assert payload["status"] == "error"
+    assert payload["ready"] is False
+    assert payload["download_url"] is None
+    assert payload["error"] == "Could not export video: encoder unavailable"
+    assert not (item_dir / "export.mp4").exists()
+    assert not (item_dir / "export.tmp.mp4").exists()
 
 
 def test_frozen_data_root_is_none_when_not_frozen():
