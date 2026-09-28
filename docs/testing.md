@@ -16,9 +16,12 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-09-09, assisted DMG update, Linux py3.12):
-**321 passed, 6 skipped, 27 deselected, ~20s**. `tests/test_release_packaging.py` 21 passed;
-`tests/test_artifact_fetch.py` 6 passed.
+Last known (2026-09-20, Apple Silicon source install, Python 3.12):
+**338 passed, 5 skipped, 27 deselected, 24.87s**. The CoreML and VideoToolbox
+tests require normal host hardware/cache access; release-script subprocesses
+require the project venv first on `PATH` when Apple's `/usr/bin/python3` is
+unavailable. On this host the system Git is also blocked until the Xcode licence
+is accepted, so the bundled fallback Git must precede it on `PATH`.
 
 ## Compile gate (cheap, run with the default gate)
 
@@ -26,7 +29,7 @@ Last known (2026-09-09, assisted DMG update, Linux py3.12):
 $PY -m compileall -q src tests
 ```
 
-Last known (2026-07-03): exit 0.
+Last known (2026-09-20): exit 0 with the local source-install venv.
 
 ## Golden CLI parity (run when touching pipeline/engine/extraction/decode)
 
@@ -34,7 +37,7 @@ Last known (2026-07-03): exit 0.
 PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_cli_golden_parity.py
 ```
 
-Last known (2026-07-03): **1 passed, 14.0s**. Boundaries compared at 0.5s tolerance;
+Last known (2026-09-20): **1 passed, 7.71s**. Boundaries compared at 0.5s tolerance;
 byte-exact only holds on the machine+env the golden was generated on. ubuntu/windows
 ORT can split a TCN point across a 1-frame pointness dip; v0.5.0 ships
 `merge_gap_sec: 0.5` so those fragments become one segment.

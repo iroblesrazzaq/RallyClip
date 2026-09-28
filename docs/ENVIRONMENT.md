@@ -50,6 +50,20 @@ uv run rallyclip-desktop         # pywebview shell (needs --extra desktop)
 
 Local runtime config: `config.toml` (don't commit machine-specific paths).
 
+On macOS, segmented-video export automatically prefers the VideoToolbox H.264
+encoder and falls back to `libx264` if the hardware session is unavailable. The
+source install's PyAV wheel must expose `h264_videotoolbox`; this is checked at
+runtime and requires no config flag.
+
+The GUI's consecutive-folder importer uses a native macOS folder chooser. It
+references the original MP4 files in place, stores their absolute paths in the
+saved match's `sources.json`, and creates a 720p/30 H.264/AAC analysis proxy in
+the library. Keep the original folder mounted and unchanged until final export.
+On macOS, source footage above 720p is proxy-transcoded per chunk with the system
+`/usr/bin/avconvert` (`PresetAppleM4V720pHD`) so AVFoundation can use Apple media
+decode/encode hardware; the encoded parts are packet-remuxed into one MP4. PyAV
+software decode/VideoToolbox encode is the cross-platform fallback.
+
 ## Model assets
 
 - Default inference dir: `models/rallyclip_v0.5.0/` (`runtime.defaults.DEFAULT_ARTIFACT_DIR`).

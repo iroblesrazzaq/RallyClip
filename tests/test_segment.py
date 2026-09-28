@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 from fractions import Fraction
+from pathlib import Path
 
 import pytest
 
 av = pytest.importorskip("av")
 np = pytest.importorskip("numpy")
 
-from segmentation.segment import _in_interval, load_intervals, segment_video
+from segmentation import segment as segment_module
+from segmentation.segment import (
+    _in_interval,
+    load_intervals,
+    segment_video,
+    segment_video_sources,
+    timeline_intervals_by_source,
+)
+from segmentation import proxy as proxy_module
+from segmentation.proxy import create_analysis_proxy, probe_video_sources
 
 
 def _make_clip(path, seconds=12, fps=10, with_audio=True, sample_rate=48000):
@@ -96,6 +106,45 @@ def test_in_interval_boundaries():
     assert not _in_interval(0.5, intervals, starts, 1e-6)  # before first
 
 
+def test_videotoolbox_bitrate_scales_with_resolution_fps_and_crf():
+    default_1080p60 = segment_module._videotoolbox_bitrate(1920, 1080, Fraction(60, 1), 20)
+    default_4k60 = segment_module._videotoolbox_bitrate(3840, 2160, Fraction(60, 1), 20)
+
+    assert default_1080p60 == 7_464_960
+    assert default_4k60 == 29_859_840
+    assert segment_module._videotoolbox_bitrate(1920, 1080, Fraction(60, 1), 14) == 14_929_920
+    assert segment_module._videotoolbox_bitrate(1920, 1080, Fraction(60, 1), 26) == 3_732_480
+
+
+def test_videotoolbox_failure_retries_cleanly_with_libx264(tmp_path, monkeypatch):
+    output = tmp_path / "out.mp4"
+    calls = []
+
+    monkeypatch.setattr(
+        segment_module,
+        "_video_encoder_candidates",
+        lambda: (segment_module.VIDEOTOOLBOX_ENCODER, segment_module.SOFTWARE_ENCODER),
+    )
+
+    def fake_encode(input_video, intervals, output_path, *, eps, crf, video_encoder):
+        calls.append((intervals, video_encoder))
+        if video_encoder == segment_module.VIDEOTOOLBOX_ENCODER:
+            Path(output_path).write_bytes(b"incomplete hardware output")
+            raise av.error.ExternalError(1, "hardware encoder failed")
+        assert not Path(output_path).exists()
+        Path(output_path).write_bytes(b"software output")
+
+    monkeypatch.setattr(segment_module, "_segment_video_with_encoder", fake_encode)
+
+    segment_video("input.mp4", [(4.0, 8.0), (1.0, 5.0)], str(output))
+
+    assert calls == [
+        ([(1.0, 8.0)], segment_module.VIDEOTOOLBOX_ENCODER),
+        ([(1.0, 8.0)], segment_module.SOFTWARE_ENCODER),
+    ]
+    assert output.read_bytes() == b"software output"
+
+
 def test_segment_carries_audio_and_concatenates(tmp_path):
     src = tmp_path / "src.mp4"
     try:
@@ -137,3 +186,122 @@ def test_segment_no_video_stream_raises_without_leaving_a_file(tmp_path):
     with pytest.raises(RuntimeError):
         segment_video(str(src), [(0.5, 1.0)], str(out))
     assert not out.exists()  # no corrupt/zero-byte output left behind
+
+
+def test_timeline_intervals_split_cleanly_across_chunk_boundary():
+    sources = [
+        {"path": "one.mp4", "start_s": 0.0, "duration_s": 10.0},
+        {"path": "two.mp4", "start_s": 10.0, "duration_s": 8.0},
+    ]
+
+    assert timeline_intervals_by_source(sources, [(8.5, 11.25), (15.0, 16.0)]) == [
+        ("one.mp4", [(8.5, 10.0)]),
+        ("two.mp4", [(0.0, 1.25), (5.0, 6.0)]),
+    ]
+
+
+def test_segment_video_sources_keeps_source_timeline_order(tmp_path):
+    first = tmp_path / "001.mp4"
+    second = tmp_path / "002.mp4"
+    try:
+        _make_clip(first, seconds=4, with_audio=True)
+        _make_clip(second, seconds=4, with_audio=True)
+    except Exception as exc:
+        pytest.skip(f"cannot encode test clips: {exc}")
+    output = tmp_path / "combined.mp4"
+    sources = [
+        {"path": str(first), "start_s": 0.0, "duration_s": 4.0},
+        {"path": str(second), "start_s": 4.0, "duration_s": 4.0},
+    ]
+
+    segment_video_sources(sources, [(3.0, 5.0), (6.0, 7.0)], str(output))
+
+    kinds, duration = _streams_and_duration(output)
+    assert kinds == {"video", "audio"}
+    assert duration == pytest.approx(3.0, abs=0.35)
+
+
+def test_analysis_proxy_is_continuous_and_returns_exact_offsets(tmp_path):
+    first = tmp_path / "clip_1.mp4"
+    second = tmp_path / "clip_2.mp4"
+    try:
+        _make_clip(first, seconds=2, fps=10, with_audio=True)
+        _make_clip(second, seconds=2, fps=10, with_audio=True)
+    except Exception as exc:
+        pytest.skip(f"cannot encode test clips: {exc}")
+    output = tmp_path / "proxy.mp4"
+
+    manifest = create_analysis_proxy(probe_video_sources([first, second]), output, fps=10)
+
+    kinds, duration = _streams_and_duration(output)
+    assert kinds == {"video", "audio"}
+    assert duration == pytest.approx(4.0, abs=0.35)
+    assert manifest[0]["start_s"] == 0.0
+    assert manifest[1]["start_s"] == pytest.approx(manifest[0]["duration_s"], abs=0.001)
+
+
+def test_segment_video_sources_preserves_timing_across_different_frame_rates(tmp_path):
+    first = tmp_path / "10fps.mp4"
+    second = tmp_path / "15fps.mp4"
+    try:
+        _make_clip(first, seconds=4, fps=10, with_audio=True)
+        _make_clip(second, seconds=4, fps=15, with_audio=True)
+    except Exception as exc:
+        pytest.skip(f"cannot encode test clips: {exc}")
+    output = tmp_path / "mixed-rate.mp4"
+    sources = [
+        {"path": str(first), "start_s": 0.0, "duration_s": 4.0},
+        {"path": str(second), "start_s": 4.0, "duration_s": 4.0},
+    ]
+
+    segment_video_sources(sources, [(3.0, 5.0)], str(output))
+
+    kinds, duration = _streams_and_duration(output)
+    assert kinds == {"video", "audio"}
+    assert duration == pytest.approx(2.0, abs=0.35)
+
+
+def test_native_proxy_parts_remux_without_reencoding(tmp_path):
+    first = tmp_path / "proxy-1.mp4"
+    second = tmp_path / "proxy-2.mp4"
+    try:
+        _make_clip(first, seconds=2, fps=10, with_audio=True)
+        _make_clip(second, seconds=2, fps=10, with_audio=True)
+    except Exception as exc:
+        pytest.skip(f"cannot encode proxy parts: {exc}")
+    output = tmp_path / "joined.mp4"
+    sources = probe_video_sources([first, second])
+
+    manifest = proxy_module._remux_proxy_parts([first, second], sources, output)
+
+    kinds, duration = _streams_and_duration(output)
+    assert kinds == {"video", "audio"}
+    expected_duration = sum(source["duration_s"] for source in sources)
+    # Packet-level concatenation retains codec delay/priming. AVFoundation
+    # parts are typically within ~50 ms; this synthetic libx264/AAC fixture
+    # carries 200 ms of B-frame delay per part.
+    assert duration == pytest.approx(expected_duration, abs=0.5)
+    assert manifest[1]["start_s"] == pytest.approx(manifest[0]["duration_s"], abs=0.05)
+
+
+def test_native_proxy_cancellation_does_not_fall_back(tmp_path, monkeypatch):
+    class PipelineCancelled(Exception):
+        pass
+
+    monkeypatch.setattr(proxy_module, "_can_use_avconvert", lambda _sources: True)
+    monkeypatch.setattr(
+        proxy_module,
+        "_create_proxy_with_avconvert",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(PipelineCancelled("cancelled")),
+    )
+    monkeypatch.setattr(
+        proxy_module,
+        "_video_encoder_candidates",
+        lambda: (_ for _ in ()).throw(AssertionError("must not fall back")),
+    )
+
+    with pytest.raises(PipelineCancelled):
+        create_analysis_proxy(
+            [{"path": "source.mp4", "name": "source.mp4", "width": 3840, "height": 2160}],
+            tmp_path / "proxy.mp4",
+        )

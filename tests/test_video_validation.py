@@ -18,6 +18,17 @@ from make_smoke_clip import make_clip  # noqa: E402
 from preprocessing.data_preprocessor import rescale_player_to_reference  # noqa: E402
 from runtime.video_validation import VideoValidationError, probe_video, validate_video  # noqa: E402
 
+
+def test_gui_validation_runtime_exposes_folder_probe_contract():
+    from gui import app as gui_app
+
+    runtime = gui_app._load_video_validation_runtime()
+
+    assert callable(runtime.probe_video)
+    assert callable(runtime.validate_video)
+    assert runtime.MIN_HEIGHT == 720
+    assert runtime.VideoValidationError is VideoValidationError
+
 SEQ_LEN, FPS = 100, 5.0  # -> 20s minimum
 
 
