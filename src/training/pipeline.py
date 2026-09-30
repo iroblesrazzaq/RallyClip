@@ -533,6 +533,8 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
             court_enabled=bool(court_cfg.get("enabled", True)),
             expect_width=int(normalize_cfg.get("width", CANONICAL_WIDTH)),
             expect_height=int(normalize_cfg.get("height", CANONICAL_HEIGHT)),
+            slot_mode=str(preprocess_cfg.get("slot_mode", "classic")),
+            court_geometry_dir=preprocess_cfg.get("court_geometry_dir"),
         )
     )
 
@@ -727,6 +729,8 @@ def _run_dataset(config: Dict[str, Any]) -> None:
             overlap_seconds=float(dataset_cfg.get("overlap_seconds", 10)),
             target_fps=fps,
             split=split_cfg,
+            drop_feature_groups=tuple(dataset_cfg.get("drop_feature_groups", ())),
+            drop_slots=tuple(dataset_cfg.get("drop_slots", ())),
         )
     )
 

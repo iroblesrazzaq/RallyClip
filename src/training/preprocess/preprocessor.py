@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from functools import lru_cache
@@ -35,6 +36,12 @@ class PreprocessConfig:
     court_enabled: bool = True  # False => no court filtering at all (deliberate, no warning)
     expect_width: int = CANONICAL_WIDTH
     expect_height: int = CANONICAL_HEIGHT
+    # "classic": near/far from the full frame (PlayerAssigner).
+    # "netline": near from the full frame below the net line, far from the crop
+    # side-car above it, picked in court coordinates. Needs court_geometry_dir
+    # (training_data/court_keypoints/infer_videos.py output) and crop poses.
+    slot_mode: str = "classic"
+    court_geometry_dir: Optional[str] = None
 
 
 class Hdf5Preprocessor:
@@ -64,6 +71,13 @@ class Hdf5Preprocessor:
             return None
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        geometry = None
+        if self.cfg.slot_mode == "netline":
+            if crop_h5_path is None or not Path(crop_h5_path).exists():
+                raise FileNotFoundError(f"slot_mode=netline needs crop poses for {video_path.name}")
+            geometry = CourtGeometry.load(self.cfg.court_geometry_dir, video_path.stem)
+        elif self.cfg.slot_mode != "classic":
+            raise ValueError(f"Unknown slot_mode {self.cfg.slot_mode!r}")
         fingerprint_payload = build_preprocess_fingerprint(
             annotations_path=annotations_path,
             raw_h5_path=raw_h5_path,
@@ -72,6 +86,9 @@ class Hdf5Preprocessor:
             court_target_time=self.cfg.court_target_time,
             crop_h5_path=crop_h5_path,
         )
+        if geometry is not None:
+            fingerprint_payload["slot_mode"] = "netline"
+            fingerprint_payload["court_geometry"] = geometry.source_sha256
         fingerprint = fingerprint_dict(fingerprint_payload)
 
         if output_path.exists() and not overwrite:
@@ -199,7 +216,7 @@ class Hdf5Preprocessor:
                     players_group.create_dataset(
                         "far_box_conf", shape=(0,), maxshape=(None,), dtype="f4", chunks=True, compression="gzip"
                     )
-                    if crop_src is not None:
+                    if crop_src is not None and geometry is None:
                         _create_crop_datasets(players_group)
 
                     targets = _build_targets(timestamps[sample_idx], annotations)
@@ -220,6 +237,17 @@ class Hdf5Preprocessor:
                             frame_boxes, frame_box_conf, frame_kps, frame_kp_conf, court_mask
                         )
                         _append_detections(frames_group, det_group, filtered)
+                        if geometry is not None:
+                            cs, ce = int(crop_off[idx]), int(crop_off[idx + 1])
+                            _append_players(players_group, _netline_players(
+                                self.assigner, filtered,
+                                np.asarray(crop_boxes[cs:ce], dtype=np.float32),
+                                np.asarray(crop_bconf[cs:ce], dtype=np.float32),
+                                np.asarray(crop_kps[cs:ce], dtype=np.float32),
+                                np.asarray(crop_kconf[cs:ce], dtype=np.float32),
+                                court_mask, geometry,
+                            ))
+                            continue
                         _append_players(players_group, self.assigner.assign(filtered))
 
                         if crop_src is not None:
@@ -535,3 +563,105 @@ def _create_crop_datasets(players_group: h5py.Group) -> None:
             f"{name}_box", shape=(0, 4), maxshape=(None, 4), dtype="f4", chunks=True, compression="gzip")
         players_group.create_dataset(
             f"{name}_box_conf", shape=(0,), maxshape=(None,), dtype="f4", chunks=True, compression="gzip")
+
+
+# --- net-line slots ------------------------------------------------------------
+# Court meters: origin at the net center, u to the camera's right, v away from
+# the camera. Far-slot gate: doubles half-width plus room to run wide, and from
+# just short of the net to the far baseline plus run-back.
+FAR_MAX_ABS_U = 10.97 / 2 + 2.0
+FAR_MIN_V = -1.0
+FAR_MAX_V = 23.77 / 2 + 6.0
+FAR_TIE_U = 1.0
+
+
+@dataclass
+class CourtGeometry:
+    """Per-video court from the line-map court model (static camera)."""
+
+    net_a: np.ndarray  # net-bottom line endpoints, source pixels
+    net_b: np.ndarray
+    px_to_m: np.ndarray  # 3x3 homography, source pixels -> court meters
+    source_sha256: str
+
+    @classmethod
+    def load(cls, geometry_dir: Optional[str], stem: str) -> "CourtGeometry":
+        if not geometry_dir:
+            raise ValueError("slot_mode=netline needs preprocess.court_geometry_dir")
+        path = Path(geometry_dir) / f"{stem}.json"
+        raw = path.read_bytes()
+        data = json.loads(raw)
+        if not data.get("net_line_px") or not data.get("homography_px_to_m"):
+            raise ValueError(f"Court geometry for {stem} has no net line or homography: {path}")
+        import hashlib
+
+        a, b = (np.asarray(p, dtype=np.float64) for p in data["net_line_px"])
+        return cls(a, b, np.asarray(data["homography_px_to_m"], dtype=np.float64),
+                   hashlib.sha256(raw).hexdigest())
+
+    def net_y_at(self, x: float) -> float:
+        dx = self.net_b[0] - self.net_a[0]
+        t = 0.0 if abs(dx) < 1e-9 else (x - self.net_a[0]) / dx
+        return float(self.net_a[1] + t * (self.net_b[1] - self.net_a[1]))
+
+    def below_net(self, box: np.ndarray) -> bool:
+        """Box bottom lower on screen than the net line at the box's center x."""
+        return float(box[3]) > self.net_y_at((float(box[0]) + float(box[2])) / 2)
+
+    def feet_to_court(self, box: np.ndarray) -> tuple[float, float]:
+        x, y = (float(box[0]) + float(box[2])) / 2, float(box[3])
+        u, v, w = self.px_to_m @ np.array([x, y, 1.0])
+        return float(u / w), float(v / w)
+
+
+def _pick_far(
+    boxes: np.ndarray,
+    box_conf: np.ndarray,
+    court_mask: Optional[np.ndarray],
+    geometry: CourtGeometry,
+) -> Optional[int]:
+    """Crop detection most likely to be the far singles player, or None.
+
+    Feet on court (same mask as the crop slots) and above the net line; then
+    gated to the far half in court meters; closest to the center line wins,
+    with candidates within FAR_TIE_U of the best broken by closeness to the net.
+    Meters, not pixels: pixel offsets shrink with depth, so a spectator behind
+    the fence would look closer to center than a player one meter off it.
+    """
+    scored = []
+    for i in range(len(boxes)):
+        if not _feet_on_court(boxes[i], court_mask) or geometry.below_net(boxes[i]):
+            continue
+        u, v = geometry.feet_to_court(boxes[i])
+        if abs(u) < FAR_MAX_ABS_U and FAR_MIN_V < v < FAR_MAX_V:
+            scored.append((abs(u), v, i))
+    if not scored:
+        return None
+    best_u = min(s[0] for s in scored)
+    return min((s for s in scored if s[0] - best_u <= FAR_TIE_U), key=lambda s: s[1])[2]
+
+
+def _netline_players(
+    assigner: PlayerAssigner,
+    filtered: Dict[str, np.ndarray],
+    crop_boxes: np.ndarray,
+    crop_bconf: np.ndarray,
+    crop_kps: np.ndarray,
+    crop_kconf: np.ndarray,
+    court_mask: Optional[np.ndarray],
+    geometry: CourtGeometry,
+) -> Dict[str, np.ndarray]:
+    """Near = the assigner's near player among full-frame boxes below the net;
+    far = _pick_far over the crop. Same near/far layout as PlayerAssigner.assign."""
+    below = np.array([geometry.below_net(b) for b in filtered["boxes"]], dtype=bool)
+    near_only = {k: v[below] if len(v) else v for k, v in filtered.items()}
+    players = assigner.assign(near_only)
+    for key, fill in (("far_kps", (1, 17, 2)), ("far_conf", (1, 17)), ("far_box", (1, 4)), ("far_box_conf", (1,))):
+        players[key] = np.full(fill, -1.0, dtype=np.float32)
+    far = _pick_far(crop_boxes, crop_bconf, court_mask, geometry)
+    if far is not None:
+        players["far_kps"] = crop_kps[far][None].astype(np.float32)
+        players["far_conf"] = crop_kconf[far][None].astype(np.float32)
+        players["far_box"] = crop_boxes[far][None].astype(np.float32)
+        players["far_box_conf"] = np.asarray([crop_bconf[far]], dtype=np.float32)
+    return players
