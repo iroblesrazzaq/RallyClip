@@ -4,7 +4,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from uuid import uuid4
 
 import h5py
@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler
 import joblib
 
 from training.dataset.splits import SplitConfig, split_videos, temporal_split_indices
+from training.io.videos import is_flipped_video
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,9 @@ class DatasetConfig:
     overlap_seconds: float
     target_fps: float
     split: SplitConfig
+    # Feature ablation: v2 column groups / slots to drop from cached features.
+    drop_feature_groups: Tuple[str, ...] = ()
+    drop_slots: Tuple[str, ...] = ()
 
 
 class DatasetBuilder:
@@ -48,6 +52,7 @@ class DatasetBuilder:
 
         for split_name in ("train", "val", "test"):
             manifest["splits"][split_name] = []
+        keep = self._kept_columns(feature_set)
 
         for video_name in video_list:
             feature_path = feature_root / f"{Path(video_name).stem}__features__{feature_set}.h5"
@@ -57,6 +62,8 @@ class DatasetBuilder:
 
             with h5py.File(feature_path, "r") as h5f:
                 features = h5f["features"][:]
+                if keep is not None:
+                    features = features[:, keep]
                 targets = h5f["targets"][:]
                 frame_index = h5f["frame_index"][:] if "frame_index" in h5f else np.arange(features.shape[0], dtype=np.int64)
                 timestamps = (
@@ -64,12 +71,21 @@ class DatasetBuilder:
                     if "timestamps" in h5f
                     else (np.arange(features.shape[0], dtype=np.float64) / max(1e-6, self.cfg.target_fps))
                 )
+                if np.any(targets < 0):
+                    raise ValueError(
+                        f"Unlabeled targets (-1) reached dataset builder for {video_name}; "
+                        "features/builder should have dropped ignore-region frames"
+                    )
                 if features.shape[0] < seq_len:
                     logger.warning("Skipping %s (frames < seq_len)", video_name)
                     continue
 
                 if split_strategy == "within_video":
                     ranges = temporal_split_indices(features.shape[0], self.cfg.split.val_ratio, self.cfg.split.test_ratio)
+                    if is_flipped_video(video_name):
+                        # mirror_train: flipped variants augment train only; their
+                        # val/test slices would mirror-duplicate original-footage eval data.
+                        ranges = {"train": ranges["train"]}
                     for split_name, (start, end) in ranges.items():
                         seqs, labels, seq_frame_idx, seq_times = _make_sequences(
                             features[start:end],
@@ -83,7 +99,27 @@ class DatasetBuilder:
                             all_splits[split_name].append((seqs, labels, seq_frame_idx, seq_times, video_name))
                     manifest["videos"][video_name] = {"total_frames": int(features.shape[0])}
                 elif split_strategy == "loso_temporal_val":
-                    if video_name == held_out_video:
+                    if is_flipped_video(video_name):
+                        # Flips never enter LOSO test; keep train-only temporal slice.
+                        ranges = temporal_split_indices(features.shape[0], self.cfg.split.val_ratio, 0.0)
+                        ranges = {"train": ranges["train"]}
+                        for split_name, (start, end) in ranges.items():
+                            seqs, labels, seq_frame_idx, seq_times = _make_sequences(
+                                features[start:end],
+                                targets[start:end],
+                                frame_index[start:end],
+                                timestamps[start:end],
+                                seq_len,
+                                overlap,
+                            )
+                            if seqs:
+                                all_splits[split_name].append((seqs, labels, seq_frame_idx, seq_times, video_name))
+                        manifest["videos"][video_name] = {
+                            "total_frames": int(features.shape[0]),
+                            "split": "train",
+                            "flipped": True,
+                        }
+                    elif video_name == held_out_video:
                         seqs, labels, seq_frame_idx, seq_times = _make_sequences(
                             features,
                             targets,
@@ -120,17 +156,28 @@ class DatasetBuilder:
                             "val_start_frame_index": int(ranges["val"][0]),
                         }
                 else:
+                    # by_video / hybrid: split_videos already keeps flips out of val/test.
                     split_bucket = "train"
                     if video_name in video_split.val:
                         split_bucket = "val"
                     if video_name in video_split.test:
                         split_bucket = "test"
+                    if is_flipped_video(video_name):
+                        split_bucket = "train"
                     seqs, labels, seq_frame_idx, seq_times = _make_sequences(
                         features, targets, frame_index, timestamps, seq_len, overlap
                     )
                     if seqs:
                         all_splits[split_bucket].append((seqs, labels, seq_frame_idx, seq_times, video_name))
                     manifest["videos"][video_name] = {"total_frames": int(features.shape[0]), "split": split_bucket}
+
+        for split_name, datasets in all_splits.items():
+            for _, _, _, _, video_name in datasets:
+                if split_name in ("val", "test") and is_flipped_video(video_name):
+                    raise RuntimeError(
+                        f"Flip leakage: {video_name} landed in {split_name}; "
+                        "flipped videos must only augment train"
+                    )
 
         scaler = StandardScaler()
         train_features = _concat_features(all_splits["train"])
@@ -171,6 +218,9 @@ class DatasetBuilder:
             "overlap_seconds": self.cfg.overlap_seconds,
             "target_fps": self.cfg.target_fps,
             "split": self.cfg.split.__dict__,
+            "drop_feature_groups": list(self.cfg.drop_feature_groups),
+            "drop_slots": list(self.cfg.drop_slots),
+            "feature_dim": int(len(keep)) if keep is not None else None,
         }
         tmp_manifest_path = _tmp_path_for(manifest_path)
         with tmp_manifest_path.open("w", encoding="utf-8") as handle:
@@ -179,6 +229,20 @@ class DatasetBuilder:
 
         logger.info("Dataset built at %s", output_dir)
         return output_dir
+
+    def _kept_columns(self, feature_set: str) -> Optional[np.ndarray]:
+        if not self.cfg.drop_feature_groups and not self.cfg.drop_slots:
+            return None
+        from training.features.registry import FeatureRegistry
+        from training.features.v2 import FeatureSetV2, kept_columns
+
+        builder_cls = FeatureRegistry().get(feature_set)
+        if not issubclass(builder_cls, FeatureSetV2):
+            raise ValueError(f"Feature ablation needs a v2 feature set, got {feature_set}")
+        keep = kept_columns(builder_cls.slots, self.cfg.drop_feature_groups, self.cfg.drop_slots)
+        logger.info("Feature ablation: keeping %d columns (drop groups=%s slots=%s)", len(keep),
+                    list(self.cfg.drop_feature_groups), list(self.cfg.drop_slots))
+        return keep
 
     def _validate_loso_setup(self, video_list: List[str]) -> Optional[str]:
         if self.cfg.split.strategy != "loso_temporal_val":

@@ -10,9 +10,6 @@ from typing import Iterable, Optional, Tuple
 import av
 import h5py
 import numpy as np
-import torch
-from ultralytics import YOLO
-from ultralytics.utils import SETTINGS
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
@@ -26,14 +23,44 @@ class YoloExtractConfig:
     device: Optional[str] = None
     batch_size: Optional[int] = None
     imgsz: int = 1920
+    provider: str = "cpu"  # manifest backends only: cpu | coreml
+
+
+def _is_onnx_backend(model_path: str) -> bool:
+    p = Path(model_path)
+    return p.suffix == ".onnx" or p.name == "manifest.json" or (p.is_dir() and (p / "manifest.json").exists())
 
 
 class YoloHdf5Extractor:
     def __init__(self, cfg: YoloExtractConfig) -> None:
         self.cfg = cfg
-        self.device = self._pick_device(cfg.device)
+        self.backend_meta = None
         self.batch_size = self._pick_batch_size(cfg.batch_size)
-        self.model = self._load_model(cfg.model_path, cfg.model_dir)
+        if _is_onnx_backend(cfg.model_path):
+            self.model = self._load_onnx_backend(cfg.model_path)
+            self.device = "cpu"
+        else:
+            self.device = self._pick_device(cfg.device)
+            self.model = self._load_model(cfg.model_path, cfg.model_dir)
+        self.imgsz = self.backend_meta.imgsz if self.backend_meta else self.cfg.imgsz
+
+    @property
+    def model_identity(self) -> str:
+        """Stable identity for cache tags / HDF5 attrs: manifest tag or filename."""
+        if self.backend_meta is not None:
+            return self.backend_meta.tag
+        return Path(self.cfg.model_path).name
+
+    def _load_onnx_backend(self, model_path: str):
+        if Path(model_path).suffix == ".onnx":
+            from extraction.yolo_onnx_runner import YOLO as OnnxYOLO
+
+            return OnnxYOLO(model_path)
+        from extraction.pose_backend import load_pose_backend
+
+        model, meta = load_pose_backend(Path(model_path), provider=self.cfg.provider)
+        self.backend_meta = meta
+        return model
 
     def extract(
         self,
@@ -157,7 +184,7 @@ class YoloHdf5Extractor:
                 verbose=False,
                 device=self.device,
                 conf=self.cfg.conf,
-                imgsz=self.cfg.imgsz,
+                imgsz=self.imgsz,
                 batch=self.batch_size,
             )
         except TypeError:
@@ -166,7 +193,7 @@ class YoloHdf5Extractor:
                 verbose=False,
                 device=self.device,
                 conf=self.cfg.conf,
-                imgsz=self.cfg.imgsz,
+                imgsz=self.imgsz,
             )
 
     @staticmethod
@@ -248,18 +275,24 @@ class YoloHdf5Extractor:
                 video_path,
                 start_time,
                 duration,
-                self.cfg.model_path,
+                self.model_identity,
                 self.cfg.conf,
-                self.cfg.imgsz,
+                self.imgsz,
                 sampling_mode,
                 sample_fps,
             )
             return h5f
 
         h5f.attrs["video_path"] = str(video_path)
-        h5f.attrs["yolo_model"] = self.cfg.model_path
+        h5f.attrs["yolo_model"] = self.model_identity
         h5f.attrs["conf"] = float(self.cfg.conf)
-        h5f.attrs["imgsz"] = int(self.cfg.imgsz)
+        h5f.attrs["imgsz"] = int(self.imgsz)
+        if self.backend_meta is not None:
+            h5f.attrs["yolo_model_sha256"] = self.backend_meta.model_sha256
+            h5f.attrs["pose_contract_version"] = int(self.backend_meta.contract_version)
+            h5f.attrs["pose_head_family"] = self.backend_meta.head_family
+            # Provenance only — identity (tag/fingerprint) never depends on EP.
+            h5f.attrs["pose_provider"] = self.cfg.provider
         h5f.attrs["start_time"] = float(start_time)
         h5f.attrs["duration"] = -1.0 if duration is None else float(duration)
         h5f.attrs["sampling_mode"] = sampling_mode
@@ -298,7 +331,10 @@ class YoloHdf5Extractor:
 
         return h5f
 
-    def _load_model(self, model_path: str, model_dir: Optional[str]) -> YOLO:
+    def _load_model(self, model_path: str, model_dir: Optional[str]):
+        from ultralytics import YOLO
+        from ultralytics.utils import SETTINGS
+
         yolo_arg = model_path
         if model_dir:
             os.makedirs(model_dir, exist_ok=True)
@@ -323,6 +359,8 @@ class YoloHdf5Extractor:
         env_device = os.environ.get("POSE_DEVICE", "").strip().lower()
         if env_device in {"cpu", "cuda", "mps"}:
             return env_device
+        import torch
+
         if torch.backends.mps.is_available():
             return "mps"
         if torch.cuda.is_available():

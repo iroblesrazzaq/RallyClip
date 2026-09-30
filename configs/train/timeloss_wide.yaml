@@ -1,0 +1,19 @@
+# Soft-argmax TIME loss, window widened to target bad_segmentation.
+#
+# The shape loss (BCE on the Gaussian) never penalises WHERE the peak lands, only
+# that the heatmap looks Gaussian. heatmap_time_weight turns on a term that
+# soft-argmaxes each boundary heatmap to a predicted time and penalises squared
+# error in seconds -- directly optimising the decoded boundary.
+#
+# WINDOW: the default (time_window_frames: null => round(2*sigma_frames) = 5
+# frames = +/-1.0s) can only correct errors already inside +/-1s. Measured start
+# errors: median 0.27s but 20% exceed 2s and 12.7% exceed 5s, and `decent`
+# already tolerates 1.5s. Since F1 scores good+decent TOGETHER, tightening a
+# 0.4s error to 0.1s moves decent->good and changes F1 by exactly zero.
+# The only boundary movement F1 can see is bad_segmentation -> decent, which
+# means fixing errors in the ~1.5-5s band. Hence 20 frames (+/-4s).
+run_id: 20260727_timeloss_wide
+train:
+  heatmap_time_weight: 1.0
+  heatmap_time_window_frames: 20
+  heatmap_time_temperature: 1.0

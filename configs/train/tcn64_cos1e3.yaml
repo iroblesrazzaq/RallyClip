@@ -1,0 +1,17 @@
+# TCN + single-cycle cosine annealing, peak lr = 1e-3.
+# LR range test (lr_finder.py, 2026-07-24): min-loss 2.8e-3, steepest 2.4e-4;
+# first-epoch val loss flat 3e-4..3e-3 with 1e-3 nominally best (1.2783).
+# patience == epochs so the cosine cycle always completes; the best-val
+# checkpoint is still what gets kept, so this cannot overfit into the artifact.
+run_id: 20260724_tcn64_cos1e3
+train:
+  head: e2e_heatmap
+  heatmap_backbone: tcn
+  hidden_size: 64
+  heatmap_tcn_levels: 5
+  heatmap_tcn_kernel_size: 3
+  lr: 0.001
+  lr_schedule: cosine
+  lr_eta_min: 0.0
+  epochs: 30
+  early_stopping_patience: 30

@@ -1,6 +1,7 @@
 data_root: data
 run_id: null
 steps:
+  - normalize
   - extract
   - preprocess
   - features
@@ -10,10 +11,23 @@ steps:
 videos: []
 overwrite_all: false
 
+normalize:
+  width: 1280
+  height: 720
+  fps: 5
+  mode: annotated
+  videos: []
+  source_dir: source_videos  # originals; normalized copies land in videos/norm=<WxH@fps>/
+  overwrite: false
+
 yolo:
-  model: yolov8n-pose.pt
+  # Manifest-backed ONNX backend: identity (name@sha8), imgsz, letterbox and
+  # decode contract all come from the manifest. Same model family the desktop
+  # and (future) iOS apps run. provider=coreml uses the static 544x960 sibling
+  # on the ANE (~90 fps, sub-pixel parity vs cpu); EP is provenance, not identity.
+  model: models/pose/yolov8n/manifest.json
+  provider: coreml
   conf: 0.25
-  imgsz: 1920
   model_dir: models
   device: null
   batch_size: null
@@ -23,21 +37,22 @@ extract:
   videos: []
   start_time: 0
   duration: null
-  sampling_mode: full_then_downsample  # or: downsample_then_extract
+  sampling_mode: full_then_downsample  # video is already 5fps after normalize
   sample_fps: null
   overwrite: false
   resume: true
 
 preprocess:
-  target_fps: 15
+  target_fps: 5
   save_court_masks: true
   mode: annotated
   videos: []
   overwrite: false
 
 court:
-  model_path: null
-  target_time: 60
+  model_path: null       # null => reuse the pose model (manifest ok; resolved to ONNX/CPU)
+  target_time: null       # null => anchor at the MIDDLE of the video (retries fan out
+                          # around the midpoint); an int pins a single anchor time
   force: false
 
 features:
@@ -59,6 +74,8 @@ dataset:
   videos: []
 
 train:
+  head: classic  # classic | e2e_seg | e2e_heatmap
+  seed: 1337
   batch_size: 8
   train_batch_size: 8
   eval_batch_size: 8
@@ -66,13 +83,54 @@ train:
   num_workers: 0
   epochs: 30
   lr: 0.001
+  lr_schedule: none    # none | cosine (single-cycle decay to lr_eta_min over epochs; heatmap head)
+  lr_eta_min: 0.0
   weight_decay: 0.01
-  pos_weight: 3.0
+  pos_weight: null  # null => derive from train positive rate
   device: mps
   threshold: 0.5
   early_stopping_patience: 5
   early_stopping_min_delta: 0.001
   save_every_n: 0
+  hidden_size: 128
+  num_layers: 2
+  bidirectional: true
+  dropout: 0.2
+  # e2e_seg knobs (ignored by classic head)
+  seg_head: mlp  # mlp | linear — internal readout of the seg model
+  selection_metric: acceptable  # val_loss | acceptable | good_weighted
+  cls_weight: 1.0
+  boundary_weight: 1.0
+  diou_weight: 0.25
+  decode_vote: mean
+  # e2e_heatmap knobs (ignored by classic/e2e_seg heads)
+  heatmap_backbone: lstm        # lstm | gru (~25% fewer recurrent params) | tcn
+  # tcn knobs (ignored by lstm/gru). Non-causal dilated convnet; hidden_size is
+  # the channel width. Receptive field = 1 + 2*(k-1)*(2**levels - 1) frames;
+  # defaults give 125 frames = 25s @5fps, covering the 20s training window.
+  heatmap_tcn_levels: 5
+  heatmap_tcn_kernel_size: 3
+  heatmap_head: mlp             # mlp | linear
+  heatmap_sigma_seconds: 0.5    # 1σ ≈ good tolerance (0.5s), 2σ ≈ decent (1.5s)
+  heatmap_sigma_out_seconds: null  # asymmetric target: outside-the-point sigma (null = symmetric)
+  heatmap_loss: bce             # bce (balanced) | focal (CenterNet penalty-reduced)
+  heatmap_pos_threshold: 0.1    # bce mode: frames with target>=this get up-weighted
+  heatmap_pos_weight: 20.0      # bce mode: near-boundary up-weight
+  heatmap_focal_alpha: 2.0      # focal mode
+  heatmap_focal_beta: 4.0       # focal mode
+  heatmap_cls_weight: 1.0
+  heatmap_start_weight: 1.0
+  heatmap_end_weight: 1.0
+  heatmap_time_weight: 0.0       # soft-argmax time loss (abs-seconds boundary error); 0 = off
+  heatmap_time_window_frames: null  # null => round(2*sigma_frames)
+  heatmap_time_temperature: 1.0
+  heatmap_decode_mode: hybrid   # hybrid (pointness-run + heatmap refine) | peakpair
+  heatmap_peak_threshold: 0.3   # peakpair mode: start/end peak threshold
+  heatmap_decode_window_frames: null  # null => 2*sigma_frames (soft-argmax refine window)
+  heatmap_nms_frames: null            # null => ceil(sigma_frames) (peak min-separation)
+  heatmap_min_duration_sec: 0.3
+  heatmap_max_duration_sec: 60.0
+  heatmap_pointness_gate: null  # peakpair mode; null disables
   segment_eval:
     low: 0.45
     high: 0.8
@@ -102,7 +160,7 @@ sweep:
   enabled: true
   run_prefix: loso_nano_mps_e30
   resume: true
-  fps_values: [10, 5]
+  fps_values: [5]
   seq_len_seconds: [10]
   overlap_mode: half_seq_len
   overlap_seconds: null  # only used when overlap_mode: fixed
