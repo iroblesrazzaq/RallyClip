@@ -4,7 +4,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from uuid import uuid4
 
 import h5py
@@ -24,6 +24,9 @@ class DatasetConfig:
     overlap_seconds: float
     target_fps: float
     split: SplitConfig
+    # Feature ablation: v2 column groups / slots to drop from cached features.
+    drop_feature_groups: Tuple[str, ...] = ()
+    drop_slots: Tuple[str, ...] = ()
 
 
 class DatasetBuilder:
@@ -49,6 +52,7 @@ class DatasetBuilder:
 
         for split_name in ("train", "val", "test"):
             manifest["splits"][split_name] = []
+        keep = self._kept_columns(feature_set)
 
         for video_name in video_list:
             feature_path = feature_root / f"{Path(video_name).stem}__features__{feature_set}.h5"
@@ -58,6 +62,8 @@ class DatasetBuilder:
 
             with h5py.File(feature_path, "r") as h5f:
                 features = h5f["features"][:]
+                if keep is not None:
+                    features = features[:, keep]
                 targets = h5f["targets"][:]
                 frame_index = h5f["frame_index"][:] if "frame_index" in h5f else np.arange(features.shape[0], dtype=np.int64)
                 timestamps = (
@@ -212,6 +218,9 @@ class DatasetBuilder:
             "overlap_seconds": self.cfg.overlap_seconds,
             "target_fps": self.cfg.target_fps,
             "split": self.cfg.split.__dict__,
+            "drop_feature_groups": list(self.cfg.drop_feature_groups),
+            "drop_slots": list(self.cfg.drop_slots),
+            "feature_dim": int(len(keep)) if keep is not None else None,
         }
         tmp_manifest_path = _tmp_path_for(manifest_path)
         with tmp_manifest_path.open("w", encoding="utf-8") as handle:
@@ -220,6 +229,20 @@ class DatasetBuilder:
 
         logger.info("Dataset built at %s", output_dir)
         return output_dir
+
+    def _kept_columns(self, feature_set: str) -> Optional[np.ndarray]:
+        if not self.cfg.drop_feature_groups and not self.cfg.drop_slots:
+            return None
+        from training.features.registry import FeatureRegistry
+        from training.features.v2 import FeatureSetV2, kept_columns
+
+        builder_cls = FeatureRegistry().get(feature_set)
+        if not issubclass(builder_cls, FeatureSetV2):
+            raise ValueError(f"Feature ablation needs a v2 feature set, got {feature_set}")
+        keep = kept_columns(builder_cls.slots, self.cfg.drop_feature_groups, self.cfg.drop_slots)
+        logger.info("Feature ablation: keeping %d columns (drop groups=%s slots=%s)", len(keep),
+                    list(self.cfg.drop_feature_groups), list(self.cfg.drop_slots))
+        return keep
 
     def _validate_loso_setup(self, video_list: List[str]) -> Optional[str]:
         if self.cfg.split.strategy != "loso_temporal_val":

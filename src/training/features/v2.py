@@ -33,6 +33,31 @@ DEFAULT_SLOTS = ("near", "far", "crop0", "crop1")
 NEARFAR_SLOTS = ("near", "far")
 
 
+# Per-slot column groups, in block order (see per_slot_dim). Used by the
+# dataset step to ablate groups without rebuilding cached features.
+SLOT_GROUPS = (
+    ("exists", 1), ("box", 4), ("centroid", 2), ("velocity", 2), ("acceleration", 2),
+    ("keypoints_xy", 34), ("keypoint_conf", 17), ("keypoint_vel", 34), ("keypoint_accel", 34),
+    ("limb_lengths", 14), ("box_conf", 1),
+)
+
+
+def kept_columns(slots: Tuple[str, ...], drop_groups=(), drop_slots=()) -> np.ndarray:
+    """Column indices that survive dropping the named groups (in every slot)
+    and the named slots entirely."""
+    names = {name for name, _ in SLOT_GROUPS}
+    unknown = (set(drop_groups) - names) | (set(drop_slots) - set(slots))
+    if unknown:
+        raise ValueError(f"Unknown feature groups/slots: {sorted(unknown)}")
+    keep, col = [], 0
+    for slot in slots:
+        for name, width in SLOT_GROUPS:
+            if slot not in drop_slots and name not in drop_groups:
+                keep.extend(range(col, col + width))
+            col += width
+    return np.asarray(keep, dtype=np.int64)
+
+
 @dataclass
 class FeatureSetV2:
     screen_width: int = 1280
