@@ -8,6 +8,10 @@ from typing import Dict, Optional
 import h5py
 import numpy as np
 
+from features.v2 import V2FeatureStream
+from features.v2 import keypoint_velocity as _keypoint_velocity
+from features.v2 import pack_player as _pack_player
+from features.v2 import player_velocity as _player_velocity
 from training.features.registry import FeatureRegistry
 from training.io.fingerprint import (
     build_features_fingerprint,
@@ -95,6 +99,7 @@ class FeatureBuilder:
             feature_times = []
 
             multi_slot = hasattr(builder, "slots")
+            stream = V2FeatureStream(builder, dt) if multi_slot else None
             prev_slots = {slot: None for slot in slots}
             prev_motion = {slot: {"centroid": None, "keypoints": None} for slot in slots}
 
@@ -108,7 +113,7 @@ class FeatureBuilder:
                     )
 
                 if multi_slot:
-                    vec = builder.build_feature_vector(current, prev_slots, prev_motion, dt)
+                    vec = stream.step(current)
                 else:
                     # v1 signature is positional (near, far, ...); keep it exactly
                     # so existing v1 artifacts stay reproducible.
@@ -116,19 +121,18 @@ class FeatureBuilder:
                         current["near"], current["far"],
                         prev_slots["near"], prev_slots["far"], prev_motion, dt,
                     )
+                    prev_motion = {
+                        slot: {
+                            "centroid": _player_velocity(current[slot], prev_slots[slot], dt),
+                            "keypoints": _keypoint_velocity(current[slot], prev_slots[slot], dt),
+                        }
+                        for slot in slots
+                    }
+                    prev_slots = current
                 feature_vectors.append(vec)
                 feature_targets.append(int(targets[idx]))
                 feature_frames.append(int(frame_index[idx]))
                 feature_times.append(float(timestamps[idx]))
-
-                prev_motion = {
-                    slot: {
-                        "centroid": _player_velocity(current[slot], prev_slots[slot], dt),
-                        "keypoints": _keypoint_velocity(current[slot], prev_slots[slot], dt),
-                    }
-                    for slot in slots
-                }
-                prev_slots = current
 
         features = np.asarray(feature_vectors, dtype=np.float32)
         targets_arr = np.asarray(feature_targets, dtype=np.int8)
@@ -165,36 +169,3 @@ def _is_valid_features_h5(path: Path) -> bool:
             return all(key in h5f for key in ("features", "targets", "frame_index", "timestamps"))
     except Exception:
         return False
-
-
-def _pack_player(kps: np.ndarray, conf: np.ndarray, box: np.ndarray, box_conf: np.ndarray) -> Dict[str, np.ndarray]:
-    exists = bool(np.any(kps >= 0))
-    return {
-        "exists": exists,
-        "keypoints": kps,
-        "conf": conf,
-        "box": box,
-        "box_conf": float(box_conf) if np.ndim(box_conf) == 0 else float(box_conf[0]),
-    }
-
-
-def _player_velocity(player: Optional[Dict[str, np.ndarray]], prev_player: Optional[Dict[str, np.ndarray]], dt: float):
-    if not player or not player.get("exists") or not prev_player or not prev_player.get("exists"):
-        return None
-    box = player["box"]
-    prev_box = prev_player["box"]
-    cx = (box[0] + box[2]) / 2
-    cy = (box[1] + box[3]) / 2
-    pcx = (prev_box[0] + prev_box[2]) / 2
-    pcy = (prev_box[1] + prev_box[3]) / 2
-    if dt <= 0:
-        return (0.0, 0.0)
-    return ((cx - pcx) / dt, (cy - pcy) / dt)
-
-
-def _keypoint_velocity(player: Optional[Dict[str, np.ndarray]], prev_player: Optional[Dict[str, np.ndarray]], dt: float):
-    if not player or not player.get("exists") or not prev_player or not prev_player.get("exists"):
-        return None
-    if dt <= 0:
-        return np.zeros((player["keypoints"].shape[0], 2), dtype=np.float32)
-    return (player["keypoints"] - prev_player["keypoints"]) / dt
