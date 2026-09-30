@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download the shipped ONNX artifact into models/rallyclip_v0.5.0/.
+"""Download the shipped ONNX artifact into models/rallyclip_v0.6.0/.
 
 Idempotent: skips the network when SHA-256 already matches SHA256SUMS.
 """

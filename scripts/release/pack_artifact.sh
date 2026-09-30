@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Zip DEFAULT_ARTIFACT_DIR into rallyclip_v0.5.0.zip (and a .sha256 sidecar).
+# Zip DEFAULT_ARTIFACT_DIR into rallyclip_v0.6.0.zip (and a .sha256 sidecar).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

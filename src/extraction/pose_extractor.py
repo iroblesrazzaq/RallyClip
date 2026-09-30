@@ -1,17 +1,45 @@
 import os
 import time
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 import av
 import logging
 import numpy as np
 from tqdm import tqdm
 
+from extraction.crop_pass import crop_frame, crop_to_frame, merge_detections
+
 
 def _pipeline_profile() -> str:
     profile = os.environ.get("PIPELINE_PROFILE", "").strip().lower()
     return profile or "main"
 
+
+def _empty_detections() -> dict:
+    return {
+        "boxes": np.empty((0, 4), dtype=np.float32),
+        "box_conf": np.empty((0,), dtype=np.float32),
+        "keypoints": np.empty((0, 17, 2), dtype=np.float32),
+        "conf": np.empty((0, 17), dtype=np.float32),
+    }
+
+
+def _result_arrays(res) -> dict:
+    """Boxes/keypoints of one predict() result as float32 numpy (empties when absent)."""
+    out = _empty_detections()
+    if res is None or getattr(res, "boxes", None) is None:
+        return out
+    try:
+        out["boxes"] = res.boxes.xyxy.detach().cpu().numpy().astype(np.float32)
+        out["box_conf"] = res.boxes.conf.detach().cpu().numpy().astype(np.float32)
+    except Exception:
+        pass
+    try:
+        out["keypoints"] = res.keypoints.xy.detach().cpu().numpy().astype(np.float32)
+        out["conf"] = res.keypoints.conf.detach().cpu().numpy().astype(np.float32)
+    except Exception:
+        pass
+    return out
 
 
 class PoseExtractionCancelled(Exception):
@@ -275,6 +303,7 @@ class PoseExtractor:
         imgsz: Optional[int] = None,
         annotations_csv: Optional[str] = None,
         progress_callback: Optional[Callable[[float], None]] = None,
+        crop_window: Optional[Sequence[float]] = None,
     ):
         """Streaming pose extraction core (generator).
 
@@ -283,6 +312,10 @@ class PoseExtractor:
         batch (plus the downsampled-out frames interleaved with it) at a time, so peak
         memory is O(batch) instead of O(num_frames). Detection results arrive per batch,
         so the buffered chunk is filled then flushed out in order at each batch boundary.
+
+        With ``crop_window`` (fractional x1, y1, x2, y2), each processed frame also
+        gets a second pass on that window (see extraction.crop_pass), stored under
+        ``frame_data["crop"]`` in the same keys, mapped back to frame pixels.
         """
         import csv
         predict_imgsz = int(self.imgsz if imgsz is None else imgsz)
@@ -339,13 +372,10 @@ class PoseExtractor:
         batch_frames = []
         batch_positions = []  # index within `pending` of each batched (processed) frame
 
-        def _flush_batch():
-            nonlocal batch_frames, batch_positions
-            if not batch_frames:
-                return
+        def _predict(frames):
             try:
-                results = self.model.predict(
-                    source=batch_frames,
+                return self.model.predict(
+                    source=frames,
                     verbose=False,
                     device=self.device,
                     conf=confidence_threshold,
@@ -353,34 +383,33 @@ class PoseExtractor:
                     batch=self.batch_size,
                 )
             except TypeError:
-                results = self.model.predict(
-                    source=batch_frames,
+                return self.model.predict(
+                    source=frames,
                     verbose=False,
                     device=self.device,
                     conf=confidence_threshold,
                     imgsz=predict_imgsz,
                 )
+
+        def _flush_batch():
+            nonlocal batch_frames, batch_positions
+            if not batch_frames:
+                return
+            results = _predict(batch_frames)
+            crop_results = None
+            if crop_window is not None:
+                crop_results = _predict([crop_frame(f, crop_window) for f in batch_frames])
             for i, res in enumerate(results):
                 pos = batch_positions[i]
-                frame_data = {}
-                if res is not None and getattr(res, "boxes", None) is not None:
-                    try:
-                        frame_data["boxes"] = res.boxes.xyxy.detach().cpu().numpy().astype(np.float32)
-                        frame_data["box_conf"] = res.boxes.conf.detach().cpu().numpy().astype(np.float32)
-                    except Exception:
-                        frame_data["boxes"] = np.empty((0, 4), dtype=np.float32)
-                        frame_data["box_conf"] = np.empty((0,), dtype=np.float32)
-                    try:
-                        frame_data["keypoints"] = res.keypoints.xy.detach().cpu().numpy().astype(np.float32)
-                        frame_data["conf"] = res.keypoints.conf.detach().cpu().numpy().astype(np.float32)
-                    except Exception:
-                        frame_data["keypoints"] = np.empty((0, 17, 2), dtype=np.float32)
-                        frame_data["conf"] = np.empty((0, 17), dtype=np.float32)
-                else:
-                    frame_data["boxes"] = np.empty((0, 4), dtype=np.float32)
-                    frame_data["box_conf"] = np.empty((0,), dtype=np.float32)
-                    frame_data["keypoints"] = np.empty((0, 17, 2), dtype=np.float32)
-                    frame_data["conf"] = np.empty((0, 17), dtype=np.float32)
+                frame_data = _result_arrays(res)
+                if crop_results is not None:
+                    crop = _result_arrays(crop_results[i])
+                    if len(crop["boxes"]):
+                        b, bc, k, kc = merge_detections(crop["boxes"], crop["box_conf"], crop["keypoints"], crop["conf"])
+                        fh, fw = batch_frames[i].shape[:2]
+                        b, k = crop_to_frame(b, k, fw, fh, crop_window)
+                        crop = {"boxes": b, "box_conf": bc, "keypoints": k, "conf": kc}
+                    frame_data["crop"] = crop
                 frame_data["annotation_status"] = pending[pos].get("annotation_status", 0)
                 pending[pos] = frame_data
             batch_frames = []

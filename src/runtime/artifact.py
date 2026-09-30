@@ -1,7 +1,7 @@
 """Pack, verify, and fetch the shipped RallyClip ONNX artifact.
 
 Git tracks manifests and SHA256SUMS. Weight files live on GitHub Release
-``artifact-rallyclip_v0.5.0``. From-source checkouts unpack into
+``artifact-rallyclip_v0.6.0``. From-source checkouts unpack into
 ``DEFAULT_ARTIFACT_DIR``. Frozen apps embed that folder at build time and
 must not call this at launch.
 """
@@ -22,14 +22,15 @@ from typing import Iterable, Optional
 from runtime.defaults import DEFAULT_ARTIFACT_DIR
 
 GITHUB_REPO = "iroblesrazzaq/RallyClip"
-ARTIFACT_TAG = "artifact-rallyclip_v0.5.0"
-ARTIFACT_ZIP_NAME = "rallyclip_v0.5.0.zip"
+ARTIFACT_TAG = "artifact-rallyclip_v0.6.0"
+ARTIFACT_ZIP_NAME = "rallyclip_v0.6.0.zip"
 REQUIRED_FILES = (
     "model.onnx",
     "scaler.json",
     "manifest.json",
     "yolov8n-pose-960-dynamic.onnx",
     "yolov8n-pose-544x960-static.onnx",
+    "court_lines.onnx",
 )
 SHA256SUMS_NAME = "SHA256SUMS"
 _HASH_CHUNK = 1024 * 1024
