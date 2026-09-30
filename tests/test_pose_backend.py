@@ -20,6 +20,12 @@ from extraction.yolo_onnx_runner import (
 
 ROOT = Path(__file__).resolve().parents[1]
 V8_DIR = ROOT / "models" / "pose" / "yolov8n"
+# The ONNX weights are not in git (gitignored; same files as the release
+# artifact). Tests that load them skip on a checkout without them.
+needs_weights = pytest.mark.skipif(
+    not (V8_DIR / "yolov8n-pose-960-dynamic.onnx").exists(),
+    reason="YOLOv8n pose ONNX not present under models/pose/yolov8n",
+)
 
 
 def _coreml_available() -> bool:
@@ -78,6 +84,7 @@ def test_decode_pose_dispatch():
         )
 
 
+@needs_weights
 def test_load_manifest_real_bundle():
     meta = load_manifest(V8_DIR)
     assert isinstance(meta, PoseBackendMeta)
@@ -110,6 +117,7 @@ def test_load_manifest_rejects_unknown_head_family(tmp_path):
         load_manifest(bundle)
 
 
+@needs_weights
 def test_coreml_refused_for_e2e_head(tmp_path):
     # A yolo26-e2e manifest must be refused on provider=coreml (fp16 candidate
     # selection is not numerically faithful) before any model file is loaded.
@@ -126,11 +134,13 @@ def test_coreml_refused_for_e2e_head(tmp_path):
         load_pose_backend(bundle, provider="coreml")
 
 
+@needs_weights
 def test_unknown_provider_raises():
     with pytest.raises(ValueError, match="Unknown pose provider"):
         load_pose_backend(V8_DIR, provider="cuda")
 
 
+@needs_weights
 def test_yolo_conf_imgsz_tags_manifest():
     from training.artifact_paths import yolo_conf_imgsz_tags
 
@@ -142,6 +152,7 @@ def test_yolo_conf_imgsz_tags_manifest():
     assert imgsz == 960
 
 
+@needs_weights
 def test_extractor_uses_onnx_backend_without_torch():
     from training.pose.yolo_hdf5 import YoloExtractConfig, YoloHdf5Extractor
 
@@ -158,6 +169,7 @@ def test_extractor_uses_onnx_backend_without_torch():
     assert results[0].boxes.xyxy.detach().cpu().numpy().shape[1] == 4
 
 
+@needs_weights
 @pytest.mark.skipif(not _coreml_available(), reason="CoreML EP not available")
 def test_coreml_provider_parity_with_cpu():
     """EP is provenance, not identity: coreml output must match cpu sub-pixel."""
