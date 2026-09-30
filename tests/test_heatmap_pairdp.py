@@ -128,3 +128,36 @@ def test_penalty_keeps_the_strongest_segments_first():
     e = _spikes({10: 0.99, 30: 0.60})
     kept = decode_pairdp(np.zeros(N), s, e, TS, _cfg(pair_penalty=1.5))
     assert kept == [(5.0, 10.0)], kept
+
+
+def test_pointness_evidence_rescues_a_span_the_penalty_would_reject():
+    """A real point whose boundaries are individually weak: lambda rejects it on
+    boundary evidence alone, but a confident pointness span pays for it."""
+    s = _spikes({10: 0.45})
+    e = _spikes({20: 0.45})
+    point = np.full(N, 0.02)
+    point[10:21] = 0.97                      # dense track is sure this span is in play
+
+    cfg = _cfg(pair_penalty=2.0)
+    assert decode_pairdp(point, s, e, TS, cfg) == []
+    got = decode_pairdp(point, s, e, TS, _cfg(pair_penalty=2.0, pointness_weight=0.5))
+    assert got == [(10.0, 20.0)], got
+
+
+def test_pointness_evidence_suppresses_a_span_the_dense_track_rejects():
+    """Symmetric: confident boundaries but the span is clearly out of play."""
+    s = _spikes({10: 0.95})
+    e = _spikes({20: 0.95})
+    point = np.full(N, 0.02)                 # nothing is in play anywhere
+    assert decode_pairdp(point, s, e, TS, _cfg()) == [(10.0, 20.0)]
+    assert decode_pairdp(point, s, e, TS, _cfg(pointness_weight=0.5)) == []
+
+
+def test_zero_weight_is_exactly_the_previous_behaviour():
+    """pointness_weight=0 must ignore the track entirely, whatever it contains."""
+    s = _spikes({10: 0.99, 30: 0.99})
+    e = _spikes({20: 0.99, 40: 0.99})
+    noise = np.clip(np.random.default_rng(3).random(N), 0.01, 0.99)
+    a = decode_pairdp(noise, s, e, TS, _cfg())
+    b = decode_pairdp(np.zeros(N) + 0.5, s, e, TS, _cfg())
+    assert a == b == [(10.0, 20.0), (30.0, 40.0)]

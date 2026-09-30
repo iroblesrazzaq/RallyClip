@@ -48,6 +48,12 @@ class HeatmapDecodeConfig:
     # prior on how many segments exist -- without it the DP admits every pair that
     # scores positive and over-segments (878 preds for 460 GT at lambda=0).
     pair_penalty: float = 0.0
+    # pairdp: weight on the pointness evidence for a candidate span. The span's
+    # log-likelihood ratio of in-play vs out-of-play is sum_t logit(pointness[t]),
+    # so this term lets the dense track say WHICH spans are real -- the one thing
+    # two boundary heatmaps cannot express, and the whole of hybrid's recall
+    # advantage. 0.0 = pure boundary DP.
+    pointness_weight: float = 0.0
     # --- hybrid-mode false-positive filtering (both default to no-ops, so
     # existing hybrid results reproduce bit-for-bit) ---
     # Gaussian-smooth pointness before run detection. The classic decode has
@@ -261,6 +267,12 @@ def decode_pairdp(
     e_score = [_logit(end_prob[i]) for i in e_idx]
     m, n = len(s_idx), len(e_idx)
 
+    # Prefix sums of pointness log-odds, so a span's evidence is O(1) to query.
+    if cfg.pointness_weight:
+        cum = np.concatenate(([0.0], np.cumsum([_logit(p) for p in pointness])))
+    else:
+        cum = None
+
     # best_closed[j] = best total score using ends up to (and including) j, all
     # segments closed. best_closed_before(t) is the running prefix max.
     NEG = float("-inf")
@@ -283,6 +295,9 @@ def decode_pairdp(
             # the previous segment must close strictly before this start
             pj = _last_end_before(e_time, s_time[i], j - 1)
             val = best_closed[pj] + s_score[i] + e_score[j - 1] - cfg.pair_penalty
+            if cum is not None:
+                lo, hi = s_idx[i], e_idx[j - 1]
+                val += cfg.pointness_weight * float(cum[hi + 1] - cum[lo])
             if val > cand:
                 cand, cand_i, cand_pj = val, i, pj
         if cand_i is not None and cand > best_closed[j]:
