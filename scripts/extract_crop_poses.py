@@ -34,6 +34,8 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
+from extraction.crop_pass import MERGE_IOU, merge_detections  # noqa: E402
+
 DEFAULT_ROOT = Path("/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/training_data_1080p")
 NORM = "norm=1280x720@5fps"          # path tag inherited from the pipeline contract
 YOLO_TAG = "yolo=yolov8n-960@4a3fe0de"
@@ -43,62 +45,12 @@ W, H = 1920, 1080
 CROP = (480, 0, 1440, 540)           # fixed 16:9 top-half window, frame-centred
 FPS = 5.0
 IMGSZ, CONF = 960, 0.25
-MERGE_IOU = 0.6                      # matches PlayerAssigner.merge_iou_thresh
 # Same manifest-backed backend the full-frame extraction uses, so both passes
 # run identical weights and decode. provider=coreml uses the static-shape
 # sibling on the ANE; the crop is 960x540, which letterboxes to exactly the
 # static 544x960 input, so it is a natural fit (and far faster than torch/MPS).
 MANIFEST = REPO / "models/pose/yolov8n/manifest.json"
 PROVIDER = "coreml"
-
-
-def _iou(a, b):
-    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
-    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
-    inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
-    ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
-    return inter / ua if ua > 0 else 0.0
-
-
-def merge_detections(boxes, box_conf, kps, kp_conf, thresh=MERGE_IOU):
-    """Union detections that overlap above `thresh` (single-linkage).
-
-    A player clipped by the crop boundary routinely yields several partial boxes
-    that survive YOLO's own NMS; without this they consume both crop slots and
-    evict the far player. The union box is kept, along with the keypoints of the
-    highest-confidence member of the cluster.
-    """
-    n = len(boxes)
-    if n <= 1:
-        return boxes, box_conf, kps, kp_conf
-    parent = list(range(n))
-
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    for i in range(n):
-        for j in range(i + 1, n):
-            if _iou(boxes[i], boxes[j]) > thresh:
-                parent[find(i)] = find(j)
-
-    groups = {}
-    for i in range(n):
-        groups.setdefault(find(i), []).append(i)
-
-    ob, oc, ok, okc = [], [], [], []
-    for members in groups.values():
-        bs = boxes[members]
-        best = members[int(np.argmax(box_conf[members]))]
-        ob.append([bs[:, 0].min(), bs[:, 1].min(), bs[:, 2].max(), bs[:, 3].max()])
-        oc.append(float(box_conf[best]))
-        ok.append(kps[best])
-        okc.append(kp_conf[best])
-    order = np.argsort(-np.asarray(oc))
-    return (np.asarray(ob, np.float32)[order], np.asarray(oc, np.float32)[order],
-            np.asarray(ok, np.float32)[order], np.asarray(okc, np.float32)[order])
 
 
 def _arrays(result):

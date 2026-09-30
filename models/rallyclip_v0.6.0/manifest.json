@@ -1,0 +1,163 @@
+{
+  "artifact": {
+    "artifact_id": "7d918f97e8978fed16a9f83b6af2443d23d271d5a6b70a4828bb4fa619a2bf75",
+    "created_at_iso": "2026-09-30T23:52:07Z",
+    "created_at_unix": 1790812327,
+    "model_version": "rallyclip_v0.6.0"
+  },
+  "data": {
+    "split_strategy": "all_videos_fixed_epoch",
+    "video_count": 26,
+    "splits": {
+      "train": [
+        "09c89596f1f499db5b7962b83b558863579787718e8493856d0c3e4fa58bdab2.mp4",
+        "123e45e6f65b649cff89e0ef6f2e8423248175fdc58536459214a1871d624088.mp4",
+        "133663e79e61f2a612dc77c4c8687f3b40142412a77e904e7f4aef6ecdd99bba.mp4",
+        "1e9d623d77f012770200f71014d8850cfa7d84191dcaf3d4a44a21ba40ca6f83.mp4",
+        "2a78f52697780c3f7fd27962a96e730298e9c15fb2167028ec0e094b58f033b9.mp4",
+        "31980d806ab8c99dfc17bfea5d9b4e98e3babefe77e941bb3e5f4aef74daf0ad.mp4",
+        "3e5fd6a83bed3894f9576261ff81b3896414a4c56602422927febef6413bb94b.mp4",
+        "46cd4d2ecd3a94992304069127b68ac731e74e89fd757ebe58b69769cff312c1.mp4",
+        "47201e7c08a98d59eb63db6dbb468990e2613fa149273e0aade3d181c7e78286.mp4",
+        "59f28ea62a8a2aca4aef77ceee369db500b9bd0fa871955ed6a303bb91038435.mp4",
+        "6a3448004279f570d709088423c3e999066a5191074bc73d9f6f6da535b0ce2b.mp4",
+        "729efeb6f27341d3623816323ddeef681073e7b1ee5d14409121c28a4b3beff5.mp4",
+        "a86df9f2c0ea7de59aff9fec703ca178afd4def34303293a3fa2498480c0a952.mp4",
+        "a9051e17933a58a0fb86f4799bea43de0673210ebec63ad04035a170bc4dcdc9.mp4",
+        "abe49d12ce83a1c8634589d80a57169288318e2f31914ecd323e4eb74b0236c3.mp4",
+        "b34d1a7011c50f98bc459ae619ce55a59d8b487e4b4c797e0cf5bc3642ca3f09.mp4",
+        "b566d8dfbd5488cfa2129719a223273a5f2331faa7c700dc967cf29f17b8ee55.mp4",
+        "b7009388a75ef27cac77c32988c3b9a80171de1018ef8aae17b9269eaa931300.mp4",
+        "b70cca55f01a65cbaa449263b09f5c849c16572c446121eef87ff610a292802a.mp4",
+        "ba240bbdab57f37a1b3a3d8456feded7e8de058fa8dc83b4511a90bdb18560d9.mp4",
+        "d47c94774d0a981f4edc14bf464ffbe63e546d97194a88e400cc470794ef68b6.mp4",
+        "d5ac3da3cd8a8f525a58bbfe375aebc735d4887ac6de1477cc33546e092cb135.mp4",
+        "e9a093a863f11ee5f563f26e717294b8df109cc611d1ea28cd6c7b019d38593b.mp4",
+        "ef87ad84623dcb203935a79cb11edc5f5bb9452ff71da8ff2c4a8ce13fb53886.mp4",
+        "f096e86011c6e270c9c8ed00441d21794bfe0930d7cd56877d86b2ee10400d75.mp4",
+        "f5f5dc396537b3752f3e06bd5eeeccd24fc94c64745a366e78f18baf709a041b.mp4"
+      ],
+      "val": [],
+      "test": []
+    }
+  },
+  "feature_pipeline": {
+    "conf": 0.25,
+    "feature_dim": 290,
+    "feature_set": "v2_nearfar",
+    "imgsz": 960.0,
+    "num_keypoints": 17,
+    "sample_fps": 5.0,
+    "sampling_mode": null,
+    "screen_height": 1080,
+    "screen_width": 1920,
+    "target_fps": 5.0,
+    "yolo_model": "yolov8n-pose-960-dynamic.onnx",
+    "slot_mode": "netline",
+    "court_model_file": "court_lines.onnx",
+    "crop_window": [
+      0.25,
+      0.0,
+      0.75,
+      0.5
+    ],
+    "drop_feature_groups": [],
+    "drop_slots": []
+  },
+  "files": {
+    "manifest_file": "manifest.json",
+    "model_file": "model.onnx",
+    "model_sha256": "7d918f97e8978fed16a9f83b6af2443d23d271d5a6b70a4828bb4fa619a2bf75",
+    "pose_model_file": "yolov8n-pose-960-dynamic.onnx",
+    "pose_model_sha256": "4a3fe0de63042b3a48a458d4f4358615417b58c56471a6e1da53b249f5ec0011",
+    "pose_static_file": "yolov8n-pose-544x960-static.onnx",
+    "pose_static_sha256": "2dfb42217c859e4d65cd22c9b15edf63f429643222edc5a434ca2b70f57a0f0c",
+    "scaler_file": "scaler.json",
+    "scaler_sha256": "4e11beb171d2d15787c75a2df38099de5e1af00dd908930343761a7464a5a1da",
+    "court_model_file": "court_lines.onnx",
+    "court_model_sha256": "f5e2e25d2f0fe1382814aa9d3766e4878cf2b560a8c7ef90f677427816ab7f77"
+  },
+  "inference": {
+    "input_name": "features",
+    "input_shape": [
+      1,
+      100,
+      290
+    ],
+    "onnx_opset": 17,
+    "output_names": [
+      "pointness_logit",
+      "start_heatmap_logit",
+      "end_heatmap_logit"
+    ],
+    "overlap_frames": 50,
+    "overlap_seconds": 10.0,
+    "seq_len_frames": 100,
+    "seq_len_seconds": 20.0,
+    "threshold": 0.5
+  },
+  "manifest_version": 1,
+  "metrics": {
+    "selected_epoch_metrics": {
+      "epoch": 13
+    },
+    "cv_5fold_netline": {
+      "f1_segment_six_bin": 0.393,
+      "good": 0.147,
+      "decent": 0.248,
+      "per_fold_f1": [
+        0.456,
+        0.388,
+        0.274,
+        0.566,
+        0.307
+      ]
+    },
+    "split_note": "No held-out data: trained on all 26 videos for the median CV-selected epoch (14, 28, 13, 12, 13 -> 13). Metrics are 5-fold out-of-fold CV of the same recipe with the tuned hybrid decode below."
+  },
+  "model": {
+    "architecture": "TennisPointHeatmapTCN",
+    "backbone": "tcn",
+    "dropout": 0.2,
+    "head": "mlp",
+    "hidden_size": 64,
+    "kernel_size": 3,
+    "levels": 5,
+    "outputs": [
+      "pointness_logit",
+      "start_heatmap_logit",
+      "end_heatmap_logit"
+    ],
+    "receptive_field_frames": 125
+  },
+  "pipeline": {
+    "id": "frame_startend_heatmap"
+  },
+  "postprocess": {
+    "method": "heatmap_hybrid",
+    "params": {
+      "mode": "hybrid",
+      "threshold": 0.5,
+      "peak_threshold": 0.3,
+      "sigma_frames": 2.5,
+      "min_duration_sec": 0.0,
+      "max_duration_sec": 3600.0,
+      "merge_gap_sec": 0.0,
+      "smooth_sigma_frames": 1.5,
+      "hybrid_min_duration_sec": 4.0,
+      "sigma": 1.5,
+      "low": 0.5,
+      "high": 0.65,
+      "min_dur_sec": 0.5
+    }
+  },
+  "source_run": {
+    "checkpoint_path": "training_data_netline/runs/final_netline_all26/checkpoints/epoch_13.pth",
+    "run_id": "final_netline_all26",
+    "scaler_path": "training_data_netline/datasets/final_netline_all26/scaler.joblib",
+    "selected_checkpoint": "epoch_13",
+    "selected_epoch": 13,
+    "selection_reason": "fixed epoch = median of 5-fold CV selected epochs; net-line slots + far-crop pose pass, full v2_nearfar",
+    "onnx_export_parity_max_abs": 2.38e-06
+  }
+}
