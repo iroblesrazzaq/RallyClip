@@ -35,6 +35,24 @@ def rescale_player_to_reference(player, src_width, src_height, ref_width, ref_he
     return {**player, "box": box, "keypoints": keypoints}
 
 
+def _scale_detections(frame_data, sx, sy):
+    """Detections dict (boxes/keypoints/conf/box_conf) with pixel coords scaled by (sx, sy)."""
+    boxes = np.asarray(frame_data.get('boxes', np.empty((0, 4))), dtype=np.float32).reshape((-1, 4))
+    keypoints = np.asarray(frame_data.get('keypoints', np.empty((0, 17, 2))), dtype=np.float32).reshape((-1, 17, 2))
+    box_conf = np.asarray(frame_data.get('box_conf', np.full((len(boxes),), -1.0)), dtype=np.float32)
+    if box_conf.shape[0] != len(boxes):
+        box_conf = np.full((len(boxes),), -1.0, dtype=np.float32)
+    if sx != 1.0 or sy != 1.0:
+        boxes = boxes * np.array([sx, sy, sx, sy], dtype=np.float32)
+        keypoints = keypoints * np.array([sx, sy], dtype=np.float32)
+    return {
+        'boxes': boxes,
+        'box_conf': box_conf,
+        'keypoints': keypoints,
+        'conf': np.asarray(frame_data.get('conf', np.empty((0, 17))), dtype=np.float32).reshape((-1, 17)),
+    }
+
+
 class DataPreprocessor:
     def __init__(self, screen_width: int = 1280, screen_height: int = 720, merge_iou_thresh: float = 0.6, save_court_masks: bool = False, yolo_model_path: str = "yolov8n-pose.pt", conf: float = 0.25, yolo_device: str | None = None) -> None:
         self.screen_width = screen_width
@@ -293,6 +311,59 @@ class DataPreprocessor:
             if (frame_idx + 1) % 100 == 0:
                 logging.debug("Processed %s frames", frame_idx + 1)
             yield (filtered_frame_data, annotation_status, near_player, far_player)
+
+    def iter_slot_players(self, pose_data, court_mask, src_width: int, src_height: int, geometry=None):
+        """Streaming v2 preprocessing: yields ``(annotation_status, {slot: player})``.
+
+        Unlike the v1 path, everything happens in reference pixels (screen_width x
+        screen_height): detections and the court mask are rescaled first, so the
+        court filter, the assigner's edge zones and the net line all see the same
+        coordinates the training pipeline did (it runs on videos normalized to the
+        reference size).
+
+        geometry (preprocessing.netline_slots.CourtGeometry, reference pixels):
+        net-line slots -- near from full-frame boxes below the net, far from the
+        crop pass (frame_data["crop"]). None: classic near/far assignment.
+        """
+        from preprocessing.netline_slots import below_net_mask, pick_far
+
+        mask = self._mask_to_reference(court_mask)
+        sx = self.screen_width / src_width if src_width > 0 else 1.0
+        sy = self.screen_height / src_height if src_height > 0 else 1.0
+        for frame_data in pose_data:
+            status = frame_data.get('annotation_status', 0)
+            if status == -1:
+                yield status, None
+                continue
+            full = self.filter_frame_by_court(_scale_detections(frame_data, sx, sy), mask)
+            if geometry is None:
+                assigned = self.assign_players(full)
+                yield status, {'near': assigned['near_player'], 'far': assigned['far_player']}
+                continue
+            below = below_net_mask(full['boxes'], geometry)
+            near = self.assign_players({k: v[below] for k, v in full.items()})['near_player']
+            far = None
+            crop = frame_data.get('crop')
+            if crop is not None and len(crop.get('boxes', ())):
+                crop = _scale_detections(crop, sx, sy)
+                i = pick_far(crop['boxes'], mask, geometry)
+                if i is not None:
+                    far = {
+                        'box': crop['boxes'][i],
+                        'keypoints': crop['keypoints'][i],
+                        'conf': crop['conf'][i],
+                        'box_conf': crop['box_conf'][i],
+                    }
+            yield status, {'near': near, 'far': far}
+
+    def _mask_to_reference(self, mask):
+        if mask is None:
+            return None
+        mask = np.asarray(mask)
+        if mask.shape[:2] == (self.screen_height, self.screen_width):
+            return mask
+        import cv2
+        return cv2.resize(mask, (self.screen_width, self.screen_height), interpolation=cv2.INTER_NEAREST)
 
     def preprocess_frames(self, pose_data, court_mask, src_width: int, src_height: int) -> dict:
         """In-memory preprocessing core: the full parallel-list dict.

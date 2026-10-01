@@ -8,7 +8,7 @@ from rallyclip_core.pipelines import pipeline_id_from_manifest_values
 
 # Shipped inference bundle. RallyClip.spec copies this folder into the .app;
 # tests/test_release_packaging.py fails if the spec drifts from this constant.
-DEFAULT_ARTIFACT_DIR = "models/rallyclip_v0.5.0"
+DEFAULT_ARTIFACT_DIR = "models/rallyclip_v0.6.0"
 
 
 def resolve_default_artifacts(

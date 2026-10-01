@@ -2,7 +2,8 @@ import numpy as np
 import pytest
 
 from training.preprocess.player_assigner import PlayerAssigner
-from training.preprocess.preprocessor import CourtGeometry, _netline_players, _pick_far
+from preprocessing.netline_slots import CourtGeometry, pick_far
+from training.preprocess.preprocessor import _netline_players
 
 # A synthetic straight-on court: pixels are an affine map of court meters,
 # x = 960 + 50u, y = 600 - 20v, so the net (v = 0) sits at y = 600.
@@ -34,18 +35,18 @@ def test_pick_far_prefers_center_and_gates_the_far_half():
         box_at(0.0, -6.0),   # near side of the net -> excluded
     ])
     conf = np.full(len(boxes), 0.9, dtype=np.float32)
-    assert _pick_far(boxes, conf, None, GEOM) == 0
+    assert pick_far(boxes, None, GEOM) == 0
 
 
 def test_pick_far_tie_breaks_toward_the_net():
     boxes = np.stack([box_at(0.8, 12.0), box_at(0.2, 16.0)])
     conf = np.full(2, 0.9, dtype=np.float32)
     # |u| within 1 m of each other -> the one closer to the net wins.
-    assert _pick_far(boxes, conf, None, GEOM) == 0
+    assert pick_far(boxes, None, GEOM) == 0
 
 
 def test_pick_far_empty():
-    assert _pick_far(np.empty((0, 4), np.float32), np.empty((0,), np.float32), None, GEOM) is None
+    assert pick_far(np.empty((0, 4), np.float32), None, GEOM) is None
 
 
 def test_netline_players_near_below_net_far_from_crop():

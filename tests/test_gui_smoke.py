@@ -771,6 +771,9 @@ def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch):
     monkeypatch.setattr(gui_app, "apply_pose_device", lambda *args, **kwargs: "cpu")
     monkeypatch.setattr(gui_app, "_persist_library_item", lambda **_kwargs: ("match-1", upload, tmp_path / "segments.csv"))
 
+    # These fakes model the v1 feature path; the shipped manifest may be v2.
+    monkeypatch.setitem(gui_app.DEFAULT_CONFIG, "feature_set", "v1")
+
     class FakePreprocessor:
         def __init__(self, **_kwargs):
             calls.append("preprocess:init")
