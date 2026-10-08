@@ -3,6 +3,7 @@ build/
 dist_venv/
 build_venv/
 *.spec
+!packaging/macos/NativeBackend.spec
 
 # generated data and outputs
 raw_videos/
@@ -124,3 +125,5 @@ debug.ipynb
 # local iOS app checkout (separate repo)
 /ios/
 
+macos/.build/
+macos/.swiftpm/

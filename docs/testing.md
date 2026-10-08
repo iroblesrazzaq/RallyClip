@@ -31,7 +31,18 @@ Last known (2026-10-27, runtime v0.6.0 rebuilt on main after #64, macOS `.venv-t
 $PY -m compileall -q src tests
 ```
 
-Last known (2026-07-03): exit 0.
+Last known (2026-10-27): exit 0 with `.venv-train`.
+
+## Native macOS
+
+`swift test --package-path macos`: **5 passed** on 2026-10-07, including a
+synthetic camera-boundary composition/export/frame-content test. Swift requires
+normal host access to its caches and media services.
+
+`$PY scripts/native/smoke.py --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend`
+checks a frozen import, edit/reset/delete, decoded-frame playback through three
+cuts, exact export duration, and delayed audio across a camera boundary. Run after
+`RALLYCLIP_BUILD_PYTHON="$PY" bash scripts/native/build.sh`. See docs/native-macos.md.
 
 ## Golden CLI parity (run when touching pipeline/engine/extraction/decode)
 

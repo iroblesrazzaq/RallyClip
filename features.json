@@ -10,7 +10,7 @@
       "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
-      "evidence": "2026-10-27: 611 passed, 1 skipped, 49 deselected (~100s) on runtime v0.6.0 rebuilt on main (macOS, .venv-train py3.11, v0.6.0 weights fetched)."
+      "evidence": "2026-10-27: 598 passed, 6 skipped, 49 deselected (~83s) on the native branch rebuilt on main (macOS, .venv-train py3.11, v0.6 weights present). Includes 8 native service tests."
     },
     {
       "id": "golden-cli-parity",
@@ -24,7 +24,7 @@
       "name": "src+tests byte-compile cleanly",
       "status": "passing",
       "verification": "$PY -m compileall -q src tests",
-      "evidence": "2026-10-22: exit 0 on training/v060-tcn-netline"
+      "evidence": "2026-10-27: exit 0 with .venv-train on the native branch rebuilt on main."
     },
     {
       "id": "tcn-v050-default",
@@ -95,7 +95,14 @@
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_folder_import.py tests/test_segment.py tests/test_segment_av_sync.py tests/test_cli_golden_parity.py; default gate; tests/test_gui_playwright.py",
       "evidence": "2026-10-22: tests/test_folder_import.py 23 passed (MPEG-TS export frame-exact when the seek lands late or at EOF, 720p downscale + 10->5fps proxy, preflight resolution/height/short-total/unknown-length, folder start state, audio trimmed per cut with zero residual across 15 short 60fps cuts, points edited mid-export re-export without blocking the save, proxy CFR + decoded-frame manifest, 5fps gap fill without boundary drift, cross-boundary export from originals, single-use folder token, spent token after failed start, fps/resolution preflight, cancel-before-handle terminates + cleans job dir, failed export leaves no export.mp4, missing originals -> 404, background export progress -> ready, sources.json persisted). Default gate 350 passed, 49 deselected. Golden parity 1 passed. test_gui_playwright.py 11 passed. Real-footage check: three 40s 1080p30 chunks -> 120.2s 720p proxy in 9.5s (VideoToolbox), audio within 13ms; clip-2 frame 0 aligns to proxy frame 1202; 30s cross-boundary export = 902 frames, audio 30.08s; after review fixes 3 cuts (36s) = 1085 frames, audio 36.18s. Folder picker dialog not exercised by automation."
+    },
+    {
+      "id": "native-macos",
+      "name": "SwiftUI macOS desktop with original logo, native continuous playback, point editing, v0.6 analysis and AVFoundation exports",
+      "status": "active",
+      "verification": "swift test --package-path macos; $PY scripts/native/smoke.py --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend; interactive native UI QA; Release workflow desktop=native",
+      "evidence": "2026-10-07: app builds; 5 Swift tests and 8 native API tests pass. Packaged v0.6 import, edit/reset/delete, decoded-frame playback and exact 4s export passed. Delayed audio regression passed after rendering silence via audio mix. Interactive import, save edit and MP4 export passed. Signed CI build pending."
     }
   ],
-  "active": "large-video-import"
+  "active": "native-macos"
 }

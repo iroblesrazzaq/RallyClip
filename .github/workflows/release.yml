@@ -5,12 +5,25 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      desktop:
+        description: Desktop implementation to build
+        type: choice
+        options: [native, legacy]
+        default: native
 
 permissions:
   contents: write
 
 jobs:
+  native:
+    if: github.event_name != 'workflow_dispatch' || inputs.desktop != 'legacy'
+    uses: ./.github/workflows/native-macos.yml
+    with:
+      sign: true
+    secrets: inherit
   tests:
+    if: github.event_name == 'workflow_dispatch' && inputs.desktop == 'legacy'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -34,6 +47,7 @@ jobs:
         run: pytest -m e2e
 
   build:
+    if: github.event_name == 'workflow_dispatch' && inputs.desktop == 'legacy'
     needs: tests
     runs-on: macos-latest
     timeout-minutes: 180

@@ -53,7 +53,12 @@ sign_with_entitlements() {
 while IFS= read -r macho; do
   [[ -z "${macho}" ]] && continue
   [[ "${macho}" == "${MAIN_EXECUTABLE}" ]] && continue
-  sign_nested "${macho}"
+  if [[ "${macho}" == "${APP_PATH}/Contents/Resources/Backend/RallyClipBackend" ]]; then
+    # The native Swift app's bundled inference worker owns the ONNX runtime.
+    sign_with_entitlements "${macho}"
+  else
+    sign_nested "${macho}"
+  fi
 done < <(
   find "${APP_PATH}/Contents" -type f -print0 \
     | while IFS= read -r -d '' candidate; do
