@@ -16,9 +16,11 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-09-09, assisted DMG update, Linux py3.12):
-**321 passed, 6 skipped, 27 deselected, ~20s**. `tests/test_release_packaging.py` 21 passed;
-`tests/test_artifact_fetch.py` 6 passed.
+Last known (2026-10-07, native-macos worktree, v0.6 weights present):
+**483 passed, 7 skipped, 49 deselected** in 77.94s, without exclusions.
+CoreML and VideoToolbox tests require normal host hardware/cache access;
+release-script subprocesses require the project venv first on `PATH` when
+Apple's `/usr/bin/python3` is unavailable.
 
 ## Compile gate (cheap, run with the default gate)
 
@@ -26,7 +28,18 @@ Last known (2026-09-09, assisted DMG update, Linux py3.12):
 $PY -m compileall -q src tests
 ```
 
-Last known (2026-07-03): exit 0.
+Last known (2026-10-07): exit 0 with `.venv-train` (including scripts/native).
+
+## Native macOS
+
+`swift test --package-path macos`: **5 passed** on 2026-10-07, including a
+synthetic camera-boundary composition/export/frame-content test. Swift requires
+normal host access to its caches and media services.
+
+`$PY scripts/native/smoke.py --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend`
+checks a frozen import, edit/reset/delete, decoded-frame playback through three
+cuts, exact export duration, and delayed audio across a camera boundary. Run after
+`RALLYCLIP_BUILD_PYTHON="$PY" bash scripts/native/build.sh`. See docs/native-macos.md.
 
 ## Golden CLI parity (run when touching pipeline/engine/extraction/decode)
 
@@ -34,7 +47,7 @@ Last known (2026-07-03): exit 0.
 PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_cli_golden_parity.py
 ```
 
-Last known (2026-07-03): **1 passed, 14.0s**. Boundaries compared at 0.5s tolerance;
+Last known (2026-09-26): **1 skipped** (artifact weights not fetched). Boundaries compared at 0.5s tolerance;
 byte-exact only holds on the machine+env the golden was generated on. ubuntu/windows
 ORT can split a TCN point across a 1-frame pointness dip; v0.5.0 ships
 `merge_gap_sec: 0.5` so those fragments become one segment.

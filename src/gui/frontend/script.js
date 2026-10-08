@@ -22,6 +22,7 @@ applySystemTheme();
 class RallyClipApp {
     constructor() {
         this.selectedFile = null;
+        this.selectedFolder = null;
         this.isProcessing = false;
         this.currentJobId = null;
         this.progressInterval = null;
@@ -109,8 +110,10 @@ class RallyClipApp {
         this.nativeBridgeReady = false;
         this.updateStatus = null;
         this.updateDownloadAbort = null;
-        this.steps = ["pose", "preprocess", "feature", "inference", "output"];
+        this.exportingItems = new Set();
+        this.steps = ["proxy", "pose", "preprocess", "feature", "inference", "output"];
         this.stepLabels = {
+            proxy: "Preparing 720p proxy",
             pose: "Extracting pose",
             preprocess: "Preprocessing",
             feature: "Building features",
@@ -184,6 +187,7 @@ class RallyClipApp {
         this.dropZone = document.getElementById("dropZone");
         this.fileInput = document.getElementById("fileInput");
         this.browseBtn = document.getElementById("browseBtn");
+        this.folderBtn = document.getElementById("folderBtn");
         this.selectedFileDiv = document.getElementById("selectedFile");
         this.fileName = document.getElementById("fileName");
         this.fileSize = document.getElementById("fileSize");
@@ -212,6 +216,7 @@ class RallyClipApp {
         this.toastStack = document.getElementById("toastStack");
 
         this.progressItems = {
+            proxy: { status: document.getElementById("proxyStatus"), fill: document.getElementById("proxyFill") },
             pose: { status: document.getElementById("poseStatus"), fill: document.getElementById("poseFill") },
             preprocess: { status: document.getElementById("preprocessStatus"), fill: document.getElementById("preprocessFill") },
             feature: { status: document.getElementById("featureStatus"), fill: document.getElementById("featureFill") },
@@ -227,7 +232,7 @@ class RallyClipApp {
         this.backToLibrary.addEventListener("click", () => this.showLibrary());
         this.backFromViewer.addEventListener("click", () => this.showLibrary());
         this.viewerExportBtn.addEventListener("click", () => {
-            if (this.viewingItemId) this.triggerDownload(`/api/library/${this.viewingItemId}/video`);
+            if (this.viewingItemId) this.prepareExport(this.viewingItemId);
         });
         this.viewerCsvBtn.addEventListener("click", () => {
             if (this.viewingItemId) this.triggerDownload(`/api/library/${this.viewingItemId}/csv`);
@@ -278,6 +283,10 @@ class RallyClipApp {
         this.browseBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             this.fileInput.click();
+        });
+        this.folderBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.chooseFolder();
         });
         this.fileInput.addEventListener("change", (e) => {
             if (e.target.files.length) this.processFile(e.target.files[0]);
@@ -750,7 +759,9 @@ class RallyClipApp {
 
         const actions = document.createElement("div");
         actions.className = "lib-actions";
-        actions.appendChild(this.actionButton("Export video", "btn-primary", "export"));
+        const exportBtn = this.actionButton("Export video", "btn-primary", "export");
+        if (this.exportingItems.has(item.id)) this.setExportButtonBusy(exportBtn, true);
+        actions.appendChild(exportBtn);
         if (item.has_csv) actions.appendChild(this.actionButton("CSV", "btn-secondary", "csv"));
         actions.appendChild(this.actionButton("Delete", "btn-ghost lib-delete", "delete"));
         card.appendChild(actions);
@@ -809,7 +820,7 @@ class RallyClipApp {
             return;
         }
         const action = btn.dataset.action;
-        if (action === "export") this.triggerDownload(`/api/library/${id}/video`);
+        if (action === "export") this.prepareExport(id);
         else if (action === "csv") this.triggerDownload(`/api/library/${id}/csv`);
         else if (action === "delete") this.deleteItem(id);
     }
@@ -2927,6 +2938,59 @@ class RallyClipApp {
         anchor.remove();
     }
 
+    setExportButtonBusy(button, busy, progress = null) {
+        if (!button) return;
+        button.disabled = busy;
+        button.classList.toggle("is-busy", busy);
+        button.setAttribute("aria-busy", busy ? "true" : "false");
+        const percent = Number.isFinite(Number(progress))
+            ? ` ${Math.max(0, Math.min(99, Math.round(Number(progress))))}%`
+            : "";
+        button.textContent = busy ? `Exporting${percent}…` : "Export video";
+    }
+
+    syncExportButtons(itemId, busy, progress = null) {
+        this.libraryGrid.querySelectorAll('.lib-card').forEach((card) => {
+            if (card.dataset.id === itemId) {
+                this.setExportButtonBusy(card.querySelector('button[data-action="export"]'), busy, progress);
+            }
+        });
+        if (this.viewingItemId === itemId) this.setExportButtonBusy(this.viewerExportBtn, busy, progress);
+    }
+
+    async prepareExport(itemId) {
+        if (!itemId || this.exportingItems.has(itemId)) return;
+        this.exportingItems.add(itemId);
+        this.syncExportButtons(itemId, true);
+        this.showToast("Preparing video export…", "info");
+        const encodedId = encodeURIComponent(itemId);
+        try {
+            let resp = await fetch(`/api/library/${encodedId}/export`, { method: "POST" });
+            let payload = await resp.json().catch(() => ({}));
+            if (!resp.ok && resp.status !== 202) {
+                throw new Error(payload.error || `HTTP ${resp.status}`);
+            }
+            while (payload.status === "processing") {
+                this.syncExportButtons(itemId, true, payload.progress);
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+                resp = await fetch(`/api/library/${encodedId}/export/status`, { cache: "no-store" });
+                payload = await resp.json().catch(() => ({}));
+                if (!resp.ok) throw new Error(payload.error || `HTTP ${resp.status}`);
+            }
+            if (payload.status !== "ready") {
+                throw new Error(payload.error || "Could not prepare video export.");
+            }
+            this.showToast("Export ready. Download starting.", "success");
+            this.triggerDownload(payload.download_url || `/api/library/${encodedId}/video`);
+        } catch (err) {
+            console.error(err);
+            this.showToast(err.message || "Could not export video.", "error");
+        } finally {
+            this.exportingItems.delete(itemId);
+            this.syncExportButtons(itemId, false);
+        }
+    }
+
     async deleteItem(id) {
         if (!window.confirm("Delete this match? This also deletes its CSV.")) return;
         try {
@@ -3066,26 +3130,60 @@ class RallyClipApp {
 
     processFile(file) {
         // Accept any video; the backend validates by content (codec/resolution).
-        const maxSize = 2 * 1024 * 1024 * 1024;
-        if (file.size > maxSize) {
-            this.showToast("File must be under 2GB.", "error");
-            return;
-        }
+        const replaced = this.selectedFolder && this.selectedFolder.token;
         this.selectedFile = file;
+        this.selectedFolder = null;
         this.fileName.textContent = file.name;
         this.fileSize.textContent = this.formatFileSize(file.size);
         this.dropZone.hidden = true;
         this.selectedFileDiv.hidden = false;
         this.startBtn.disabled = false;
+        this.dismissFolderToken(replaced);
+    }
+
+    dismissFolderToken(token) {
+        if (!token) return;
+        fetch("/api/folder/dismiss", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+        }).catch(() => {});
     }
 
     removeFile() {
+        const token = this.selectedFolder && this.selectedFolder.token;
         this.selectedFile = null;
+        this.selectedFolder = null;
         this.fileInput.value = "";
         this.dropZone.hidden = false;
         this.selectedFileDiv.hidden = true;
         this.startBtn.disabled = true;
         this.resetProgress();
+        this.dismissFolderToken(token);
+    }
+
+    async chooseFolder() {
+        this.folderBtn.disabled = true;
+        try {
+            const response = await fetch("/api/folder/select", { method: "POST" });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(payload.error || "Could not select that folder.");
+            if (payload.cancelled) return;
+            const previous = this.selectedFolder && this.selectedFolder.token;
+            this.selectedFile = null;
+            this.fileInput.value = "";
+            this.selectedFolder = payload;
+            if (previous && previous !== payload.token) this.dismissFolderToken(previous);
+            this.fileName.textContent = `${payload.folder_name} — ${payload.file_count} MP4 clips`;
+            this.fileSize.textContent = `${this.formatFileSize(payload.total_bytes)} · consecutive match timeline`;
+            this.dropZone.hidden = true;
+            this.selectedFileDiv.hidden = false;
+            this.startBtn.disabled = false;
+        } catch (error) {
+            this.showToast(this.errorText(error) || "Could not select that folder.", "error");
+        } finally {
+            this.folderBtn.disabled = false;
+        }
     }
 
     formatFileSize(bytes) {
@@ -3112,7 +3210,7 @@ class RallyClipApp {
 
     // ----- Processing ------------------------------------------------------ //
     async startAnalysis() {
-        if (!this.selectedFile || this.isProcessing) return;
+        if ((!this.selectedFile && !this.selectedFolder) || this.isProcessing) return;
         this.markWelcomeSeen();
         this.libraryId = null;
         this.resetProgress();
@@ -3123,7 +3221,9 @@ class RallyClipApp {
         this.showView("processing");
 
         try {
-            const jobId = await this.uploadFileAndStart();
+            const jobId = this.selectedFolder
+                ? await this.startFolderAnalysis()
+                : await this.uploadFileAndStart();
             this.currentJobId = jobId;
             try { localStorage.setItem(JOB_ID_KEY, jobId); } catch (_) {}
             this.startProgressMonitoring();
@@ -3149,6 +3249,20 @@ class RallyClipApp {
         formData.append("video", this.selectedFile);
         formData.append("config", JSON.stringify(this.buildConfigFromForm()));
         const response = await fetch("/api/upload-and-start", { method: "POST", body: formData });
+        if (!response.ok) throw new Error(await response.text());
+        const result = await response.json();
+        return result.job_id;
+    }
+
+    async startFolderAnalysis() {
+        const response = await fetch("/api/folder/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                token: this.selectedFolder.token,
+                config: this.buildConfigFromForm(),
+            }),
+        });
         if (!response.ok) throw new Error(await response.text());
         const result = await response.json();
         return result.job_id;
@@ -3294,6 +3408,7 @@ class RallyClipApp {
         const saved = Boolean(this.libraryId);
         this.currentJobId = null;
         this.selectedFile = null;
+        this.selectedFolder = null;
         this.libraryId = null;
         this.showLibrary();
         if (saved) this.showToast("Saved to your matches.", "success");
@@ -3328,7 +3443,7 @@ class RallyClipApp {
     resetControls() {
         this.isProcessing = false;
         this.currentJobId = null;
-        this.startBtn.disabled = !this.selectedFile;
+        this.startBtn.disabled = !(this.selectedFile || this.selectedFolder);
         this.cancelBtn.disabled = true;
     }
 

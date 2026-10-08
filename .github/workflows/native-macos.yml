@@ -1,0 +1,96 @@
+name: Native macOS
+
+on:
+  pull_request:
+    paths:
+      - 'macos/**'
+      - 'src/gui/native_backend.py'
+      - 'tests/test_native_backend.py'
+      - 'scripts/native/**'
+      - 'packaging/macos/NativeBackend.spec'
+      - 'scripts/release/**'
+      - 'packaging/macos/RallyClip.entitlements'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/native-macos.yml'
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: 'Sign and notarize the native DMG with the existing Apple credentials'
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      sign:
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Require Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - name: Install backend build dependencies
+        run: pip install '.[cpu,dev,pack]'
+      - name: Fetch model artifact
+        run: python scripts/fetch_artifact.py
+      - name: Native tests
+        run: swift test --package-path macos
+      - name: Backend tests
+        run: pytest -q -m 'not slow and not e2e' -p no:cacheprovider
+      - name: Build native application
+        run: bash scripts/native/build.sh
+      - name: Packaged import, edit and export smoke
+        run: python scripts/native/smoke.py --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend
+      - name: Import existing Apple certificate
+        if: github.event_name != 'pull_request' && inputs.sign
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: bash scripts/release/import_apple_cert.sh
+      - name: Package native DMG
+        id: package
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          RALLYCLIP_SKIP_NOTARIZE: '1'
+          RALLYCLIP_SKIP_SIGNING: ${{ github.event_name != 'pull_request' && inputs.sign && '0' || '1' }}
+        run: bash scripts/release/package_macos.sh dist/native/RallyClip.app dist/native
+      - name: Notarize and staple
+        if: github.event_name != 'pull_request' && inputs.sign
+        env:
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          APPSTORE_API_KEY_ID: ${{ secrets.APPSTORE_API_KEY_ID }}
+          APPSTORE_API_PRIVATE_KEY: ${{ secrets.APPSTORE_API_PRIVATE_KEY }}
+        run: |
+          bash scripts/release/notarize_macos_dmg.sh '${{ steps.package.outputs.dmg_path }}'
+          shasum -a 256 '${{ steps.package.outputs.dmg_path }}' > '${{ steps.package.outputs.sha256_path }}'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: RallyClip-native-macOS
+          path: |
+            dist/native/*.dmg
+            dist/native/*.sha256
+          retention-days: 14
+      - name: Draft release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          files: |
+            dist/native/*.dmg
+            dist/native/*.sha256
+          draft: true
+          generate_release_notes: true
+      - name: Delete signing keychain
+        if: always()
+        run: |
+          if [[ -n "${RALLYCLIP_KEYCHAIN_PATH:-}" ]]; then
+            security delete-keychain "$RALLYCLIP_KEYCHAIN_PATH"
+          fi

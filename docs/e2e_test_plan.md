@@ -105,7 +105,8 @@ L1 — backend journey (pytest, marked `e2e`+`slow`)
 - `progress_monotonic` — percent never decreases, terminal state reached, no stuck
   job (bounded poll timeout, no fixed sleeps).
 - `cancel` — start job → cancel → state reflects cancellation, no output written.
-- `bad_input_oversize` — upload > 2GB cap rejected (4xx, no job spawned).
+- `large_input_no_fixed_cap` — unit/static-asset contract confirms neither Flask nor
+  the file picker imposes a fixed byte-size ceiling; avoid a multi-GB CI fixture.
 - `bad_input_nonvideo` — non-video / empty file rejected cleanly (4xx, no traceback).
 - `config_defaults_contract` — `/api/config/defaults` returns `fps=5.0`,
   `feature_set=v1`, `yolo_sizes`, `available_devices`, `auto_device`.

@@ -18,6 +18,17 @@ from make_smoke_clip import make_clip  # noqa: E402
 from preprocessing.data_preprocessor import rescale_player_to_reference  # noqa: E402
 from runtime.video_validation import VideoValidationError, probe_video, validate_video  # noqa: E402
 
+
+def test_gui_validation_runtime_exposes_folder_probe_contract():
+    from gui import app as gui_app
+
+    runtime = gui_app._load_video_validation_runtime()
+
+    assert callable(runtime.probe_video)
+    assert callable(runtime.validate_video)
+    assert runtime.MIN_HEIGHT == 720
+    assert runtime.VideoValidationError is VideoValidationError
+
 SEQ_LEN, FPS = 100, 5.0  # -> 20s minimum
 
 
@@ -30,6 +41,7 @@ def test_valid_720p_clip_passes(tmp_path):
     info = validate_video(clip, seq_len=SEQ_LEN, fps=FPS)
     assert (info.width, info.height) == (1280, 720)
     assert info.duration_s >= 20.0
+    assert info.has_audio is False
 
 
 def test_unreadable_file_rejected(tmp_path):

@@ -95,9 +95,13 @@
             <section class="run-card" id="uploadView" hidden>
                 <button type="button" class="text-button back-link" id="backToLibrary">← Saved matches</button>
                 <div class="file-drop-zone" id="dropZone">
-                    <p class="drop-title">Drop a match video</p>
-                    <p class="drop-sub"><button type="button" class="text-button" id="browseBtn">Browse files</button></p>
-                    <p class="drop-meta">MP4 · up to 2GB</p>
+                    <p class="drop-title">Import a match</p>
+                    <p class="drop-sub">
+                        <button type="button" class="text-button" id="folderBtn">Choose a folder of consecutive clips</button>
+                        <span aria-hidden="true"> · </span>
+                        <button type="button" class="text-button" id="browseBtn">Choose one video</button>
+                    </p>
+                    <p class="drop-meta">MP4 clips · natural filename order · 720p minimum</p>
                     <input type="file" id="fileInput" accept="video/mp4,video/*" hidden>
                 </div>
 
@@ -168,6 +172,10 @@
                 <details class="progress-details">
                     <summary>Details</summary>
                     <div class="steps" id="progressSection">
+                        <div class="step" data-step="proxy">
+                            <div class="step-row"><span>Preparing 720p proxy</span><span id="proxyStatus">Waiting</span></div>
+                            <div class="bar"><div class="bar-fill" id="proxyFill"></div></div>
+                        </div>
                         <div class="step" data-step="pose">
                             <div class="step-row"><span>Pose extraction</span><span id="poseStatus">Waiting</span></div>
                             <div class="bar"><div class="bar-fill" id="poseFill"></div></div>

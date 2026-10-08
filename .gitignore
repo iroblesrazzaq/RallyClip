@@ -3,6 +3,7 @@ build/
 dist_venv/
 build_venv/
 *.spec
+!packaging/macos/NativeBackend.spec
 
 # generated data and outputs
 raw_videos/
@@ -121,3 +122,5 @@ wandb/
 # notebooks
 debug.ipynb
 ios/
+macos/.build/
+macos/.swiftpm/
