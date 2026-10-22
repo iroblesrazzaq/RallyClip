@@ -111,6 +111,49 @@ def test_audio_stays_locked_to_video_across_many_short_cuts(tmp_path, monkeypatc
     assert len(errors) == 15 and set(errors) == {0}
 
 
+def test_proxy_downscales_and_drops_frames_to_the_model_rate(clips, tmp_path):
+    out = tmp_path / "proxy.mp4"
+    manifest = create_analysis_proxy(list(clips), out, fps=5, max_height=120)
+
+    assert [(m["start_s"], m["duration_s"]) for m in manifest] == [(0.0, 3.0), (3.0, 2.0)]
+    with av.open(str(out)) as container:
+        stream = container.streams.video[0]
+        assert (stream.codec_context.width, stream.codec_context.height) == (160, 120)
+        lumas = [float(f.to_ndarray(format="gray").mean()) for f in container.decode(stream)]
+    # Every other 10fps frame: clip A's frame 2k (luma ~2k) lands at proxy frame k.
+    assert len(lumas) == 25 and abs(lumas[5] - 10) < 4
+
+
+def _make_ts(path, gop, seconds=3, fps=10):
+    """Video-only MPEG-TS clip (non-zero start_time) whose frame i has luma ~i."""
+    with av.open(str(path), "w", format="mpegts") as container:
+        stream = container.add_stream("libx264", rate=fps)
+        stream.width, stream.height, stream.pix_fmt = 320, 240, "yuv420p"
+        stream.options = {"g": str(gop)}
+        for i in range(seconds * fps):
+            frame = av.VideoFrame.from_ndarray(np.full((240, 320, 3), i, dtype=np.uint8), format="rgb24")
+            frame.pts = i
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+
+
+@pytest.mark.parametrize("gop", [10, 250])  # seek lands late / seek lands at EOF
+def test_mpegts_clips_are_timed_from_their_first_frame(tmp_path, gop):
+    clip = tmp_path / "00001.MTS"
+    _make_ts(clip, gop)
+    with av.open(str(clip), format="mpegts") as container:
+        assert container.streams.video[0].start_time > 0  # the case under test
+    manifest = create_analysis_proxy([clip], tmp_path / "proxy.mp4", fps=10)
+    assert [(m["start_s"], m["duration_s"]) for m in manifest] == [(0.0, 3.0)]
+
+    out = tmp_path / "export.mp4"
+    segment_video_sources([{"path": str(clip), "start_s": 0.0, "duration_s": 3.0}], [(1.2, 2.2)], str(out))
+    lumas, _ = _decode(out)
+    assert 10 <= len(lumas) <= 11 and abs(lumas[0] - 12) < 4
+
+
 # --------------------------------------------------------------------------- GUI
 
 
@@ -166,11 +209,7 @@ def test_folder_token_is_spent_by_a_failed_start(gui, tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
-def test_folder_preflight_rejects_mismatched_clips(gui, monkeypatch):
-    infos = {
-        "a.mp4": SimpleNamespace(width=1920, height=1080, fps=30.0, duration_s=600.0),
-        "b.mp4": SimpleNamespace(width=1920, height=1080, fps=60.0, duration_s=600.0),
-    }
+def _fake_probe(gui, monkeypatch, infos):
     validation = gui._load_video_validation_runtime()
     monkeypatch.setattr(
         gui,
@@ -178,12 +217,48 @@ def test_folder_preflight_rejects_mismatched_clips(gui, monkeypatch):
         lambda: SimpleNamespace(
             VideoValidationError=validation.VideoValidationError,
             MIN_HEIGHT=720,
-            probe_video=lambda path: infos[Path(path).name],
+            probe_video=lambda path: SimpleNamespace(**dict(zip(("width", "height", "fps", "duration_s"), infos[Path(path).name]))),
         ),
     )
-    cfg = {"seq_len": 300, "fps": 30.0}
-    with pytest.raises(ValueError, match="single recording"):
-        gui._start_folder_analysis_job([Path("a.mp4"), Path("b.mp4")], cfg)
+
+
+CFG = {"seq_len": 300, "fps": 30.0}  # needs 10s of footage
+
+
+@pytest.mark.parametrize(
+    "second, error",
+    [
+        ((1920, 1080, 60.0, 600.0), "single recording"),
+        ((1280, 720, 30.0, 600.0), "single recording"),
+        ((1280, 640, 30.0, 600.0), "at least 720p"),
+    ],
+)
+def test_folder_preflight_rejects_mismatched_clips(gui, monkeypatch, second, error):
+    _fake_probe(gui, monkeypatch, {"a.mp4": (1920, 1080, 30.0, 600.0), "b.mp4": second})
+    with pytest.raises(ValueError, match=error):
+        gui._start_folder_analysis_job([Path("a.mp4"), Path("b.mp4")], CFG)
+
+
+@pytest.mark.parametrize(
+    "lengths, ok",
+    [((4.0, 4.0), False), ((6.0, 6.0), True), ((0.0, 4.0), True)],  # 0 = unknown (MPEG-TS)
+)
+def test_folder_preflight_sums_clip_lengths(gui, monkeypatch, lengths, ok):
+    _fake_probe(gui, monkeypatch, {"a.mp4": (1920, 1080, 30.0, lengths[0]), "b.mp4": (1920, 1080, 30.0, lengths[1])})
+    monkeypatch.setattr(gui, "_launch_job", lambda state: state)
+    files = [Path("/cam/card/a.mp4"), Path("/cam/card/b.mp4")]
+    if not ok:
+        with pytest.raises(ValueError, match="too short"):
+            gui._start_folder_analysis_job(files, CFG)
+        return
+    state = gui._start_folder_analysis_job(files, CFG)
+    assert state["sources"] == [str(f) for f in files]
+    assert state["config"]["output_name"] == "card"
+    assert "proxy" in state["steps"] and state["paths"]["upload"].endswith("analysis_proxy.mp4")
+
+
+def test_upload_size_is_not_capped(gui):
+    assert gui.app.config.get("MAX_CONTENT_LENGTH") is None
 
 
 def test_cancel_before_worker_handle_is_recorded_still_terminates(gui, monkeypatch):
@@ -309,7 +384,8 @@ def test_persist_writes_sources_manifest(gui, tmp_path, monkeypatch):
 
 
 def test_points_edited_mid_export_are_not_lost(gui, monkeypatch):
-    item_dir = _library_item(gui)
+    _library_item(gui)
+    client = gui.app.test_client()
     calls = []
 
     def fake_segment(input_video, intervals, output_video):
@@ -317,10 +393,10 @@ def test_points_edited_mid_export_are_not_lost(gui, monkeypatch):
         if len(calls) == 1:
             # The user saves new points while this encode runs. The save must not
             # wait for the export lock (this would deadlock if it did).
-            (item_dir / "segments.csv").write_text("start_time,end_time\n3.0,4.0\n", encoding="utf-8")
-            gui._invalidate_library_export("m1")
+            body = {"segments": [{"start": 3.0, "end": 4.0}]}
+            assert client.put("/api/library/m1/segments", json=body).status_code == 200
         Path(output_video).write_bytes(f"cut{len(calls)}".encode())
 
     monkeypatch.setattr(gui, "segment_video", fake_segment)
-    assert gui.app.test_client().get("/api/library/m1/video").data == b"cut2"
+    assert client.get("/api/library/m1/video").data == b"cut2"
     assert calls == [[(1.0, 2.0)], [(3.0, 4.0)]]

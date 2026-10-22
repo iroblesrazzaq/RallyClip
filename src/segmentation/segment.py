@@ -143,6 +143,25 @@ class AudioTrack:
                 self.container.mux(packet)
 
 
+def _seek_before(container, stream, target: int) -> None:
+    """Seek so decoding starts on a keyframe at or before pts `target`.
+
+    MPEG-TS seeks by byte position and can land after the target (or at EOF),
+    which would silently drop the start of a cut. Check where the seek landed by
+    demuxing one packet, and back off until it is early enough.
+    """
+    back = 0
+    while True:
+        # Floor at pts 0, not start_time: a TS seek to exactly start_time can land at EOF too.
+        position = max(0, target - back)
+        container.seek(position, stream=stream, backward=True)
+        first = next((p for p in container.demux(stream) if p.pts is not None), None)
+        if position == 0 or (first is not None and first.is_keyframe and first.pts <= target):
+            container.seek(position, stream=stream, backward=True)
+            return
+        back = 2 * back or int(1 / stream.time_base)  # 1s, 2s, 4s, ...
+
+
 def _merge_intervals(intervals: Sequence[Tuple[float, float]], eps: float) -> List[Tuple[float, float]]:
     """Merge overlapping/touching intervals so each source frame is kept at most once."""
     merged: List[Tuple[float, float]] = []
@@ -240,7 +259,7 @@ def _write_cuts(pieces, output_path, encoder, crf, eps, video, audio, progress_c
                 # One cut at a time (seek + decode forward) so each cut's audio is
                 # reconciled against exactly that cut's video before the next starts.
                 for start_t, end_t in local:
-                    container.seek(int((start_t + origin) / in_v.time_base), stream=in_v, backward=True)
+                    _seek_before(container, in_v, int((start_t + origin) / in_v.time_base))
                     # Fresh resampler per cut: audio from disjoint cuts must not be
                     # rate-interpolated across the gap.
                     resampler = track.resampler() if in_a is not None else None

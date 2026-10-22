@@ -2168,7 +2168,7 @@ def _start_folder_analysis_job(sources: list[Path], cfg: Dict[str, Any]) -> str:
     if not sources:
         raise ValueError("The folder has no video files.")
     validation = _load_video_validation_runtime()
-    total_s = 0.0
+    durations = []
     first = None
     for path in sources:
         try:
@@ -2186,9 +2186,11 @@ def _start_folder_analysis_job(sources: list[Path], cfg: Dict[str, Any]) -> str:
                 f"'{path.name}' is {info.width}x{info.height} at {info.fps:.2f} fps but the first clip is "
                 f"{first.width}x{first.height} at {first.fps:.2f} fps; import clips from a single recording."
             )
-        total_s += info.duration_s
+        durations.append(info.duration_s)
     min_s = int(cfg["seq_len"]) / float(cfg["fps"])
-    if total_s < min_s:
+    total_s = sum(durations)
+    # Like validate_video, only reject a known length: MPEG-TS often reports none.
+    if min(durations) > 0 and total_s < min_s:
         raise ValueError(f"The clips are too short ({total_s:.0f}s); the model needs at least {min_s:.0f}s of footage.")
 
     job_id = str(uuid.uuid4())
@@ -2573,18 +2575,26 @@ def _export_library_video(item_id: str, progress_callback=None) -> Path:
     export_path = item_dir / "export.mp4"
     # Serialize per item so simultaneous export requests don't both run the
     # slow re-encode; the loser of the race re-checks freshness and reuses.
+    def effective_csv() -> Path:
+        # Re-resolved per pass: a save mid-encode creates segments_edited.csv,
+        # a reset deletes it.
+        path = _resolve_library_segments(item_id)
+        if path is None:
+            raise FileNotFoundError("CSV not available")
+        return path
+
     def is_stale() -> bool:
         if not export_path.exists():
             return True
         export_mtime = export_path.stat().st_mtime
-        return source_path.stat().st_mtime > export_mtime or csv_path.stat().st_mtime > export_mtime
+        return source_path.stat().st_mtime > export_mtime or effective_csv().stat().st_mtime > export_mtime
 
     with _export_lock(item_id):
         # Loops only when the points were edited mid-encode: cut again from the new CSV.
         while is_stale():
             with _export_locks_guard:
                 generation = _export_generations.get(item_id, 0)
-            intervals = _sorted_point_intervals(csv_path)
+            intervals = _sorted_point_intervals(effective_csv())
             if not intervals:
                 raise FileNotFoundError("No point intervals available")
             sources = _library_sources(item_dir)

@@ -29,9 +29,13 @@ _Last updated: 2026-10-22 (session: lean large-video import, replaces #59/#60)._
    cut's audio overrun is trimmed (it drifted up to ~60 ms over 15 cuts); a
    points save bumps an export generation instead of waiting on the export lock;
    one background export encodes at a time.
-7. Cancel race: a cancel that lands before the worker handle is recorded now
+7. Review round 2 fixes: exports re-resolve the effective CSV on each pass (a
+   save mid-encode creates segments_edited.csv); MPEG-TS export seeks are
+   checked and backed off (they landed late or at EOF and dropped cut starts);
+   folder preflight skips the length check when a clip reports no duration.
+8. Cancel race: a cancel that lands before the worker handle is recorded now
    terminates the worker; a cancelled job dir is removed.
-8. Gates: default **341 passed, 49 deselected**; golden parity 1
+9. Gates: default **350 passed, 49 deselected**; golden parity 1
    passed; `test_gui_playwright.py` 11 passed.
 
 ## Next steps

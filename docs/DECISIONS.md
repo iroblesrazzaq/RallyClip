@@ -265,3 +265,13 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
 - **Rejected:** Timestamp-gap caps in the proxy (local files the user picked; the
   gap is what the file claims); moving instead of copying large uploads (the
   upload path is unchanged from main; folder import is the large-file route).
+
+## 2026-10-22 — Verified export seeks
+
+- **What:** `_seek_before` seeks, demuxes one packet to see where it landed, and
+  backs off (1s, 2s, 4s... to pts 0) until the first packet is a keyframe at or
+  before the cut start.
+- **Why:** MPEG-TS (.MTS, now a folder suffix) seeks by byte. A test clip with a
+  1s GOP landed 0.5s past a 1.4s target, silently dropping the cut's start; with
+  one keyframe it landed at EOF and the export had no video. MP4 seeks land
+  early, so they pass the check on the first try.

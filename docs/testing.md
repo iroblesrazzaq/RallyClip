@@ -17,7 +17,7 @@ PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovi
 ```
 
 Last known (2026-10-22, large-video import, macOS py3.11):
-**341 passed, 49 deselected, ~33s** (11 skip without local model artifacts). `tests/test_release_packaging.py` 21 passed;
+**350 passed, 49 deselected, ~44s** (11 skip without local model artifacts). `tests/test_release_packaging.py` 21 passed;
 `tests/test_artifact_fetch.py` 6 passed.
 
 ## Compile gate (cheap, run with the default gate)
