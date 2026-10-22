@@ -104,7 +104,11 @@ def run_capped(cmd: list[str], cwd: Path, timeout: int, env: dict | None = None)
         stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         kill_tree(proc)
-        proc.communicate()
+        try:
+            proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:  # a child escaped the group and holds the pipes: abandon them
+            for pipe in (proc.stdout, proc.stderr):
+                pipe.close()
         raise
     finally:
         with _LIVE_LOCK:
@@ -188,6 +192,9 @@ def run_cursor(root: Path, out: Path, ctx: dict, lens: str, model: str, timeout:
     envelope = json.loads(proc.stdout)
     if envelope.get("is_error"):
         raise RuntimeError(f"agent reported error: {str(envelope.get('result'))[:300]}")
+    items = extract_findings(envelope.get("result", ""))
+    if items and not any(isinstance(f, dict) for f in items):
+        raise ValueError("findings array has entries but no finding objects (unusable response)")
     return [
         {
             "reviewer": f"cursor:{model}",
@@ -198,7 +205,7 @@ def run_cursor(root: Path, out: Path, ctx: dict, lens: str, model: str, timeout:
             "claim": str(f.get("claim") or ""),
             "failure_scenario": str(f.get("failure_scenario") or ""),
         }
-        for f in extract_findings(envelope.get("result", ""))
+        for f in items
         if isinstance(f, dict)
     ]
 
@@ -244,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="Cursor model (env RALLYCLIP_REVIEW_MODEL; see `agent --list-models`)")
     ap.add_argument("--out", type=Path, help="output dir (default: $TMPDIR/rallyclip-review-<branch>-<ts>-XXXX)")
     ap.add_argument("--timeout", type=int, default=900, help="per-reviewer timeout in seconds")
+    ap.add_argument("--allow-dirty", action="store_true",
+                    help="run even with uncommitted tracked edits (reviewers may see them)")
     args = ap.parse_args(argv)
 
     reviewers = [r.strip() for r in args.reviewers.split(",") if r.strip()]
@@ -273,6 +282,10 @@ def main(argv: list[str] | None = None) -> int:
     if not diff:
         print(f"nothing to review: HEAD has no commits beyond {args.base}")
         return 0
+    # Cursor reads the live checkout, so tracked edits would leak into a review of HEAD.
+    if not args.allow_dirty and git(root, "status", "--porcelain", "--untracked-files=no").strip():
+        print("error: uncommitted changes to tracked files; commit first (or --allow-dirty)", file=sys.stderr)
+        return 1
     if git(root, "status", "--porcelain").strip():
         print("warning: uncommitted changes are NOT reviewed (only merge-base..HEAD)", file=sys.stderr)
 

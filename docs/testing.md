@@ -17,7 +17,7 @@ PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovi
 ```
 
 Last known (2026-10-22, agent review gate, macOS `.venv-train`):
-**352 passed, 11 skipped, 49 deselected, ~24s**. `tests/test_agent_review.py` 36 passed.
+**356 passed, 11 skipped, 49 deselected, ~23s**. `tests/test_agent_review.py` 40 passed.
 (2026-09-09, Linux py3.12: 321 passed, 6 skipped, 27 deselected; `tests/test_release_packaging.py`
 21 passed; `tests/test_artifact_fetch.py` 6 passed.)
 
@@ -86,7 +86,8 @@ python3 scripts/agent/review.py            # cursor (3 lenses) + greptile vs ori
 python3 scripts/agent/review.py --lenses correctness,invariants,tests,perf   # pipeline IO/memory work
 ```
 
-Reviews committed changes only (`merge-base..HEAD`). Output (diff, raw reviewer
+Reviews committed changes only (`merge-base..HEAD`); refuses to run with uncommitted
+tracked edits, since Cursor reads the live checkout (`--allow-dirty` to override). Output (diff, raw reviewer
 output, `findings.json`) goes to `$TMPDIR/rallyclip-review-<branch>-<ts>-XXXX/`, never the
 repo. Cursor model defaults to `cursor-grok-4.6-high` (`--model` /
 `RALLYCLIP_REVIEW_MODEL`; `agent --list-models`). Exit 0 ok, 2 a reviewer failed
@@ -102,5 +103,5 @@ and `--timeout` kills the whole `agent` process group. If Cursor is down
 (`Cannot use this model ... Available models:` with an empty list), run
 `--reviewers greptile` and say so in the digest.
 
-Unit tests for the script: `tests/test_agent_review.py` (36, no reviewer CLIs invoked).
+Unit tests for the script: `tests/test_agent_review.py` (40, no reviewer CLIs invoked).
 

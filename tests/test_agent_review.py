@@ -123,13 +123,51 @@ def test_run_cursor_tolerates_null_fields(monkeypatch, tmp_path):
     result = 'BEGIN_FINDINGS\n[{"file": "a.py", "line": "7", "claim": null, "failure_scenario": null}, "junk"]\nEND_FINDINGS'
     envelope = '{"type": "result", "is_error": false, "result": %s}' % json.dumps(result)
 
+    calls = []
+
     def fake_run(cmd, *a, **kw):
+        calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout=envelope, stderr="")
 
     monkeypatch.setattr(review, "run_capped", fake_run)
     ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints")}
     [f] = review.run_cursor(_ROOT, tmp_path, ctx, "tests", "m", 5)
-    assert (f["claim"], f["failure_scenario"], f["line"]) == ("", "", 7)
+    assert f == {"reviewer": "cursor:m", "lens": "tests", "file": "a.py", "line": 7,
+                 "severity": "low", "claim": "", "failure_scenario": ""}
+    [cmd] = calls
+    assert cmd[:2] == ["agent", "-p"]
+    assert cmd[cmd.index("--mode") + 1] == "ask"  # read-only: the reviewer must never get write mode
+    assert cmd[cmd.index("--model") + 1] == "m"
+
+
+def test_run_cursor_rejects_array_without_finding_objects(monkeypatch, tmp_path):
+    result = 'BEGIN_FINDINGS\n["no issues found", 3]\nEND_FINDINGS'
+    envelope = json.dumps({"type": "result", "is_error": False, "result": result})
+    monkeypatch.setattr(review, "run_capped", lambda cmd, *a, **kw: subprocess.CompletedProcess(cmd, 0, envelope, ""))
+    ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints")}
+    with pytest.raises(ValueError, match="no finding objects"):
+        review.run_cursor(_ROOT, tmp_path, ctx, "tests", "m", 5)
+
+
+def test_main_rejects_unknown_reviewer_or_lens(capsys):
+    assert review.main(["--reviewers", "bugbot"]) == 1
+    assert review.main(["--reviewers", "cursor", "--lenses", "style"]) == 1
+    err = capsys.readouterr().err
+    assert "unknown reviewer/lens: bugbot" in err and "unknown reviewer/lens: style" in err
+
+
+def test_kill_tree_without_process_groups_kills_child(monkeypatch):
+    monkeypatch.delattr(review.os, "killpg", raising=False)  # what Windows looks like
+    killed = []
+
+    class FakeProc:
+        pid = 123
+
+        def kill(self):
+            killed.append(True)
+
+    review.kill_tree(FakeProc())
+    assert killed == [True]
 
 
 def test_run_cursor_retries_once_on_retriable_error(monkeypatch, tmp_path):
@@ -244,6 +282,15 @@ def test_main_exit_3_when_reviewer_edits_tree(branch_repo, tmp_path, monkeypatch
     out = tmp_path / "out"
     assert review.main(["--base", "base", "--reviewers", "greptile", "--out", str(out)]) == 3
     assert json.loads((out / "findings.json").read_text())["tree_modified_by_reviewer"] is True
+
+
+def test_main_refuses_tracked_edits_unless_allowed(branch_repo, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [])
+    (branch_repo / "a.py").write_text("x = 'uncommitted'\n")
+    argv = ["--base", "base", "--reviewers", "greptile", "--out", str(tmp_path / "out")]
+    assert review.main(argv) == 1
+    assert "uncommitted changes to tracked files" in capsys.readouterr().err
+    assert review.main([*argv, "--allow-dirty"]) == 0
 
 
 def test_main_rejects_out_inside_repo(branch_repo, monkeypatch, capsys):
