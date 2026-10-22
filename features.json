@@ -80,7 +80,7 @@
       "name": "Local headless review gate: Claude authors, Cursor (Grok) + Greptile CLIs review read-only before push",
       "status": "in_progress",
       "verification": "python3 scripts/agent/review.py on this branch: both reviewers exit ok, findings.json has normalized findings, tree unchanged (exit != 3); PYTHONPATH=src:tests pytest -q tests/test_agent_review.py; default + compile gates.",
-      "evidence": ""
+      "evidence": "2026-10-21/22 dry runs on chore/agent-review-pipeline. Round 1: cursor x3 lenses + greptile all ran, 7 Cursor findings (after a parser fix) + 6 Greptile (confidence 3/5); confirmed in-diff ones fixed in 5d394e7, 2 rejected as outside the diff. Round 2: greptile 5/5 with 1 medium (null claim crash), fixed in 5d068bb; all Cursor lenses failed on a Cursor backend outage (RetriableError / empty model list), which exposed a timeout that never fired (agent's node child holds the pipes) -> run_capped kills the process group. Tree never modified (no exit 3). tests/test_agent_review.py 24 passed; default gate 340 passed, 11 skipped, 49 deselected; compile exit 0; scoped ruff clean. Pending: one clean Cursor round on the final commit."
     }
   ],
   "active": "artifact-registry"

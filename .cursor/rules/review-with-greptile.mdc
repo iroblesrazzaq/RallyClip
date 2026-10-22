@@ -13,4 +13,4 @@ headless via `scripts/agent/review.py`, `agent -p --mode ask`), it is a reviewer
 
 Never request, mention, or run Cursor Bugbot (`cursor[bot]`, `/review-bugbot`, `bugbot run`,
 or the Bugbot subagent), and never post `cursor review` or `@greptileai` PR comments.
-Greptile also runs locally only: `greptile review --branch main --json`, via `scripts/agent/review.py`.
+Greptile also runs locally only: `greptile review --branch origin/main --json`, via `scripts/agent/review.py`.

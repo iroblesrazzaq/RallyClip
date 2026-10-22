@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -106,10 +107,10 @@ def test_run_cursor_tolerates_null_fields(monkeypatch, tmp_path):
     result = 'BEGIN_FINDINGS\n[{"file": "a.py", "line": "7", "claim": null, "failure_scenario": null}, "junk"]\nEND_FINDINGS'
     envelope = '{"type": "result", "is_error": false, "result": %s}' % __import__("json").dumps(result)
 
-    def fake_run(cmd, **kw):
+    def fake_run(cmd, *a, **kw):
         return subprocess.CompletedProcess(cmd, 0, stdout=envelope, stderr="")
 
-    monkeypatch.setattr(review.subprocess, "run", fake_run)
+    monkeypatch.setattr(review, "run_capped", fake_run)
     ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints")}
     [f] = review.run_cursor(_ROOT, tmp_path, ctx, "tests", "m", 5)
     assert (f["claim"], f["failure_scenario"], f["line"]) == ("", "", 7)
@@ -119,13 +120,22 @@ def test_run_cursor_retries_once_on_retriable_error(monkeypatch, tmp_path):
     calls = []
     ok = '{"type": "result", "is_error": false, "result": "BEGIN_FINDINGS\\n[]\\nEND_FINDINGS"}'
 
-    def fake_run(cmd, **kw):
+    def fake_run(cmd, *a, **kw):
         calls.append(cmd)
         if len(calls) == 1:
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="RetriableError: Connection stalled")
         return subprocess.CompletedProcess(cmd, 0, stdout=ok, stderr="")
 
-    monkeypatch.setattr(review.subprocess, "run", fake_run)
+    monkeypatch.setattr(review, "run_capped", fake_run)
     ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints")}
     assert review.run_cursor(_ROOT, tmp_path, ctx, "tests", "m", 5) == []
     assert len(calls) == 2
+
+
+def test_run_capped_kills_grandchildren_on_timeout(tmp_path):
+    # `agent` is a bash wrapper whose node child holds the pipes; plain
+    # subprocess.run(timeout=) waits for that child, so the cap never fires.
+    start = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        review.run_capped(["sh", "-c", "sleep 30 & sleep 30"], tmp_path, 1)
+    assert time.monotonic() - start < 10

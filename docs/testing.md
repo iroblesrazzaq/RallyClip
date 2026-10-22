@@ -16,9 +16,10 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-09-09, assisted DMG update, Linux py3.12):
-**321 passed, 6 skipped, 27 deselected, ~20s**. `tests/test_release_packaging.py` 21 passed;
-`tests/test_artifact_fetch.py` 6 passed.
+Last known (2026-10-22, agent review gate, macOS `.venv-train`):
+**340 passed, 11 skipped, 49 deselected, ~21s**. `tests/test_agent_review.py` 24 passed.
+(2026-09-09, Linux py3.12: 321 passed, 6 skipped, 27 deselected; `tests/test_release_packaging.py`
+21 passed; `tests/test_artifact_fetch.py` 6 passed.)
 
 ## Compile gate (cheap, run with the default gate)
 
@@ -93,4 +94,13 @@ repo. Cursor model defaults to `cursor-grok-4.6-high` (`--model` /
 (confirmed / rejected + reason / unsure), fix confirmed high+medium, at most 2
 rounds, then a `## Review digest` table in the PR body. Needs `agent` (Cursor CLI,
 logged in) and `greptile` (`greptile whoami`) on PATH. No Bugbot, no PR-comment reviews.
+
+Runtime (2026-10-21 dry run, ~34 KB diff): Greptile ~2–4 min; each Cursor lens
+~7–11 min (lenses run in parallel), so run it in the background. The Cursor backend
+can drop long streams (`RetriableError: Connection stalled`); the script retries once,
+and `--timeout` kills the whole `agent` process group. If Cursor is down
+(`Cannot use this model ... Available models:` with an empty list), run
+`--reviewers greptile` and say so in the digest.
+
+Unit tests for the script: `tests/test_agent_review.py` (24, no reviewer CLIs invoked).
 

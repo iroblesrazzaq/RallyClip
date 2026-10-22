@@ -19,6 +19,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -53,6 +54,29 @@ def git(root: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=root, check=True, capture_output=True, text=True
     ).stdout
+
+
+def run_capped(cmd: list[str], cwd: Path, timeout: int, env: dict | None = None) -> subprocess.CompletedProcess:
+    """subprocess.run with a timeout that holds when the tool forks.
+
+    `agent` is a bash wrapper around node; on timeout subprocess.run kills only the
+    wrapper and then waits for the grandchildren's pipes, so the cap never fires.
+    Run in a fresh process group and kill the whole group instead.
+    """
+    proc = subprocess.Popen(
+        cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
+        raise
+    return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
 def tree_snapshot(root: Path) -> str:
@@ -120,7 +144,7 @@ def run_cursor(root: Path, out: Path, ctx: dict, lens: str, model: str, timeout:
         "--output-format", "json", "--workspace", str(root), "--add-dir", str(out), prompt,
     ]
     for _attempt in range(2):  # one retry: the Cursor backend drops long streams ("Connection stalled")
-        proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=timeout)
+        proc = run_capped(cmd, root, timeout)
         if proc.returncode == 0 or "RetriableError" not in proc.stderr:
             break
     (out / f"cursor-{lens}.raw.json").write_text(proc.stdout + proc.stderr, encoding="utf-8")
@@ -154,7 +178,7 @@ def greptile_comments(data: object) -> list[dict]:
 def run_greptile(root: Path, out: Path, base: str, timeout: int, meta: dict) -> list[dict]:
     cmd = ["greptile", "review", "--branch", base, "--json", "--no-color"]
     env = {**os.environ, "NO_COLOR": "1"}
-    proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=timeout, env=env)
+    proc = run_capped(cmd, root, timeout, env)
     (out / "greptile.raw.json").write_text(proc.stdout + proc.stderr, encoding="utf-8")
     if proc.returncode != 0:
         raise RuntimeError(f"greptile exited {proc.returncode}: {proc.stderr.strip()[:300]}")
