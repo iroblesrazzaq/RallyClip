@@ -56,10 +56,23 @@ def git(root: Path, *args: str) -> str:
 
 
 def tree_snapshot(root: Path) -> str:
-    """Hash of HEAD + status + uncommitted diff; changes if a reviewer edits anything."""
+    """Fingerprint of HEAD, tracked edits, untracked file contents and ignored-file stats.
+
+    Changes if a reviewer edits, creates or deletes anything in the checkout.
+    Ignored files (weights, venvs, caches) are fingerprinted by size+mtime, not hashed.
+    """
     h = hashlib.sha256()
     for args in (("rev-parse", "HEAD"), ("status", "--porcelain", "-uall"), ("diff", "HEAD")):
         h.update(git(root, *args).encode())
+    for rel in git(root, "ls-files", "-z", "--others", "--exclude-standard").split("\0"):
+        if rel and (root / rel).is_file():
+            h.update(rel.encode() + hashlib.sha256((root / rel).read_bytes()).digest())
+    for rel in git(root, "ls-files", "-z", "--others", "--ignored", "--exclude-standard").split("\0"):
+        try:
+            st = (root / rel).stat()
+        except OSError:
+            continue
+        h.update(f"{rel}:{st.st_size}:{st.st_mtime_ns}".encode())
     return h.hexdigest()
 
 
@@ -80,11 +93,19 @@ def norm_severity(value: object) -> str:
     return "low"
 
 
+def norm_line(value: object) -> int | None:
+    try:
+        return int(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
 def extract_findings(text: str) -> list[dict]:
-    m = re.search(r"BEGIN_FINDINGS\s*(.*?)\s*END_FINDINGS", text, re.S)
-    if not m:
+    """Parse the LAST marker block; the model may quote the marker names or the prompt example first."""
+    blocks = re.findall(r"^BEGIN_FINDINGS[ \t]*$(.*?)^END_FINDINGS[ \t]*$", text, re.S | re.M)
+    if not blocks:
         raise ValueError("no BEGIN_FINDINGS/END_FINDINGS block in reviewer output")
-    body = re.sub(r"^```(?:json)?\s*|\s*```$", "", m.group(1).strip())
+    body = re.sub(r"^```(?:json)?\s*|\s*```$", "", blocks[-1].strip(), flags=re.I)
     data = json.loads(body or "[]")
     if not isinstance(data, list):
         raise ValueError("findings block is not a JSON array")
@@ -110,7 +131,7 @@ def run_cursor(root: Path, out: Path, ctx: dict, lens: str, model: str, timeout:
             "reviewer": f"cursor:{model}",
             "lens": lens,
             "file": f.get("file"),
-            "line": f.get("line"),
+            "line": norm_line(f.get("line")),
             "severity": norm_severity(f.get("severity")),
             "claim": f.get("claim", ""),
             "failure_scenario": f.get("failure_scenario", ""),
@@ -119,41 +140,35 @@ def run_cursor(root: Path, out: Path, ctx: dict, lens: str, model: str, timeout:
     ]
 
 
-def _greptile_items(data: object) -> list[dict]:
-    """Find the list of comment objects in Greptile's JSON, whatever it is nested under."""
-    if isinstance(data, list):
-        return [d for d in data if isinstance(d, dict)]
-    if isinstance(data, dict):
-        for key in ("comments", "findings", "issues", "results"):
-            if isinstance(data.get(key), list):
-                return _greptile_items(data[key])
-        for value in data.values():
-            if isinstance(value, (dict, list)):
-                items = _greptile_items(value)
-                if items:
-                    return items
-    return []
+def greptile_comments(data: object) -> list[dict]:
+    """`greptile review --json` (v3) is {summary, confidence, ..., comments: [...]}."""
+    if not isinstance(data, dict) or not isinstance(data.get("comments"), list):
+        raise ValueError("unexpected greptile JSON: no top-level 'comments' list (CLI format changed?)")
+    return [c for c in data["comments"] if isinstance(c, dict)]
 
 
-def run_greptile(root: Path, out: Path, base_branch: str, timeout: int) -> list[dict]:
-    cmd = ["greptile", "review", "--branch", base_branch, "--json", "--no-color"]
+def run_greptile(root: Path, out: Path, base: str, timeout: int, meta: dict) -> list[dict]:
+    cmd = ["greptile", "review", "--branch", base, "--json", "--no-color"]
     env = {**os.environ, "NO_COLOR": "1"}
     proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=timeout, env=env)
     (out / "greptile.raw.json").write_text(proc.stdout + proc.stderr, encoding="utf-8")
     if proc.returncode != 0:
         raise RuntimeError(f"greptile exited {proc.returncode}: {proc.stderr.strip()[:300]}")
-    findings = []
-    for c in _greptile_items(json.loads(proc.stdout)):
-        findings.append({
+    data = json.loads(proc.stdout)
+    comments = greptile_comments(data)
+    meta["greptile_confidence"] = data.get("confidence")
+    return [
+        {
             "reviewer": "greptile",
-            "lens": "general",
-            "file": c.get("file") or c.get("path") or c.get("filePath"),
-            "line": c.get("line") or c.get("startLine") or c.get("start_line"),
-            "severity": norm_severity(c.get("severity") or c.get("priority") or c.get("level")),
-            "claim": c.get("body") or c.get("message") or c.get("comment") or c.get("title") or "",
-            "failure_scenario": c.get("failure_scenario") or c.get("suggestion") or "",
-        })
-    return findings
+            "lens": c.get("category") or "general",
+            "file": c.get("path"),
+            "line": norm_line(c.get("startLine")),
+            "severity": norm_severity(c.get("severity")),
+            "claim": str(c.get("body") or ""),
+            "failure_scenario": str(c.get("suggestion") or ""),
+        }
+        for c in comments
+    ]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -168,11 +183,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--timeout", type=int, default=900, help="per-reviewer timeout in seconds")
     args = ap.parse_args(argv)
 
-    reviewers = [r for r in args.reviewers.split(",") if r]
-    lenses = [lens for lens in args.lenses.split(",") if lens]
+    reviewers = [r.strip() for r in args.reviewers.split(",") if r.strip()]
+    lenses = [x.strip() for x in args.lenses.split(",") if x.strip()]
     bad = [r for r in reviewers if r not in ("cursor", "greptile")] + [x for x in lenses if x not in LENSES]
     if bad:
         print(f"error: unknown reviewer/lens: {', '.join(bad)}", file=sys.stderr)
+        return 1
+    if not reviewers or ("cursor" in reviewers and not lenses):
+        print("error: need at least one reviewer (and one lens when cursor is selected)", file=sys.stderr)
         return 1
     for r, exe in (("cursor", "agent"), ("greptile", "greptile")):
         if r in reviewers and not shutil.which(exe):
@@ -195,14 +213,17 @@ def main(argv: list[str] | None = None) -> int:
     if git(root, "status", "--porcelain").strip():
         print("warning: uncommitted changes are NOT reviewed (only merge-base..HEAD)", file=sys.stderr)
 
-    out = args.out or Path(tempfile.gettempdir()) / "rallyclip-review" / (
-        f"{re.sub(r'[^A-Za-z0-9._-]', '-', branch)}-{time.strftime('%Y%m%d-%H%M%S')}"
-    )
-    out = out.resolve()
-    if out == root or root in out.parents:
-        print("error: --out must be outside the repo", file=sys.stderr)
-        return 1
-    out.mkdir(parents=True, exist_ok=True)
+    if args.out:
+        out = args.out.resolve()
+        if out == root or root in out.parents:
+            print("error: --out must be outside the repo", file=sys.stderr)
+            return 1
+        out.mkdir(parents=True, exist_ok=True)
+    else:  # private, unpredictable dir: no pre-created folder or symlink can redirect writes
+        parent = Path(tempfile.gettempdir()) / "rallyclip-review"
+        parent.mkdir(mode=0o700, exist_ok=True)
+        slug = re.sub(r"[^A-Za-z0-9._-]", "-", branch)
+        out = Path(tempfile.mkdtemp(prefix=f"{slug}-{time.strftime('%Y%m%d-%H%M%S')}-", dir=parent))
     diff_path = out / "diff.patch"
     diff_path.write_text(diff, encoding="utf-8")
     ctx = {
@@ -211,14 +232,15 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     before = tree_snapshot(root)
+    meta: dict = {}
     jobs: dict[str, object] = {}
     with cf.ThreadPoolExecutor(max_workers=len(lenses) + 1) as pool:
         if "cursor" in reviewers:
             for lens in lenses:
                 jobs[f"cursor:{lens}"] = pool.submit(run_cursor, root, out, ctx, lens, args.model, args.timeout)
         if "greptile" in reviewers:
-            base_branch = args.base.split("/", 1)[1] if args.base.startswith("origin/") else args.base
-            jobs["greptile"] = pool.submit(run_greptile, root, out, base_branch, args.timeout)
+            # Pass the ref as given: a local `main` can be far behind origin/main.
+            jobs["greptile"] = pool.submit(run_greptile, root, out, args.base, args.timeout, meta)
         findings, failures = [], {}
         for name, fut in jobs.items():
             try:
@@ -233,16 +255,18 @@ def main(argv: list[str] | None = None) -> int:
     report = {
         "branch": branch, "base": args.base, "merge_base": merge_base, "head": head,
         "files_changed": len(files), "reviewers": list(jobs), "failures": failures,
-        "tree_modified_by_reviewer": modified, "findings": findings,
+        "tree_modified_by_reviewer": modified, **meta, "findings": findings,
     }
     (out / "findings.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     counts = {s: sum(f["severity"] == s for f in findings) for s in SEVERITIES}
     print(f"review {branch} vs {args.base} ({len(files)} files) -> {out / 'findings.json'}")
-    print(f"findings: {counts['high']} high, {counts['medium']} medium, {counts['low']} low")
+    conf = f", greptile confidence {meta['greptile_confidence']}/5" if "greptile_confidence" in meta else ""
+    print(f"findings: {counts['high']} high, {counts['medium']} medium, {counts['low']} low{conf}")
     for f in findings:
         loc = f"{f['file']}:{f['line']}" if f["line"] else str(f["file"])
-        print(f"  #{f['id']} [{f['severity']}] {f['reviewer']}/{f['lens']} {loc} - {f['claim'][:160]}")
+        claim = " ".join(f["claim"].split())[:160]
+        print(f"  #{f['id']} [{f['severity']}] {f['reviewer']}/{f['lens']} {loc} - {claim}")
     for name, err in failures.items():
         print(f"FAILED {name}: {err}", file=sys.stderr)
     if modified:
