@@ -74,7 +74,14 @@
       "status": "passing",
       "verification": "See docs/artifact-registry-plan.md Definition of done: depth-1 clone has no models/**/*.onnx; fetch_artifact.py then golden/e2e; CI fetch; PyInstaller bundle still contains v0.5.0 weights; packaged app does not download at launch.",
       "evidence": "2026-09-07: Published https://github.com/iroblesrazzaq/RallyClip/releases/tag/artifact-rallyclip_v0.5.0 (non-draft). git ls-files models has no *.onnx (manifests + SHA256SUMS only). PYTHONPATH=src:tests pytest -m 'not slow and not e2e': 298 passed, 6 skipped. Fetch unpacks to a temp dir and installs only after SHA-256 verify so a rejected zip cannot overwrite SHA256SUMS. Hash mismatch raises ArtifactError. ci.yml fetch x2; release.yml fetch + verify_artifact_dir. RallyClip.spec still packs DEFAULT_ARTIFACT_DIR; frozen sources do not import runtime.artifact."
+    },
+    {
+      "id": "large-video-import",
+      "name": "No 2GB cap; folder of consecutive clips -> 720p analysis proxy; exports cut from originals in the background",
+      "status": "passing",
+      "verification": "PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_folder_import.py tests/test_segment.py tests/test_segment_av_sync.py tests/test_cli_golden_parity.py; default gate; tests/test_gui_playwright.py",
+      "evidence": "2026-10-22: tests/test_folder_import.py 12 passed (proxy CFR + decoded-frame manifest, 5fps gap fill without boundary drift, cross-boundary export from originals, single-use folder token, spent token after failed start, fps/resolution preflight, cancel-before-handle terminates + cleans job dir, failed export leaves no export.mp4, missing originals -> 404, background export progress -> ready, sources.json persisted). Default gate 339 passed, 49 deselected. Golden parity 1 passed. test_gui_playwright.py 11 passed. Real-footage check: three 40s 1080p30 chunks -> 120.2s 720p proxy in 9.5s (VideoToolbox), audio within 13ms; clip-2 frame 0 aligns to proxy frame 1202; 30s cross-boundary export = 902 frames, audio 30.08s. Folder picker dialog not exercised by automation."
     }
   ],
-  "active": "artifact-registry"
+  "active": "large-video-import"
 }

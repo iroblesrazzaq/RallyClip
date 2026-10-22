@@ -22,6 +22,8 @@ applySystemTheme();
 class RallyClipApp {
     constructor() {
         this.selectedFile = null;
+        this.selectedFolder = null; // {token, name, files} from /api/folder/select
+        this.exportingIds = new Set();
         this.isProcessing = false;
         this.currentJobId = null;
         this.progressInterval = null;
@@ -109,8 +111,9 @@ class RallyClipApp {
         this.nativeBridgeReady = false;
         this.updateStatus = null;
         this.updateDownloadAbort = null;
-        this.steps = ["pose", "preprocess", "feature", "inference", "output"];
+        this.steps = ["proxy", "pose", "preprocess", "feature", "inference", "output"];
         this.stepLabels = {
+            proxy: "Joining clips",
             pose: "Extracting pose",
             preprocess: "Preprocessing",
             feature: "Building features",
@@ -184,6 +187,8 @@ class RallyClipApp {
         this.dropZone = document.getElementById("dropZone");
         this.fileInput = document.getElementById("fileInput");
         this.browseBtn = document.getElementById("browseBtn");
+        this.folderBtn = document.getElementById("folderBtn");
+        this.proxyStep = document.getElementById("proxyStep");
         this.selectedFileDiv = document.getElementById("selectedFile");
         this.fileName = document.getElementById("fileName");
         this.fileSize = document.getElementById("fileSize");
@@ -212,6 +217,7 @@ class RallyClipApp {
         this.toastStack = document.getElementById("toastStack");
 
         this.progressItems = {
+            proxy: { status: document.getElementById("proxyStatus"), fill: document.getElementById("proxyFill") },
             pose: { status: document.getElementById("poseStatus"), fill: document.getElementById("poseFill") },
             preprocess: { status: document.getElementById("preprocessStatus"), fill: document.getElementById("preprocessFill") },
             feature: { status: document.getElementById("featureStatus"), fill: document.getElementById("featureFill") },
@@ -227,7 +233,7 @@ class RallyClipApp {
         this.backToLibrary.addEventListener("click", () => this.showLibrary());
         this.backFromViewer.addEventListener("click", () => this.showLibrary());
         this.viewerExportBtn.addEventListener("click", () => {
-            if (this.viewingItemId) this.triggerDownload(`/api/library/${this.viewingItemId}/video`);
+            if (this.viewingItemId) this.exportVideo(this.viewingItemId, this.viewerExportBtn);
         });
         this.viewerCsvBtn.addEventListener("click", () => {
             if (this.viewingItemId) this.triggerDownload(`/api/library/${this.viewingItemId}/csv`);
@@ -278,6 +284,10 @@ class RallyClipApp {
         this.browseBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             this.fileInput.click();
+        });
+        this.folderBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            this.chooseFolder();
         });
         this.fileInput.addEventListener("change", (e) => {
             if (e.target.files.length) this.processFile(e.target.files[0]);
@@ -809,7 +819,7 @@ class RallyClipApp {
             return;
         }
         const action = btn.dataset.action;
-        if (action === "export") this.triggerDownload(`/api/library/${id}/video`);
+        if (action === "export") this.exportVideo(id, btn);
         else if (action === "csv") this.triggerDownload(`/api/library/${id}/csv`);
         else if (action === "delete") this.deleteItem(id);
     }
@@ -2919,6 +2929,32 @@ class RallyClipApp {
     // A real navigation to an attachment URL: the browser downloads it, and in
     // the desktop webview it fires QWebEngineProfile.downloadRequested (handled
     // in desktop.py with a native Save dialog).
+    // Exports can take minutes for a long match: cut in the background, show
+    // progress on the button, then download the finished file.
+    async exportVideo(id, button) {
+        if (this.exportingIds.has(id)) return;
+        this.exportingIds.add(id);
+        const label = button.textContent;
+        try {
+            let response = await fetch(`/api/library/${id}/export`, { method: "POST" });
+            let state = await response.json();
+            if (!response.ok) throw new Error(state.error || `HTTP ${response.status}`);
+            while (state.status === "processing") {
+                button.textContent = `Exporting ${state.progress}%`;
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+                response = await fetch(`/api/library/${id}/export/status`);
+                state = await response.json();
+            }
+            if (state.status === "error") throw new Error(state.error);
+            this.triggerDownload(`/api/library/${id}/video`);
+        } catch (error) {
+            this.showToast(this.errorText(error) || "Export failed.", "error");
+        } finally {
+            this.exportingIds.delete(id);
+            button.textContent = label;
+        }
+    }
+
     triggerDownload(url) {
         const anchor = document.createElement("a");
         anchor.href = url;
@@ -3066,14 +3102,28 @@ class RallyClipApp {
 
     processFile(file) {
         // Accept any video; the backend validates by content (codec/resolution).
-        const maxSize = 2 * 1024 * 1024 * 1024;
-        if (file.size > maxSize) {
-            this.showToast("File must be under 2GB.", "error");
-            return;
-        }
+        this.selectedFolder = null;
         this.selectedFile = file;
-        this.fileName.textContent = file.name;
-        this.fileSize.textContent = this.formatFileSize(file.size);
+        this.showSelection(file.name, this.formatFileSize(file.size));
+    }
+
+    async chooseFolder() {
+        try {
+            const response = await fetch("/api/folder/select", { method: "POST" });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+            if (result.cancelled) return;
+            this.selectedFile = null;
+            this.selectedFolder = result;
+            this.showSelection(result.name, `${result.files.length} clips · ${result.files[0]} → ${result.files.at(-1)}`);
+        } catch (error) {
+            this.showToast(this.errorText(error) || "Could not open the folder.", "error");
+        }
+    }
+
+    showSelection(name, detail) {
+        this.fileName.textContent = name;
+        this.fileSize.textContent = detail;
         this.dropZone.hidden = true;
         this.selectedFileDiv.hidden = false;
         this.startBtn.disabled = false;
@@ -3081,6 +3131,7 @@ class RallyClipApp {
 
     removeFile() {
         this.selectedFile = null;
+        this.selectedFolder = null;
         this.fileInput.value = "";
         this.dropZone.hidden = false;
         this.selectedFileDiv.hidden = true;
@@ -3112,7 +3163,10 @@ class RallyClipApp {
 
     // ----- Processing ------------------------------------------------------ //
     async startAnalysis() {
-        if (!this.selectedFile || this.isProcessing) return;
+        if ((!this.selectedFile && !this.selectedFolder) || this.isProcessing) return;
+        // A folder token is single-use, so a retry after an error or cancel re-picks.
+        const folder = this.selectedFolder;
+        if (folder) this.removeFile();
         this.markWelcomeSeen();
         this.libraryId = null;
         this.resetProgress();
@@ -3123,7 +3177,7 @@ class RallyClipApp {
         this.showView("processing");
 
         try {
-            const jobId = await this.uploadFileAndStart();
+            const jobId = folder ? await this.startFolder(folder) : await this.uploadFileAndStart();
             this.currentJobId = jobId;
             try { localStorage.setItem(JOB_ID_KEY, jobId); } catch (_) {}
             this.startProgressMonitoring();
@@ -3152,6 +3206,16 @@ class RallyClipApp {
         if (!response.ok) throw new Error(await response.text());
         const result = await response.json();
         return result.job_id;
+    }
+
+    async startFolder(folder) {
+        const response = await fetch("/api/folder/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: folder.token, config: this.buildConfigFromForm() }),
+        });
+        if (!response.ok) throw new Error(await response.text());
+        return (await response.json()).job_id;
     }
 
     startProgressMonitoring() {
@@ -3216,8 +3280,11 @@ class RallyClipApp {
         let weightTotal = 0;
         let plainSum = 0;
         const stepState = progress.steps || {};
+        // Only folder jobs have a "proxy" step.
+        const steps = this.steps.filter((step) => step !== "proxy" || "proxy" in stepState);
+        this.proxyStep.hidden = !steps.includes("proxy");
 
-        this.steps.forEach((step) => {
+        steps.forEach((step) => {
             const stepProgress = stepState[step] || { status: "waiting", progress: 0 };
             const elements = this.progressItems[step];
             elements.status.textContent = this.formatStatus(stepProgress.status);
@@ -3229,7 +3296,7 @@ class RallyClipApp {
             }
         });
 
-        const overall = weightTotal > 0 ? weightedSum / weightTotal : plainSum / this.steps.length;
+        const overall = weightTotal > 0 ? weightedSum / weightTotal : plainSum / steps.length;
         this.stageText.textContent = this.currentStageLabel(stepState);
         this.overallFill.style.width = `${overall}%`;
         this.overallPercentage.textContent = `${Math.round(overall)}%`;
@@ -3328,7 +3395,7 @@ class RallyClipApp {
     resetControls() {
         this.isProcessing = false;
         this.currentJobId = null;
-        this.startBtn.disabled = !this.selectedFile;
+        this.startBtn.disabled = !this.selectedFile && !this.selectedFolder;
         this.cancelBtn.disabled = true;
     }
 
@@ -3342,6 +3409,7 @@ class RallyClipApp {
         this.stageText.textContent = "Ready";
         this.etaText.textContent = "ETA: --";
         if (this.progressDetails) this.progressDetails.open = false;
+        this.proxyStep.hidden = true;
     }
 
     showToast(message, tone = "info") {

@@ -237,3 +237,16 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   DMG. An unnamed sidecar hash could verify the wrong bytes.
 - **Rejected:** Client-only AbortController as the cancel mechanism.
 
+
+## 2026-10-22 — Large-video import rewritten lean (supersedes #59/#60)
+
+- **What:** Single-slot `pending_folder` token, popped under `jobs_lock` and
+  never restored (the page re-picks after an error/cancel). One re-encode path
+  for exports (no stream copy). Proxy spans come from decoded frames, ending at
+  the last frame's end time; folder clips must share resolution and fps.
+- **Why:** #59/#60 double-started on a replayed token, retried with a spent
+  token, broke B-frame stream copies, padded silence from container metadata,
+  and drifted a frame per clip boundary. Export re-stamps frames at one rate, so
+  mixed-fps folders would play at the wrong speed.
+- **Rejected:** Token map with TTL; restoring the token on preflight failure;
+  multi-track rejection in `video_validation` (would regress single uploads).
