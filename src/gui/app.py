@@ -2862,9 +2862,11 @@ def _invalidate_library_export(item_id: str) -> None:
     # export.mp4 was cut from the previous point times; drop it so the next
     # download re-exports from the effective CSV. No _export_lock: a save must
     # not wait out a long encode, which sees the new generation and redoes it.
+    # Bump and unlink under the guard that publishing holds, so an export that
+    # read the new generation can't publish in between and have its file deleted.
     with _export_locks_guard:
         _export_generations[item_id] = _export_generations.get(item_id, 0) + 1
-    (_library_item_dir(item_id) / "export.mp4").unlink(missing_ok=True)
+        (_library_item_dir(item_id) / "export.mp4").unlink(missing_ok=True)
     with jobs_lock:
         if export_jobs.get(item_id, {}).get("status") == "ready":
             export_jobs.pop(item_id)

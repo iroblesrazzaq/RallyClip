@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -50,6 +51,16 @@ def test_proxy_is_constant_rate_and_manifest_comes_from_decoded_frames(clips, tm
     assert abs(samples - 5 * RATE) <= 2048
 
 
+def test_proxy_spans_ignore_container_duration(clips, tmp_path, monkeypatch):
+    # A truncated camera clip can claim more time than it decodes; spans must
+    # come from the frames, so a wrong container duration changes nothing.
+    import segmentation.proxy as proxy
+
+    monkeypatch.setattr(proxy, "_duration_s", lambda container, stream: 99.0)
+    manifest = create_analysis_proxy(list(clips), tmp_path / "proxy.mp4", fps=10)
+    assert [(m["start_s"], m["duration_s"]) for m in manifest] == [(0.0, 3.0), (3.0, 2.0)]
+
+
 def test_proxy_holds_frames_across_rate_gaps(tmp_path):
     slow = tmp_path / "slow.mp4"
     _make_clip(slow, seconds=2, fps=5, with_audio=False)
@@ -59,6 +70,31 @@ def test_proxy_holds_frames_across_rate_gaps(tmp_path):
     # so the second clip starts at exactly 2.0s rather than drifting early.
     assert [(m["start_s"], m["duration_s"]) for m in manifest] == [(0.0, 2.0), (2.0, 2.0)]
     assert len(_decode(tmp_path / "proxy.mp4")[0]) == 40
+
+
+def test_proxy_gap_slots_repeat_the_previous_picture(tmp_path):
+    steps = tmp_path / "steps.mp4"
+    values = [40, 120, 200, 80]
+    container = av.open(str(steps), "w")
+    try:
+        v = container.add_stream("libx264", rate=5)
+        v.width, v.height, v.pix_fmt = 320, 240, "yuv420p"
+        for i, value in enumerate(values):
+            frame = av.VideoFrame.from_ndarray(np.full((240, 320, 3), value, dtype=np.uint8), format="rgb24")
+            frame.pts = i
+            for pkt in v.encode(frame):
+                container.mux(pkt)
+        for pkt in v.encode():
+            container.mux(pkt)
+    finally:
+        container.close()
+
+    create_analysis_proxy([steps], tmp_path / "proxy.mp4", fps=10)
+    lumas, _ = _decode(tmp_path / "proxy.mp4")
+    # Each 5fps picture fills two 10fps slots; a gap slot shows the held picture, not black.
+    expected = [_decode(steps)[0][i // 2] for i in range(2 * len(values))]
+    assert len(lumas) == len(expected)
+    assert all(abs(a - b) < 4 for a, b in zip(lumas, expected)), (lumas, expected)
 
 
 def test_timeline_pieces_split_an_interval_at_the_clip_boundary():
@@ -346,14 +382,22 @@ def test_folder_item_exports_from_original_clips(gui, tmp_path, monkeypatch):
 def test_background_export_reports_progress_then_ready(gui, monkeypatch):
     _library_item(gui)
 
+    release = threading.Event()
+
     def fake_segment(input_video, intervals, output_video, progress_callback=None):
         progress_callback(50)
+        release.wait(5)
         Path(output_video).write_bytes(b"cut")
 
     monkeypatch.setattr(gui, "segment_video", fake_segment)
     client = gui.app.test_client()
     assert client.post("/api/library/m1/export").status_code == 202
     deadline = time.time() + 5
+    while (state := client.get("/api/library/m1/export/status").get_json())["progress"] != 50:
+        assert time.time() < deadline and state["status"] == "processing", state
+        time.sleep(0.01)
+    assert state == {"status": "processing", "progress": 50, "error": None}  # what the button shows
+    release.set()
     while (state := client.get("/api/library/m1/export/status").get_json())["status"] == "processing":
         assert time.time() < deadline
         time.sleep(0.01)
