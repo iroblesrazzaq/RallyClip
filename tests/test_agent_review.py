@@ -100,3 +100,32 @@ def test_prompt_template_formats():
         assert value in prompt, f"placeholder for {value} not substituted"
     assert "{diff_path}" not in prompt and "{constraints}" not in prompt
     assert "BEGIN_FINDINGS" in prompt and '"severity": "high"' in prompt
+
+
+def test_run_cursor_tolerates_null_fields(monkeypatch, tmp_path):
+    result = 'BEGIN_FINDINGS\n[{"file": "a.py", "line": "7", "claim": null, "failure_scenario": null}, "junk"]\nEND_FINDINGS'
+    envelope = '{"type": "result", "is_error": false, "result": %s}' % __import__("json").dumps(result)
+
+    def fake_run(cmd, **kw):
+        return subprocess.CompletedProcess(cmd, 0, stdout=envelope, stderr="")
+
+    monkeypatch.setattr(review.subprocess, "run", fake_run)
+    ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints")}
+    [f] = review.run_cursor(_ROOT, tmp_path, ctx, "tests", "m", 5)
+    assert (f["claim"], f["failure_scenario"], f["line"]) == ("", "", 7)
+
+
+def test_run_cursor_retries_once_on_retriable_error(monkeypatch, tmp_path):
+    calls = []
+    ok = '{"type": "result", "is_error": false, "result": "BEGIN_FINDINGS\\n[]\\nEND_FINDINGS"}'
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        if len(calls) == 1:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="RetriableError: Connection stalled")
+        return subprocess.CompletedProcess(cmd, 0, stdout=ok, stderr="")
+
+    monkeypatch.setattr(review.subprocess, "run", fake_run)
+    ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints")}
+    assert review.run_cursor(_ROOT, tmp_path, ctx, "tests", "m", 5) == []
+    assert len(calls) == 2

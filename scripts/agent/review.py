@@ -119,7 +119,10 @@ def run_cursor(root: Path, out: Path, ctx: dict, lens: str, model: str, timeout:
         "agent", "-p", "--trust", "--mode", "ask", "--model", model,
         "--output-format", "json", "--workspace", str(root), "--add-dir", str(out), prompt,
     ]
-    proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=timeout)
+    for _attempt in range(2):  # one retry: the Cursor backend drops long streams ("Connection stalled")
+        proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, timeout=timeout)
+        if proc.returncode == 0 or "RetriableError" not in proc.stderr:
+            break
     (out / f"cursor-{lens}.raw.json").write_text(proc.stdout + proc.stderr, encoding="utf-8")
     if proc.returncode != 0:
         raise RuntimeError(f"agent exited {proc.returncode}: {proc.stderr.strip()[:300]}")
@@ -133,10 +136,11 @@ def run_cursor(root: Path, out: Path, ctx: dict, lens: str, model: str, timeout:
             "file": f.get("file"),
             "line": norm_line(f.get("line")),
             "severity": norm_severity(f.get("severity")),
-            "claim": f.get("claim", ""),
-            "failure_scenario": f.get("failure_scenario", ""),
+            "claim": str(f.get("claim") or ""),
+            "failure_scenario": str(f.get("failure_scenario") or ""),
         }
         for f in extract_findings(envelope.get("result", ""))
+        if isinstance(f, dict)
     ]
 
 
