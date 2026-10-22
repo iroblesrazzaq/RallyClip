@@ -56,6 +56,19 @@ def git(root: Path, *args: str) -> str:
     ).stdout
 
 
+_LIVE: set[subprocess.Popen] = set()  # reviewer processes still running (killed on Ctrl-C)
+
+
+def kill_tree(proc: subprocess.Popen) -> None:
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:  # Windows: no process groups via start_new_session; kill the direct child
+            proc.kill()
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 def run_capped(cmd: list[str], cwd: Path, timeout: int, env: dict | None = None) -> subprocess.CompletedProcess:
     """subprocess.run with a timeout that holds when the tool forks.
 
@@ -67,15 +80,15 @@ def run_capped(cmd: list[str], cwd: Path, timeout: int, env: dict | None = None)
         cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, start_new_session=True,
     )
+    _LIVE.add(proc)
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        kill_tree(proc)
         proc.communicate()
         raise
+    finally:
+        _LIVE.discard(proc)
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
@@ -270,11 +283,18 @@ def main(argv: list[str] | None = None) -> int:
             # Pass the ref as given: a local `main` can be far behind origin/main.
             jobs["greptile"] = pool.submit(run_greptile, root, out, args.base, args.timeout, meta)
         findings, failures = [], {}
-        for name, fut in jobs.items():
-            try:
-                findings += fut.result()
-            except Exception as e:  # noqa: BLE001 - report every reviewer failure, keep the rest
-                failures[name] = f"{type(e).__name__}: {e}"
+        try:
+            for name, fut in jobs.items():
+                try:
+                    findings += fut.result()
+                except Exception as e:  # noqa: BLE001 - report every reviewer failure, keep the rest
+                    failures[name] = f"{type(e).__name__}: {e}"
+        except KeyboardInterrupt:
+            # Reviewers run in their own sessions, so Ctrl-C does not reach them; kill them
+            # here, before the pool's shutdown(wait=True) would block on their threads.
+            for proc in list(_LIVE):
+                kill_tree(proc)
+            raise
     modified = tree_snapshot(root) != before
 
     findings.sort(key=lambda f: (SEVERITIES.index(f["severity"]), str(f["file"]), f["line"] or 0))
