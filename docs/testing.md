@@ -73,3 +73,24 @@ editing those lines.
 3. Scoped lint clean on touched files.
 4. Golden parity if you touched `src/{rallyclip_engine,rallyclip_core,extraction,features,preprocessing,segmentation,runtime}`.
 5. Never commit to `main` (protected; PR only). Work lands on topic branches / `feat/first-release`.
+6. Before every push: the review gate below.
+
+## Review gate (before every push)
+
+Claude Code authors; Cursor (Grok) and Greptile review locally, headless, read-only.
+Run via the `/agent-review` skill (`.claude/skills/agent-review/SKILL.md`), which wraps:
+
+```bash
+python3 scripts/agent/review.py            # cursor (3 lenses) + greptile vs origin/main
+python3 scripts/agent/review.py --lenses correctness,invariants,tests,perf   # pipeline IO/memory work
+```
+
+Reviews committed changes only (`merge-base..HEAD`). Output (diff, raw reviewer
+output, `findings.json`) goes to `$TMPDIR/rallyclip-review/<branch>-<ts>/`, never the
+repo. Cursor model defaults to `cursor-grok-4.6-high` (`--model` /
+`RALLYCLIP_REVIEW_MODEL`; `agent --list-models`). Exit 0 ok, 2 a reviewer failed
+(partial results kept), 3 a reviewer modified the tree. Triage every finding
+(confirmed / rejected + reason / unsure), fix confirmed high+medium, at most 2
+rounds, then a `## Review digest` table in the PR body. Needs `agent` (Cursor CLI,
+logged in) and `greptile` (`greptile whoami`) on PATH. No Bugbot, no PR-comment reviews.
+

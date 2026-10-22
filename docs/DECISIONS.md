@@ -237,3 +237,21 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   DMG. An unnamed sidecar hash could verify the wrong bytes.
 - **Rejected:** Client-only AbortController as the cancel mechanism.
 
+## 2026-10-21 — Claude authors; Cursor and Greptile review locally, headless
+
+- **What:** Claude Code is the only code author. Before every push,
+  `scripts/agent/review.py` runs Cursor (`agent -p --mode ask`, default
+  `cursor-grok-4.6-high`, three lenses in parallel) and `greptile review --json`
+  on `merge-base..HEAD`, read-only, writing findings outside the repo. Claude
+  triages each finding, fixes confirmed ones (max 2 rounds) and adds a Review
+  digest to the PR body. The user merges every PR. Replaces the
+  `@greptileai` PR-comment loop.
+- **Why:** Spend the Cursor subscription on review, where a second model family
+  catches different mistakes, without adding code from a weaker author. Local
+  CLI runs give findings before the push instead of after. The digest keeps the
+  user's merge decision to evidence + open items, not raw reviewer output.
+- **Rejected:** Cursor or Grok writing code; Bugbot; Greptile via GitHub
+  comments; auto-merge of low-risk PRs (user merges everything); a copied
+  invariants checklist (the script reads AGENTS.md "Hard constraints" at
+  runtime so it cannot drift).
+

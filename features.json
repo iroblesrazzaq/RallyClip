@@ -74,6 +74,13 @@
       "status": "passing",
       "verification": "See docs/artifact-registry-plan.md Definition of done: depth-1 clone has no models/**/*.onnx; fetch_artifact.py then golden/e2e; CI fetch; PyInstaller bundle still contains v0.5.0 weights; packaged app does not download at launch.",
       "evidence": "2026-09-07: Published https://github.com/iroblesrazzaq/RallyClip/releases/tag/artifact-rallyclip_v0.5.0 (non-draft). git ls-files models has no *.onnx (manifests + SHA256SUMS only). PYTHONPATH=src:tests pytest -m 'not slow and not e2e': 298 passed, 6 skipped. Fetch unpacks to a temp dir and installs only after SHA-256 verify so a rejected zip cannot overwrite SHA256SUMS. Hash mismatch raises ArtifactError. ci.yml fetch x2; release.yml fetch + verify_artifact_dir. RallyClip.spec still packs DEFAULT_ARTIFACT_DIR; frozen sources do not import runtime.artifact."
+    },
+    {
+      "id": "agent-review-gate",
+      "name": "Local headless review gate: Claude authors, Cursor (Grok) + Greptile CLIs review read-only before push",
+      "status": "in_progress",
+      "verification": "python3 scripts/agent/review.py on this branch: both reviewers exit ok, findings.json has normalized findings, tree unchanged (exit != 3); PYTHONPATH=src:tests pytest -q tests/test_agent_review.py; default + compile gates.",
+      "evidence": ""
     }
   ],
   "active": "artifact-registry"
