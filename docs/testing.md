@@ -17,7 +17,7 @@ PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovi
 ```
 
 Last known (2026-10-22, agent review gate, macOS `.venv-train`):
-**356 passed, 11 skipped, 49 deselected, ~23s**. `tests/test_agent_review.py` 40 passed.
+**361 passed, 11 skipped, 49 deselected, ~25s**. `tests/test_agent_review.py` 45 passed.
 (2026-09-09, Linux py3.12: 321 passed, 6 skipped, 27 deselected; `tests/test_release_packaging.py`
 21 passed; `tests/test_artifact_fetch.py` 6 passed.)
 
@@ -103,5 +103,5 @@ and `--timeout` kills the whole `agent` process group. If Cursor is down
 (`Cannot use this model ... Available models:` with an empty list), run
 `--reviewers greptile` and say so in the digest.
 
-Unit tests for the script: `tests/test_agent_review.py` (40, no reviewer CLIs invoked).
+Unit tests for the script: `tests/test_agent_review.py` (45, no reviewer CLIs invoked).
 

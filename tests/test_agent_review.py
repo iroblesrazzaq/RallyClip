@@ -52,6 +52,17 @@ def test_extract_findings_requires_markers():
         review.extract_findings('[{"file": "a.py"}]')
 
 
+def test_extract_findings_marker_glued_to_prose():
+    # Real Cursor output: streamed parts are joined without a newline before the marker.
+    text = 'checking exit codes.BEGIN_FINDINGS\n[{"file": "a.py", "line": 1}]\nEND_FINDINGS'
+    assert review.extract_findings(text) == [{"file": "a.py", "line": 1}]
+
+
+def test_extract_findings_ignores_trailing_text():
+    text = 'BEGIN_FINDINGS\n[{"file": "a.py"}]\nNo other issues.\nEND_FINDINGS'
+    assert review.extract_findings(text) == [{"file": "a.py"}]
+
+
 @pytest.mark.parametrize(
     "raw, expected",
     [("HIGH", "high"), ("critical", "high"), ("P2", "medium"), ("low", "low"), (None, "low"), ("nit", "low")],
@@ -131,6 +142,7 @@ def test_run_cursor_tolerates_null_fields(monkeypatch, tmp_path):
 
     monkeypatch.setattr(review, "run_capped", fake_run)
     ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints")}
+    ctx["diff_path"] = tmp_path / "diff.patch"
     [f] = review.run_cursor(_ROOT, tmp_path, ctx, "tests", "m", 5)
     assert f == {"reviewer": "cursor:m", "lens": "tests", "file": "a.py", "line": 7,
                  "severity": "low", "claim": "", "failure_scenario": ""}
@@ -138,6 +150,9 @@ def test_run_cursor_tolerates_null_fields(monkeypatch, tmp_path):
     assert cmd[:2] == ["agent", "-p"]
     assert cmd[cmd.index("--mode") + 1] == "ask"  # read-only: the reviewer must never get write mode
     assert cmd[cmd.index("--model") + 1] == "m"
+    assert cmd[cmd.index("--output-format") + 1] == "json"
+    assert cmd[cmd.index("--add-dir") + 1] == str(tmp_path)  # reviewer can read the diff file
+    assert str(tmp_path / "diff.patch") in cmd[-1]  # the formatted prompt names it
 
 
 def test_run_cursor_rejects_array_without_finding_objects(monkeypatch, tmp_path):
@@ -299,6 +314,33 @@ def test_main_rejects_out_inside_repo(branch_repo, monkeypatch, capsys):
     assert review.main(argv) == 1
     assert "--out must be outside the repo" in capsys.readouterr().err
     assert not (branch_repo / "review-out").exists()
+
+
+def test_main_ctrl_c_stops_reviewers(branch_repo, tmp_path, monkeypatch):
+    stopped = []
+
+    def interrupted(*a):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(review, "run_greptile", interrupted)
+    monkeypatch.setattr(review, "stop_reviewers", lambda: stopped.append(True))
+    with pytest.raises(KeyboardInterrupt):
+        review.main(["--base", "base", "--reviewers", "greptile", "--out", str(tmp_path / "out")])
+    assert stopped == [True]
+
+
+def test_run_capped_captures_output(tmp_path):
+    cmd = [sys.executable, "-c", "import sys; print('out'); print('err', file=sys.stderr); sys.exit(3)"]
+    proc = review.run_capped(cmd, tmp_path, 30)
+    assert (proc.returncode, proc.stdout.strip(), proc.stderr.strip()) == (3, "out", "err")
+
+
+def test_run_capped_times_out_direct_child(tmp_path):
+    # Cross-platform, so windows-latest exercises kill_tree's proc.kill() fallback.
+    start = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired):
+        review.run_capped([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, 1)
+    assert time.monotonic() - start < 15
 
 
 def test_default_out_dir_is_private_and_directly_in_tmp():

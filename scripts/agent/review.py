@@ -129,6 +129,8 @@ def tree_snapshot(root: Path) -> str:
         if rel and (root / rel).is_file():
             h.update(rel.encode() + hashlib.sha256((root / rel).read_bytes()).digest())
     for rel in git(root, "ls-files", "-z", "--others", "--ignored", "--exclude-standard").split("\0"):
+        if not rel:  # trailing -z record; root / "" would fingerprint the root dir's mtime
+            continue
         try:
             st = (root / rel).stat()
         except OSError:
@@ -162,14 +164,18 @@ def norm_line(value: object) -> int | None:
 
 
 def extract_findings(text: str) -> list[dict]:
-    """Parse the LAST marker block; the model may quote the marker names or the prompt example first."""
-    blocks = re.findall(r"^BEGIN_FINDINGS[ \t]*$(.*?)^END_FINDINGS[ \t]*$", text, re.S | re.M)
+    """Parse the LAST marker block; the model may quote the marker names or the prompt example first.
+
+    BEGIN_FINDINGS must end its line but may follow text on it: Cursor joins streamed
+    message parts without newlines ("...dropped findings.BEGIN_FINDINGS").
+    """
+    blocks = re.findall(r"BEGIN_FINDINGS[ \t]*\n(.*?)^[ \t]*END_FINDINGS[ \t]*$", text, re.S | re.M)
     if not blocks:
         raise ValueError("no BEGIN_FINDINGS/END_FINDINGS block in reviewer output")
     body = re.sub(r"^```(?:json)?\s*|\s*```$", "", blocks[-1].strip(), flags=re.I)
     if not body:
         raise ValueError("empty findings block (expected a JSON array; `[]` for no findings)")
-    data = json.loads(body)
+    data, _ = json.JSONDecoder().raw_decode(body)  # ignore trailing prose ("No other issues.")
     if not isinstance(data, list):
         raise ValueError("findings block is not a JSON array")
     return data
@@ -309,15 +315,15 @@ def main(argv: list[str] | None = None) -> int:
     before = tree_snapshot(root)
     meta: dict = {}
     jobs: dict[str, object] = {}
+    findings, failures = [], {}
     with cf.ThreadPoolExecutor(max_workers=len(lenses) + 1) as pool:
-        if "cursor" in reviewers:
-            for lens in lenses:
-                jobs[f"cursor:{lens}"] = pool.submit(run_cursor, root, out, ctx, lens, args.model, args.timeout)
-        if "greptile" in reviewers:
-            # Pass the ref as given: a local `main` can be far behind origin/main.
-            jobs["greptile"] = pool.submit(run_greptile, root, out, args.base, args.timeout, meta)
-        findings, failures = [], {}
         try:
+            if "cursor" in reviewers:
+                for lens in lenses:
+                    jobs[f"cursor:{lens}"] = pool.submit(run_cursor, root, out, ctx, lens, args.model, args.timeout)
+            if "greptile" in reviewers:
+                # Pass the ref as given: a local `main` can be far behind origin/main.
+                jobs["greptile"] = pool.submit(run_greptile, root, out, args.base, args.timeout, meta)
             for name, fut in jobs.items():
                 try:
                     findings += fut.result()
