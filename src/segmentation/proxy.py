@@ -79,7 +79,8 @@ def _write_proxy(paths, output_path, encoder, fps, max_height, progress_callback
                 in_a = next((s for s in container.streams if s.type == "audio"), None)
                 streams = [s for s in (in_v, in_a) if s is not None]
                 origin = float(in_v.start_time * in_v.time_base) if in_v.start_time is not None else 0.0
-                frame_s = 1.0 / float(in_v.average_rate) if in_v.average_rate else 1.0 / fps
+                source_rate = in_v.average_rate or in_v.base_rate  # as the folder preflight reads it
+                frame_s = 1.0 / float(source_rate) if source_rate else 1.0 / fps
                 expected_s = _duration_s(container, in_v)
                 resampler = track.resampler() if in_a is not None else None
                 for frame in container.decode(*streams):

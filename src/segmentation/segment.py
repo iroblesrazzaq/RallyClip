@@ -229,7 +229,10 @@ def segment_video_sources(sources: Sequence[dict], intervals: List[Tuple[float, 
                 raise RuntimeError(f"No video stream found in {path}")
             in_a = next((s for s in container.streams if s.type == 'audio'), None)
             if video is None:
-                video = (in_v.average_rate or Fraction(30, 1), in_v.codec_context.width, in_v.codec_context.height)
+                # Same rate the folder preflight compared (video_validation), so a stream
+                # without average_rate is not silently retimed to 30fps.
+                rate = in_v.average_rate or in_v.base_rate or Fraction(30, 1)
+                video = (rate, in_v.codec_context.width, in_v.codec_context.height)
             if audio is None and in_a is not None:
                 audio = (in_a.codec_context.sample_rate, in_a.layout.name)
     with_encoder_fallback(
