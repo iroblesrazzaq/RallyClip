@@ -1,0 +1,15 @@
+# TCN sweep: L4. One factor changed vs the champion
+# (c64 L5 k3 drop0.2 cosine 1e-4). Receptive field 61 frames (12.2s).
+run_id: 20260725_tcn_L4
+train:
+  head: e2e_heatmap
+  heatmap_backbone: tcn
+  hidden_size: 64
+  heatmap_tcn_levels: 4
+  heatmap_tcn_kernel_size: 3
+  dropout: 0.2
+  lr: 0.0001
+  lr_schedule: cosine
+  lr_eta_min: 0.0
+  epochs: 30
+  early_stopping_patience: 30

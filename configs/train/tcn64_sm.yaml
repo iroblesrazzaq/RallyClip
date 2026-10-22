@@ -1,0 +1,13 @@
+# TCN backbone on the serve-merged dataset. Mirrors 20260723_heatmap64_sm
+# exactly (same data, head, loss, decode, patience) except the backbone, so the
+# six-bin delta is attributable to architecture alone.
+# TCN: 5 residual blocks, k=3, channels=64 -> RF 125 frames (25s) @ ~0.47x the
+# BiLSTM's parameters.
+run_id: 20260724_tcn64_sm
+train:
+  head: e2e_heatmap
+  heatmap_backbone: tcn
+  hidden_size: 64
+  heatmap_tcn_levels: 5
+  heatmap_tcn_kernel_size: 3
+  early_stopping_patience: 10

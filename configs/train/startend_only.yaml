@@ -1,0 +1,46 @@
+# Boundary-only training: startness + endness, no pointness objective.
+#
+# The pointness head still exists (65 params) but cls_weight=0 means no gradient
+# ever reaches it, so its outputs are random -- IGNORE the frame metrics in the
+# training log (accuracy / bal_acc / auroc are all computed from pointness).
+#
+# Decode must change with it: hybrid decode defines segments from runs of
+# above-threshold pointness, which is meaningless here. peakpair instead picks
+# peaks on each heatmap, soft-argmaxes them to sub-frame times, and greedily
+# pairs start -> end with start strictly first (an end is only matched if it is
+# at least min_duration_sec after the start). pointness_gate: null keeps
+# pointness out of decode entirely.
+#
+# selection_metric: f1 rather than the default `acceptable`, which is
+# (good+decent)/n_gt -- recall with no precision term. Under hybrid decode the
+# pointness runs bound how many segments can appear; under peakpair every extra
+# peak pair is another segment, so a recall-only selector rewards spamming peaks.
+#
+# sigma 0.7s (= 3.5 frames at 5 fps, which also sets the decode NMS/refine
+# windows via sigma_frames = sigma_seconds * fps). Wider than the 0.5s champion:
+# with pointness gone, the Gaussians are the ONLY supervision, and at 0.5s they
+# carry meaningful mass over roughly +/-2 frames per event.
+run_id: 20260728_startend_only
+train:
+  head: e2e_heatmap
+  heatmap_backbone: tcn
+  hidden_size: 64
+  heatmap_tcn_levels: 5
+  heatmap_tcn_kernel_size: 3
+  dropout: 0.2
+  lr: 0.0001
+  lr_schedule: cosine
+  lr_eta_min: 0.0
+  epochs: 30
+  early_stopping_patience: 30
+
+  # --- the experiment ---
+  # NB: the loss reads heatmap_cls_weight, NOT cls_weight (which feeds the
+  # classic head). Setting the wrong one leaves pointness fully trained.
+  heatmap_cls_weight: 0.0      # pointness objective off
+  heatmap_start_weight: 1.0
+  heatmap_end_weight: 1.0
+  heatmap_sigma_seconds: 0.7
+  heatmap_decode_mode: peakpair
+  heatmap_pointness_gate: null
+  selection_metric: f1

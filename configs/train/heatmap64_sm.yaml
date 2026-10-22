@@ -1,0 +1,7 @@
+# heatmap@64 retrain on serve-merged dataset. Mirrors 20260721_heatmap64_v37
+# (symmetric targets — no sigma_out) except run_id/dataset.
+run_id: 20260723_heatmap64_sm
+train:
+  head: e2e_heatmap
+  hidden_size: 64
+  early_stopping_patience: 10

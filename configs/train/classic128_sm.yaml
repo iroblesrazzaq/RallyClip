@@ -1,0 +1,5 @@
+# classic@128 retrain on serve-merged dataset. Mirrors 20260721_classic128_v37
+# (base.yaml defaults: head classic, hidden 128) except run_id/dataset.
+run_id: 20260723_classic128_sm
+train:
+  early_stopping_patience: 10

@@ -1,0 +1,20 @@
+# One-shot overlay: regenerate preprocessed+feature h5 (which carry the
+# per-frame targets) for the 11 legacy videos after the serve-fault merge
+# rewrote their annotations (2026-07-23). Raw pose h5 and court npz are reused.
+# Usage: --config base,data_container,holdout,legacy_refresh --steps preprocess,features
+videos:
+  - "9⧸5⧸15 Singles Uncut_dur_4m35s_24m_24s_utr3_genM_courtH_OUT_angleMED_zoomIN.mp4"
+  - "Aditi Narayan ｜ Matchplay_utr6_genF_courtH_IN_angleMED_zoomMED.mp4"
+  - "Brady Knackstedt (Blue Shirt⧸Black Shorts)(4.0 UTR) Unedited Match Play vs. opponent (5.54 UTR)_utr5_genM_courtH_IN_angleMED_zoomMED.mp4"
+  - "Holly Schlatter ｜ 2021 Australian Tennis Recruit  - Match Play Footage_utr7_genF_courtH_OUT_angleHIGH_zoomOUT.mp4"
+  - "Monica Greene unedited tennis match play_utr7_genF_courtH_OUT_angleHIGH_zoomIN.mp4"
+  - "Otto Friedlein - unedited matchplay_utr12_genM_courtH_IN_angleHIGH_zoomOUT.mp4"
+  - "Ryan Parkins - Unedited matchplay_utr11_genM_courtH_IN_angleHIGH_zoomOUT.mp4"
+  - "Satoru Nakajima (11.75 UTR) Match Video (Unedited) vs. Dylan Chou (11.14 UTR) November 5, 2023_utr11_genM_courtH_OUT_angleHIGH_zoomIN.mp4"
+  - "Set (2) Play Uncut Derek vs. Alex_utr5_genM_courtH_OUT_angleMED_zoomIN.mp4"
+  - "Unedited Matchplay vs UTR 9.8_utr9_genF_courtH_OUT_angleHIGH_zoomMED.mp4"
+  - "Verified UTR Match Play： Hai Pham 4.63 vs. Tuan Anh (Unrated)_utr4_genM_courtH_IN_angleHIGH_zoomMED.mp4"
+preprocess:
+  overwrite: true
+features:
+  overwrite: true

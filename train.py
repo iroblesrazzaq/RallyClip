@@ -17,10 +17,14 @@ from training.pipeline import run_pipeline, run_postprocess_sweep, run_sweep  # 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="RallyClip training pipeline")
-    parser.add_argument("--config", required=True, help="Path to YAML config")
+    parser.add_argument(
+        "--config",
+        required=True,
+        help="YAML config path (comma-separated for overlays, e.g. configs/train/base.yaml,configs/train/holdout.yaml)",
+    )
     parser.add_argument(
         "--steps",
-        help="Comma-separated step list to override config (extract,preprocess,features,dataset,train,eval)",
+        help="Comma-separated step list to override config (normalize,extract,preprocess,features,dataset,train,eval)",
     )
     parser.add_argument(
         "--sweep",

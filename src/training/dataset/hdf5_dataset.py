@@ -9,16 +9,31 @@ import torch
 from torch.utils.data import Dataset
 
 
+# Datasets up to this many bytes (features, float32) are decompressed once into
+# RAM. The build writes gzip with chunks that span many sequences, so per-item
+# reads decompress hugely overlapping data (~200x slower than a single bulk read);
+# holding the arrays in memory removes that entirely. Above the cap we fall back
+# to lazy per-item reads so an outsized dataset can't exhaust memory.
+IN_MEMORY_MAX_BYTES = 6 * 1024**3
+
+
 class Hdf5SequenceDataset(Dataset):
     def __init__(self, h5_path: Path) -> None:
         self.h5_path = h5_path
         self._h5: Optional[h5py.File] = None
         self._features_ds: Optional[h5py.Dataset] = None
         self._targets_ds: Optional[h5py.Dataset] = None
+        self._features_mem: Optional[np.ndarray] = None
+        self._targets_mem: Optional[np.ndarray] = None
 
         with h5py.File(h5_path, "r") as h5f:
-            self._length = int(h5f["features"].shape[0])
-            self._feature_dim = int(h5f["features"].shape[-1])
+            feats = h5f["features"]
+            self._length = int(feats.shape[0])
+            self._feature_dim = int(feats.shape[-1])
+            if feats.dtype.itemsize * int(np.prod(feats.shape)) <= IN_MEMORY_MAX_BYTES:
+                # One bulk (decompress-once) read instead of per-item chunk thrash.
+                self._features_mem = np.asarray(feats[:], dtype=np.float32)
+                self._targets_mem = np.asarray(h5f["targets"][:], dtype=np.float32)
 
     def __len__(self) -> int:
         return self._length
@@ -30,6 +45,11 @@ class Hdf5SequenceDataset(Dataset):
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         if isinstance(idx, torch.Tensor):
             idx = int(idx.item())
+        if self._features_mem is not None:
+            return (
+                torch.from_numpy(self._features_mem[idx]),
+                torch.from_numpy(self._targets_mem[idx]),
+            )
         self._ensure_open()
         assert self._features_ds is not None
         assert self._targets_ds is not None

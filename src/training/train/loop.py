@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -24,6 +26,9 @@ def train(
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
 
+    seed = int(config.get("seed", 1337))
+    _seed_everything(seed)
+
     train_path = dataset_dir / "train.h5"
     val_path = dataset_dir / "val.h5"
     if not train_path.exists():
@@ -35,9 +40,25 @@ def train(
     val_ds = Hdf5SequenceDataset(val_path)
 
     device = _resolve_device(config.get("device"))
-    model = TennisPointLSTM(input_size=train_ds.feature_dim, return_logits=True).to(device)
+    hidden_size = int(config.get("hidden_size", 128))
+    num_layers = int(config.get("num_layers", 2))
+    bidirectional = bool(config.get("bidirectional", True))
+    dropout = float(config.get("dropout", 0.2))
+    model = TennisPointLSTM(
+        input_size=train_ds.feature_dim,
+        hidden_size=hidden_size,
+        num_layers=num_layers,
+        dropout=dropout,
+        bidirectional=bidirectional,
+        return_logits=True,
+    ).to(device)
 
-    pos_weight = torch.tensor([float(config.get("pos_weight", 3.0))], device=device)
+    if config.get("pos_weight") is None:
+        pos_weight_value = _default_pos_weight(train_ds)
+        logger.info("Derived pos_weight=%.4f from train positive rate", pos_weight_value)
+    else:
+        pos_weight_value = float(config.get("pos_weight"))
+    pos_weight = torch.tensor([pos_weight_value], device=device)
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.get("lr", 1e-3), weight_decay=config.get("weight_decay", 0.01))
 
@@ -47,7 +68,15 @@ def train(
     num_workers = int(config.get("num_workers", 0))
     effective_batch_size = train_batch_size * grad_accum_steps
 
-    train_loader = DataLoader(train_ds, batch_size=train_batch_size, shuffle=True, num_workers=num_workers)
+    generator = torch.Generator()
+    generator.manual_seed(seed)
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=train_batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        generator=generator,
+    )
     val_loader = DataLoader(val_ds, batch_size=eval_batch_size, shuffle=False, num_workers=num_workers)
 
     threshold = float(config.get("threshold", 0.5))
@@ -159,15 +188,47 @@ def train(
 
 
 def _save_checkpoint(path: Path, model: torch.nn.Module, optimizer: torch.optim.Optimizer, epoch: int, metrics: Dict[str, Any]) -> None:
+    arch = {
+        "input_size": int(getattr(model, "input_size", 0)),
+        "hidden_size": int(getattr(model, "hidden_size", 128)),
+        "num_layers": int(getattr(model, "num_layers", 2)),
+        "bidirectional": bool(getattr(model, "bidirectional", True)),
+        "return_logits": bool(getattr(model, "return_logits", True)),
+    }
     torch.save(
         {
             "epoch": epoch,
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "metrics": metrics,
+            "arch": arch,
+            **arch,
         },
         str(path),
     )
+
+
+def _seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def _default_pos_weight(dataset: Hdf5SequenceDataset) -> float:
+    """pos_weight = neg/pos from train labels; fall back to 3.0 if degenerate."""
+    positives = 0
+    total = 0
+    for i in range(len(dataset)):
+        _, targets = dataset[i]
+        arr = targets.detach().cpu().numpy() if hasattr(targets, "detach") else np.asarray(targets)
+        positives += int(np.sum(arr > 0.5))
+        total += int(arr.size)
+    if positives <= 0 or positives >= total:
+        return 3.0
+    negatives = total - positives
+    return float(negatives) / float(positives)
 
 
 def _resolve_device(device: Optional[str]) -> torch.device:

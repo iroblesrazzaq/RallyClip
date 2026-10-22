@@ -1,0 +1,15 @@
+# Feature ablation: noderiv. Champion TCN (c64 L5 k3 drop0.2, cosine 1e-4) held
+# fixed; only the input feature set differs, so the delta is attributable.
+run_id: 20260725_abl_noderiv
+train:
+  head: e2e_heatmap
+  heatmap_backbone: tcn
+  hidden_size: 64
+  heatmap_tcn_levels: 5
+  heatmap_tcn_kernel_size: 3
+  dropout: 0.2
+  lr: 0.0001
+  lr_schedule: cosine
+  lr_eta_min: 0.0
+  epochs: 30
+  early_stopping_patience: 30

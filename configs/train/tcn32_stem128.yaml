@@ -1,0 +1,15 @@
+# Narrow trunk (32ch) with a 2-layer nonlinear stem: 362 -> 128 -> 32.
+#
+# The champion projects 362 features to the trunk with a single 1x1 conv -- one
+# affine map per frame, no nonlinearity before the temporal blocks. That single
+# projection is 15% of the model purely because the input is wide. Here the
+# projection becomes 362->128->ReLU->32->ReLU, so the per-frame feature mixing
+# is nonlinear, while the trunk halves to 32 channels (block cost is quadratic
+# in width: 24,960 -> 6,240 per block).
+#
+# 86,787 params vs the champion's 156,675 (1.8x smaller). Receptive field is
+# unchanged at 125 frames -- levels/kernel are untouched.
+run_id: 20260727_tcn32_stem128
+train:
+  hidden_size: 32
+  heatmap_tcn_stem_hidden: 128

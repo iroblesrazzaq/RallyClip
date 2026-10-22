@@ -1,0 +1,8 @@
+# Asymmetric-target heatmap run: sigma_out=1.0s (2x inside sigma) to absorb the
+# ~0.5s late-start bias the val pad sweep measured. Mirrors 20260721_heatmap64_v37
+# exactly except run_id + sigma_out.
+run_id: 20260723_heatmap64_asym
+train:
+  head: e2e_heatmap
+  hidden_size: 64
+  heatmap_sigma_out_seconds: 1.0

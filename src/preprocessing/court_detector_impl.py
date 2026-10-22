@@ -4,26 +4,40 @@ import cv2
 import numpy as np
 import os
 import logging
+from pathlib import Path
 from typing import List, Tuple, Optional, Union
 
 def _load_yolo(model_path: str):
     """Load the person detector used for clean-frame extraction.
 
-    .onnx weights use the torch-free onnxruntime runner (same predict surface);
-    anything else goes through ultralytics, which is optional at runtime.
-    Returns None when no backend is available so court detection degrades to
-    its single-frame fallback, as before.
+    Resolution order:
+      * a pose **manifest** (``.json``, or a directory holding ``manifest.json``)
+        resolves through ``load_pose_backend`` to the sha-verified ONNX model and
+        runs it torch-free on the CPU EP. Clean-frame extraction only touches a
+        handful of frames, so the faithful dynamic CPU model is the right call
+        over the ANE static sibling (and CoreML is refused for e2e heads anyway).
+      * ``.onnx`` weights use the onnxruntime runner directly.
+      * anything else goes through ultralytics, which is optional at runtime.
+    Returns None when no backend is available so court detection degrades to its
+    single-frame fallback, as before.
     """
-    if str(model_path).lower().endswith(".onnx"):
+    p = str(model_path)
+    lower = p.lower()
+    if lower.endswith(".json") or Path(p).is_dir():
+        from extraction.pose_backend import load_pose_backend
+
+        model, _meta = load_pose_backend(p, provider="cpu")
+        return model
+    if lower.endswith(".onnx"):
         from extraction.yolo_onnx_runner import YOLO as OnnxYOLO
 
-        return OnnxYOLO(model_path)
+        return OnnxYOLO(p)
     try:
         from ultralytics import YOLO
     except ImportError:
         logging.warning("YOLO not available. Install ultralytics and ensure yolov8n.pt exists.")
         return None
-    return YOLO(model_path)
+    return YOLO(p)
 
 
 class CourtDetector:
@@ -43,6 +57,19 @@ class CourtDetector:
         # A baseline candidate must reach this fraction of the widest candidate's width to
         # count as court-spanning (filters out short floor/carpet edges). Only new tunable.
         self.BASELINE_WIDTH_RATIO = 0.6
+        # --- clean-frame reconstruction (middle-anchored, outward homography) ---
+        # Anchor the clean frame at the MIDDLE of the video, then grow the
+        # reference search OUTWARD in CLEAN_FRAME_STEP_S hops each way, repainting
+        # player-occluded pixels from homography-aligned neighbours. A side stops
+        # once its homography with the base drops below CLEAN_FRAME_MIN_IOU (a
+        # camera cut / large pan-zoom means the neighbour no longer describes the
+        # same court) or the video runs out; the whole search stops early once no
+        # occluded pixel remains (nobody left standing over the lines).
+        # CLEAN_FRAME_MAX_OFFSET_S caps the reach on very long clips.
+        self.CLEAN_FRAME_STEP_S = 10.0
+        self.CLEAN_FRAME_MIN_IOU = 0.6
+        self.CLEAN_FRAME_MAX_OFFSET_S = 180.0
+        self.CLEAN_FRAME_MIN_INLIERS = 10
         self.yolo_model_path = yolo_model_path
         self.conf = float(conf)
         self.device = device
@@ -58,177 +85,195 @@ class CourtDetector:
             logging.warning("YOLO model failed to load: %s", e)
             self.yolo_model = None
     
-    def extract_clean_frame(self, video_path: str, target_time: int = 60) -> np.ndarray:
-        """
-        Extract a clean frame from the video at the specified time, using YOLO to remove player occlusions.
-        
+    def _detect_person_boxes(self, frame: np.ndarray) -> List[Tuple[int, int, int, int]]:
+        """Person boxes (x, y, w, h) above ``self.conf`` in one frame.
+
+        The pose backend is single-class (person), so every detection is a person;
+        the ``cls == 0`` guard keeps parity if a multi-class detector is ever wired
+        in. Empty list when no model is loaded."""
+        if self.yolo_model is None:
+            return []
+        results = self.yolo_model.predict(source=frame, verbose=False)[0]
+        boxes: List[Tuple[int, int, int, int]] = []
+        for box in getattr(results, "boxes", []):
+            try:
+                if int(box.cls.item()) != 0:
+                    continue
+                if float(box.conf.item()) <= self.conf:
+                    continue
+                x0, y0, x1, y1 = [int(v) for v in box.xyxy.cpu().numpy().reshape(-1)]
+                boxes.append((x0, y0, x1 - x0, y1 - y0))
+            except Exception:
+                continue
+        return boxes
+
+    @staticmethod
+    def _boxes_to_mask(boxes: List[Tuple[int, int, int, int]], shape: Tuple[int, int], dilate_px: int = 5) -> np.ndarray:
+        """Filled 255-on-0 occlusion mask for a list of (x, y, w, h) boxes."""
+        mask = np.zeros(shape[:2], dtype=np.uint8)
+        for x, y, w, h in boxes:
+            cv2.rectangle(mask, (x, y), (x + w, y + h), 255, -1)
+        if dilate_px:
+            mask = cv2.dilate(mask, np.ones((dilate_px, dilate_px), np.uint8), iterations=1)
+        return mask
+
+    @staticmethod
+    def _quad_iou(M: np.ndarray, ref_shape: Tuple[int, int], base_shape: Tuple[int, int]) -> float:
+        """IoU of the reference image quad (warped into base coords by M) with the
+        base rectangle. ~1.0 for a static camera, falling as it pans/zooms — the
+        signal used to decide a neighbour is too far to trust as a reference."""
+        try:
+            rh, rw = ref_shape[:2]
+            bh, bw = base_shape[:2]
+            ref_quad = np.float32([[0, 0], [rw, 0], [rw, rh], [0, rh]]).reshape(-1, 1, 2)
+            warped = cv2.perspectiveTransform(ref_quad, M).reshape(-1, 2).astype(np.float32)
+            if not np.all(np.isfinite(warped)):
+                return 0.0
+            base_quad = np.float32([[0, 0], [bw, 0], [bw, bh], [0, bh]])
+            inter, _ = cv2.intersectConvexConvex(warped, base_quad)
+            area_ref = abs(cv2.contourArea(warped))
+            union = area_ref + float(bw * bh) - inter
+            return float(inter / union) if union > 0 else 0.0
+        except cv2.error:
+            return 0.0
+
+    def _homography_to_base(
+        self,
+        orb,
+        kp_base,
+        des_base,
+        reference_frame: np.ndarray,
+        base_shape: Tuple[int, int],
+    ) -> Tuple[Optional[np.ndarray], float, int]:
+        """RANSAC homography mapping ``reference_frame`` -> base, with its coverage
+        IoU and inlier count. M is None when it can't be estimated reliably."""
+        kp_ref, des_ref = orb.detectAndCompute(reference_frame, None)
+        if des_ref is None or des_base is None:
+            return None, 0.0, 0
+        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        matches = sorted(bf.match(des_ref, des_base), key=lambda m: m.distance)
+        good = matches[: min(100, len(matches))]
+        if len(good) < self.CLEAN_FRAME_MIN_INLIERS:
+            return None, 0.0, 0
+        ref_pts = np.float32([kp_ref[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
+        base_pts = np.float32([kp_base[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
+        M, inliers = cv2.findHomography(ref_pts, base_pts, cv2.RANSAC, 5.0)
+        if M is None:
+            return None, 0.0, 0
+        n_inliers = int(inliers.sum()) if inliers is not None else 0
+        if n_inliers < self.CLEAN_FRAME_MIN_INLIERS:
+            return None, 0.0, n_inliers
+        return M, self._quad_iou(M, reference_frame.shape, base_shape), n_inliers
+
+    def extract_clean_frame(self, video_path: str, target_time: Optional[float] = None) -> np.ndarray:
+        """Reconstruct a player-free frame anchored at the MIDDLE of the video.
+
+        Takes the base frame at ``target_time`` (the video midpoint when None),
+        masks the players occluding it, then walks OUTWARD in
+        ``CLEAN_FRAME_STEP_S`` hops each direction, homography-aligning each
+        neighbour to the base and repainting still-occluded pixels from it —
+        provided that neighbour has nobody standing over the same spot. A
+        direction is abandoned once its homography IoU with the base drops below
+        ``CLEAN_FRAME_MIN_IOU`` (camera cut / big pan-zoom) or the video ends; the
+        walk stops early the moment every occluded pixel has been repaired.
+
         Args:
-            video_path: Path to the video file
-            target_time: Time in seconds to extract frame from (default: 60)
-            
+            video_path: Path to the video file.
+            target_time: Anchor time in seconds; None => middle of the video.
+
         Returns:
-            np.ndarray: Clean frame with player occlusions removed
+            np.ndarray: Clean frame with player occlusions repainted where possible.
         """
         from runtime.video_frames import VideoFrameReader
 
         reader = VideoFrameReader(video_path)
         fps = reader.fps
         total_frames = reader.total_frames
+        duration = (total_frames / fps) if fps else 0.0
 
         try:
+            # Anchor at the middle unless a caller pins a time (the court
+            # regression goldens do). Mid-match is the most reliable place to find
+            # in-play footage with a settled camera.
+            if target_time is None:
+                target_time = duration / 2.0 if duration > 0 else 60.0
+
             if self.yolo_model is None:
-                # Fallback to single frame extraction
                 logging.info("YOLO not available, using single frame at target time")
                 frame = reader.read_frame_at_index(int(fps * target_time))
                 if frame is None:
                     raise RuntimeError("Could not read frame at target time.")
                 return frame
 
-            # Use YOLO + Homography for robust background reconstruction
-            logging.info("Using YOLO + Homography for robust background reconstruction")
-
-            # Step 1: Select base frame and find occlusions
-            base_frame_num = int(target_time * fps)
-            base_frame = reader.read_frame_at_index(base_frame_num)
+            base_frame = reader.read_frame_at_index(int(target_time * fps))
             if base_frame is None:
                 raise RuntimeError("Could not read base frame at target time.")
-            
-            # Run YOLO on base frame to detect players
-            results = self.yolo_model.predict(source=base_frame, verbose=False)[0]
-            player_bboxes = []
-            for box in getattr(results, "boxes", []):
-                try:
-                    cls_id = int(box.cls.item())
-                    if cls_id == 0:  # person class
-                        conf = float(box.conf.item())
-                        if conf > self.conf:
-                            xyxy = box.xyxy.cpu().numpy().reshape(-1)
-                            x0, y0, x1, y1 = [int(v) for v in xyxy]
-                            player_bboxes.append((x0, y0, x1-x0, y1-y0))
-                except Exception:
-                    continue
-            
-            logging.info("Detected %s players in base frame", len(player_bboxes))
-            
-            # Step 2: Find suitable reference frame
-            reference_frame = None
-            reference_time = None
-            
-            # Search nearby frames for a clear view
-            search_times = [target_time - 15, target_time + 15]
-            for search_time in search_times:
-                if search_time < 0 or search_time * fps >= total_frames:
-                    continue
-                    
-                frame_num = int(search_time * fps)
-                candidate_frame = reader.read_frame_at_index(frame_num)
-                if candidate_frame is None:
-                    continue
-                
-                # Run YOLO on candidate frame
-                results = self.yolo_model.predict(source=candidate_frame, verbose=False)[0]
-                candidate_bboxes = []
-                for box in getattr(results, "boxes", []):
-                    try:
-                        cls_id = int(box.cls.item())
-                        if cls_id == 0:  # person class
-                            conf = float(box.conf.item())
-                            if conf > self.conf:
-                                xyxy = box.xyxy.cpu().numpy().reshape(-1)
-                                x0, y0, x1, y1 = [int(v) for v in xyxy]
-                                candidate_bboxes.append((x0, y0, x1-x0, y1-y0))
-                    except Exception:
-                        continue
-                
-                # Check if this frame has clear areas where base frame has players
-                is_suitable = True
-                for base_bbox in player_bboxes:
-                    bx, by, bw, bh = base_bbox
-                    base_center = (bx + bw//2, by + bh//2)
-                    
-                    # Check if any player in candidate frame overlaps significantly with base occlusion
-                    for cand_bbox in candidate_bboxes:
-                        cx, cy, cw, ch = cand_bbox
-                        cand_center = (cx + cw//2, cy + ch//2)
-                        
-                        # Calculate overlap
-                        overlap_x = max(0, min(bx + bw, cx + cw) - max(bx, cx))
-                        overlap_y = max(0, min(by + bh, cy + ch) - max(by, cy))
-                        overlap_area = overlap_x * overlap_y
-                        base_area = bw * bh
-                        
-                        if overlap_area > 0.3 * base_area:  # 30% overlap threshold
-                            is_suitable = False
-                            break
-                    if not is_suitable:
-                        break
-                
-                if is_suitable:
-                    reference_frame = candidate_frame
-                    reference_time = search_time
-                    logging.info("Found suitable reference frame at %ss", search_time)
-                    break
-            
-            if reference_frame is None:
-                logging.info("No suitable reference frame found, using base frame")
+            h, w = base_frame.shape[:2]
+
+            occlusion = self._boxes_to_mask(self._detect_person_boxes(base_frame), base_frame.shape)
+            total_occ = int(np.count_nonzero(occlusion))
+            if total_occ == 0:
+                logging.info("No players occlude the base frame at %.1fs; using it as-is", target_time)
                 return base_frame
-            
-            # Step 3: Align frames using homography
-            logging.info("Aligning frames using homography...")
-            
-            # Initialize ORB detector
+
             orb = cv2.ORB_create(nfeatures=1000)
-            
-            # Find keypoints and descriptors
-            kp1, des1 = orb.detectAndCompute(base_frame, None)
-            kp2, des2 = orb.detectAndCompute(reference_frame, None)
-            
-            if des1 is not None and des2 is not None:
-                # Match descriptors
-                bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-                matches = bf.match(des1, des2)
-                matches = sorted(matches, key=lambda x: x.distance)
-                
-                # Keep only the best matches
-                good_matches = matches[:min(100, len(matches))]
-                
-                if len(good_matches) >= 10:  # Need minimum matches for homography
-                    # Get coordinates of good matches
-                    src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-                    dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-                    
-                    # Calculate the Homography matrix
-                    M, mask = cv2.findHomography(dst_pts, src_pts, cv2.RANSAC, 5.0)
-                    
-                    if M is not None:
-                        # Step 4: Warp and combine
-                        h, w, c = base_frame.shape
-                        warped_ref_frame = cv2.warpPerspective(reference_frame, M, (w, h))
-                        
-                        # Create occlusion mask from player bounding boxes
-                        occlusion_mask = np.zeros(base_frame.shape[:2], dtype=np.uint8)
-                        for bbox in player_bboxes:
-                            x, y, w_bbox, h_bbox = bbox
-                            cv2.rectangle(occlusion_mask, (x, y), (x+w_bbox, y+h_bbox), 255, -1)
-                        
-                        # Dilate mask slightly to ensure complete coverage
-                        kernel = np.ones((5, 5), np.uint8)
-                        occlusion_mask = cv2.dilate(occlusion_mask, kernel, iterations=1)
-                        
-                        # Create the final clean frame
-                        clean_frame = np.where(occlusion_mask[:, :, None] == 255, warped_ref_frame, base_frame)
-                        logging.info("Successfully created clean frame using homography alignment")
-                        return clean_frame.astype(np.uint8)
-                    else:
-                        logging.info("Homography calculation failed, using base frame")
-                        return base_frame
-                else:
-                    logging.info("Insufficient feature matches, using base frame")
-                    return base_frame
-            else:
-                logging.info("Feature detection failed, using base frame")
+            kp_base, des_base = orb.detectAndCompute(base_frame, None)
+            if des_base is None:
+                logging.info("No features in base frame; cannot repair occlusions")
                 return base_frame
-                
+
+            clean = base_frame.copy()
+            remaining = occlusion.copy()
+            step = max(1.0, self.CLEAN_FRAME_STEP_S)
+            max_off = min(self.CLEAN_FRAME_MAX_OFFSET_S, max(duration - target_time, target_time))
+            stopped = {1: False, -1: False}
+            n_refs = 0
+            offset = step
+            while offset <= max_off and not (stopped[1] and stopped[-1]):
+                for sign in (1, -1):
+                    if stopped[sign]:
+                        continue
+                    t = target_time + sign * offset
+                    if t < 0 or t * fps >= total_frames:
+                        stopped[sign] = True
+                        continue
+                    ref = reader.read_frame_at_index(int(t * fps))
+                    if ref is None:
+                        stopped[sign] = True
+                        continue
+                    M, iou, n_in = self._homography_to_base(orb, kp_base, des_base, ref, base_frame.shape)
+                    if M is None or iou < self.CLEAN_FRAME_MIN_IOU:
+                        logging.debug(
+                            "Clean-frame ref t=%.1fs rejected (iou=%.2f inliers=%s)", t, iou, n_in
+                        )
+                        stopped[sign] = True
+                        continue
+                    warped = cv2.warpPerspective(ref, M, (w, h))
+                    coverage = cv2.warpPerspective(np.full((ref.shape[0], ref.shape[1]), 255, np.uint8), M, (w, h))
+                    ref_occ_warped = cv2.warpPerspective(
+                        self._boxes_to_mask(self._detect_person_boxes(ref), ref.shape), M, (w, h)
+                    )
+                    # Repaint pixels that are still occluded in the base, are
+                    # covered by this warped neighbour, and are NOT under a player
+                    # in that neighbour.
+                    fillable = (remaining > 0) & (coverage > 0) & (ref_occ_warped == 0)
+                    if np.any(fillable):
+                        clean[fillable] = warped[fillable]
+                        remaining[fillable] = 0
+                        n_refs += 1
+                    if not np.any(remaining):
+                        break
+                if not np.any(remaining):
+                    break
+                offset += step
+
+            repaired = total_occ - int(np.count_nonzero(remaining))
+            logging.info(
+                "Clean frame @%.1fs: repaired %d/%d occluded px from %d reference frame(s)%s",
+                target_time, repaired, total_occ, n_refs,
+                "" if not np.any(remaining) else " (residual occlusion remains)",
+            )
+            return clean.astype(np.uint8)
         finally:
             reader.close()
     
@@ -550,14 +595,15 @@ class CourtDetector:
         
         return out_mask
     
-    def process_video(self, video_path: str, target_time: int = 60) -> Tuple[Optional[np.ndarray], np.ndarray, dict]:
+    def process_video(self, video_path: str, target_time: Optional[float] = None) -> Tuple[Optional[np.ndarray], np.ndarray, dict]:
         """
         Main wrapper method to process a video and return the "out" mask.
-        
+
         Args:
             video_path: Path to the video file
-            target_time: Time in seconds to extract frame from (default: 60)
-            
+            target_time: Anchor time in seconds for the clean frame; None => the
+                middle of the video (the new default).
+
         Returns:
             Tuple of (out_mask, clean_frame, metadata) where:
             - out_mask is a binary mask where white (255) represents areas outside the playable court
@@ -1101,8 +1147,8 @@ if __name__ == "__main__":
     # Initialize the court detector
     detector = CourtDetector()
     
-    # Process the video and get the mask
-    out_mask, clean_frame, metadata = detector.process_video(video_path, target_time=60)
+    # Process the video and get the mask (anchored at the video midpoint)
+    out_mask, clean_frame, metadata = detector.process_video(video_path, target_time=None)
     
     if out_mask is not None and np.any(out_mask):
         # Create court_masks directory if it doesn't exist

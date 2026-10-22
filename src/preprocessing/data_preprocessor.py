@@ -153,22 +153,26 @@ class DataPreprocessor:
     def generate_court_mask(self, video_path: str):
         try:
             detector = CourtDetector(yolo_model_path=self.yolo_model_path, conf=self.conf, device=self.yolo_device)
-            mask, clean_frame, metadata = detector.process_video(video_path, target_time=60)
+            # target_time=None => anchor at the video midpoint.
+            mask, clean_frame, metadata = detector.process_video(video_path, target_time=None)
             return mask
         except Exception as e:
             logging.warning("Court detection failed: %s", e)
             return None
 
     def _court_sample_times(self, video_path: str) -> list:
-        """Timestamps (seconds) to try for court detection, spread across the video."""
+        """Timestamps (seconds) to try for court detection, MIDDLE-FIRST.
+
+        The centre of a match is the most reliable anchor (settled camera,
+        in-play footage); fan out toward the ends only if the middle fails."""
         duration = 0.0
         try:
             duration = float(probe_video(video_path).duration_s)
         except Exception:
             duration = 0.0
-        if duration > 10:
-            return sorted({max(1, int(duration * f)) for f in (0.2, 0.35, 0.5, 0.65, 0.8)})
-        return [60, 90, 45, 120, 30]
+        if duration > 20:
+            return [max(1, int(duration * f)) for f in (0.5, 0.4, 0.6, 0.3, 0.7)]
+        return [60, 45, 90, 30, 120]
 
     def _load_default_court_mask(self, frame_shape) -> np.ndarray:
         """Load the empirical default 'out' mask, resized to the given (H, W, ...) frame shape."""
