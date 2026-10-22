@@ -335,6 +335,7 @@ def test_folder_item_exports_from_original_clips(gui, tmp_path, monkeypatch):
     response = gui.app.test_client().get("/api/library/m1/video")
     assert response.status_code == 200 and response.data == b"cut"
     assert calls == [(sources, [(1.0, 2.0)])]
+    response.close()  # send_file holds export.mp4 open until then; Windows can't unlink an open file
 
     (item_dir / "export.mp4").unlink()
     original.unlink()  # drive unplugged
