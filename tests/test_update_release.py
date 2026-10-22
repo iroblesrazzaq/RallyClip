@@ -369,8 +369,24 @@ def test_download_keeps_existing_dmg_when_cancelled_during_hash(tmp_path, monkey
     assert list(tmp_path.glob("*.partial")) == []
 
 
-def test_sha256_file_stops_on_cancel(tmp_path):
+def test_sha256_file_stops_on_cancel(tmp_path, monkeypatch):
     from gui.update_release import _HASH_CHUNK, sha256_file
+
+    hashed: list[int] = []
+    real_sha256 = hashlib.sha256
+
+    class _CountingDigest:
+        def __init__(self):
+            self._digest = real_sha256()
+
+        def update(self, chunk: bytes) -> None:
+            hashed.append(len(chunk))
+            self._digest.update(chunk)
+
+        def hexdigest(self) -> str:
+            return self._digest.hexdigest()
+
+    monkeypatch.setattr("gui.update_release.hashlib.sha256", _CountingDigest)
 
     class _CancelAfterFirstChunk(threading.Event):
         checks = 0
@@ -386,3 +402,4 @@ def test_sha256_file_stops_on_cancel(tmp_path):
         sha256_file(path, cancel_event=cancel)
     # Clear on entry, set after chunk 1: hashing stopped between chunks.
     assert cancel.checks == 2
+    assert hashed == [_HASH_CHUNK]
