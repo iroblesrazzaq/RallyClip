@@ -345,6 +345,7 @@ def test_download_keeps_existing_dmg_when_cancelled_during_hash(tmp_path, monkey
 
     def hash_then_cancel(path: Path, **kwargs) -> str:
         # The user clicks Cancel while the (large) DMG is being hashed.
+        assert kwargs.get("cancel_event") is cancel
         digest = real_sha256_file(path)
         cancel.set()
         return digest
@@ -371,9 +372,17 @@ def test_download_keeps_existing_dmg_when_cancelled_during_hash(tmp_path, monkey
 def test_sha256_file_stops_on_cancel(tmp_path):
     from gui.update_release import _HASH_CHUNK, sha256_file
 
+    class _CancelAfterFirstChunk(threading.Event):
+        checks = 0
+
+        def is_set(self) -> bool:
+            self.checks += 1
+            return self.checks > 1
+
     path = tmp_path / "big.dmg"
-    path.write_bytes(b"x" * (_HASH_CHUNK * 2))
-    cancel = threading.Event()
-    cancel.set()
+    path.write_bytes(b"x" * (_HASH_CHUNK * 3))
+    cancel = _CancelAfterFirstChunk()
     with pytest.raises(UpdateDownloadCancelled):
         sha256_file(path, cancel_event=cancel)
+    # Clear on entry, set after chunk 1: hashing stopped between chunks.
+    assert cancel.checks == 2
