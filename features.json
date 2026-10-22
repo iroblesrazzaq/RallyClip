@@ -10,7 +10,7 @@
       "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
-      "evidence": "2026-09-09: 321 passed, 6 skipped, 27 deselected (~20s) on cursor/assisted-dmg-update-5f28 (Linux py3.12). Cancel stops the Flask DMG download; sidecar checksums must name the selected DMG."
+      "evidence": "2026-10-22: 363 passed, 11 skipped, 49 deselected (~25s) on fix/update-pagination-cancel-race (macOS, .venv-train py3.11). Cancel during the DMG SHA-256 check no longer replaces files in ~/Downloads."
     },
     {
       "id": "golden-cli-parity",

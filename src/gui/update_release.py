@@ -120,10 +120,11 @@ def downloads_dir() -> Path:
     return (Path.home() / "Downloads").resolve()
 
 
-def sha256_file(path: Path) -> str:
+def sha256_file(path: Path, *, cancel_event: Optional[threading.Event] = None) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         while True:
+            _raise_if_cancelled(cancel_event)
             chunk = handle.read(_HASH_CHUNK)
             if not chunk:
                 break
@@ -221,8 +222,11 @@ def download_and_open_latest_dmg(
         _raise_if_cancelled(cancel_event)
         _download_url(dmg_url, staging, cancel_event=cancel_event)
         _raise_if_cancelled(cancel_event)
-        if sha256_file(staging) != expected:
+        if sha256_file(staging, cancel_event=cancel_event) != expected:
             raise ValueError("DMG checksum mismatch; download discarded.")
+        # Cancel can land while a large DMG is hashing; re-check before
+        # anything replaces the user's files in ~/Downloads.
+        _raise_if_cancelled(cancel_event)
         sha_staging.replace(sha_dest)
         staging.replace(dest)
     except Exception:
