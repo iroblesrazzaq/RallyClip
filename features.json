@@ -74,6 +74,13 @@
       "status": "passing",
       "verification": "See docs/artifact-registry-plan.md Definition of done: depth-1 clone has no models/**/*.onnx; fetch_artifact.py then golden/e2e; CI fetch; PyInstaller bundle still contains v0.5.0 weights; packaged app does not download at launch.",
       "evidence": "2026-09-07: Published https://github.com/iroblesrazzaq/RallyClip/releases/tag/artifact-rallyclip_v0.5.0 (non-draft). git ls-files models has no *.onnx (manifests + SHA256SUMS only). PYTHONPATH=src:tests pytest -m 'not slow and not e2e': 298 passed, 6 skipped. Fetch unpacks to a temp dir and installs only after SHA-256 verify so a rejected zip cannot overwrite SHA256SUMS. Hash mismatch raises ArtifactError. ci.yml fetch x2; release.yml fetch + verify_artifact_dir. RallyClip.spec still packs DEFAULT_ARTIFACT_DIR; frozen sources do not import runtime.artifact."
+    },
+    {
+      "id": "agent-review-gate",
+      "name": "Local headless review gate: Claude authors, Cursor (Grok) + Greptile CLIs review read-only before push",
+      "status": "passing",
+      "verification": "python3 scripts/agent/review.py on this branch: both reviewers exit ok, findings.json has normalized findings, tree unchanged (exit != 3); PYTHONPATH=src:tests pytest -q tests/test_agent_review.py; default + compile gates.",
+      "evidence": "2026-10-21/22 dry runs on chore/agent-review-pipeline. Round 1: cursor x3 lenses + greptile all ran, 7 Cursor findings (after a parser fix) + 6 Greptile (confidence 3/5); confirmed in-diff ones fixed in 5d394e7, 2 rejected as outside the diff. Round 2: greptile 5/5 with 1 medium (null claim crash), fixed in 5d068bb; all Cursor lenses failed on a Cursor backend outage (RetriableError / empty model list), which exposed a timeout that never fired (agent's node child holds the pipes) -> run_capped kills the process group. Round 3 (2026-10-22, on 1f8a1dc): cursor x3 + greptile all ok, exit 0, tree unmodified, greptile 4/5; 7 findings all confirmed and fixed (Windows-safe kill, Ctrl-C kills reviewer process groups, main() exit-code/--out/greptile-mapping/retry-bound tests). Manual SIGINT check: review.py exits in 0.1s, 0 leftover reviewer processes. Tree never modified across rounds (no exit 3). Round 4 (on 0654c45, after Greptile's PR #65 comments) and round 5 (on 1e842a4, cursor x2 ok + 1 lens unparsed, greptile 5/5): confirmed findings fixed (dirty-tree refusal, marker glued to prose, Ctrl-C during submit, tests). tests/test_agent_review.py 45 passed; default gate 361 passed, 11 skipped, 49 deselected; compile exit 0; scoped ruff clean."
     }
   ],
   "active": "artifact-registry"

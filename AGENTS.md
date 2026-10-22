@@ -21,9 +21,13 @@ described in docs/REPO_MAP.md.
 
 - MUST NOT commit to `main` (branch-protected; PR only). Run the branch gate in
   docs/testing.md before every commit. Work on topic branches.
-- MUST NOT invoke Cursor Bugbot (no Bugbot subagent, no `bugbot run` / `cursor review`
-  comments). PR review is Greptile only: after a push, comment `@greptileai` and
-  iterate until Confidence Score 5/5. Do not merge; the user merges.
+- Claude Code is the only code author. Cursor and Greptile only review, locally and
+  headless via their CLIs: after the branch gate and before every push, run
+  `/agent-review` (`python3 scripts/agent/review.py`: read-only `agent --mode ask` +
+  `greptile review`), triage, fix confirmed findings, and put the Review digest in the
+  PR body (docs/testing.md "Review gate"). MUST NOT invoke Cursor Bugbot (no Bugbot
+  subagent, no `bugbot run`), MUST NOT post `cursor review` or `@greptileai` PR
+  comments, MUST NOT let Cursor edit files. Do not merge; the user merges.
 - MUST NOT add a Claude/AI co-author trailer to commits.
 - MUST NOT commit secrets, machine-specific paths in `config.toml`, or large binaries
   (weights/videos are gitignored. Inference ONNX is GitHub Release

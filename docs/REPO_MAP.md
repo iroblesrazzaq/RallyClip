@@ -21,7 +21,7 @@ dir is not a git repo; this table is the authoritative summary):
 |---|---|
 | `src/` | The Python package (8 subpackages, see seams below). `package-dir = src`. |
 | `tests/` | Pytest suites + `tests/fixtures/` (court goldens ~11MB, golden CLI clip, quality GT) + `tests/helpers/`. |
-| `scripts/` | Training/data tooling + `scripts/export_heatmap_model.py` (TCN ONNX export) + `scripts/fetch_artifact.py` / `scripts/release/pack_artifact.sh` (GitHub artifact zip) + `scripts/perf/` benchmarks + `scripts/release/` (sign, DMG, notarize, CI cert import). Not shipped. |
+| `scripts/` | Training/data tooling + `scripts/export_heatmap_model.py` (TCN ONNX export) + `scripts/fetch_artifact.py` / `scripts/release/pack_artifact.sh` (GitHub artifact zip) + `scripts/perf/` benchmarks + `scripts/release/` (sign, DMG, notarize, CI cert import) + `scripts/agent/` (local review gate). Not shipped. |
 | `configs/` | Training YAMLs (`configs/train/base.yaml`, `configs/extract/*`). |
 | `models/` | Tracked **manifests + `rallyclip_v0.5.0/SHA256SUMS`**. ONNX is GitHub Release `artifact-rallyclip_v0.5.0`; `python scripts/fetch_artifact.py` unpacks into `models/rallyclip_v0.5.0/` (gitignored). `RallyClip.spec` still packs that folder into the DMG. |
 | `docs/` | This harness + plans (Tier 3) + `docs/perf/` (streaming-perf loop journal) + `docs/training.md` + `docs/artifact-registry-plan.md` (ONNX off git). |
@@ -47,6 +47,7 @@ dir is not a git repo; this table is the authoritative summary):
 - **Training pipeline** → `docs/training.md`, `src/training/pipeline.py`, `configs/train/base.yaml`, `train.py`.
 - **Packaging/release** → `RallyClip.spec`, `packaging/macos/`, `scripts/release/`, `scripts/fetch_artifact.py`, `src/runtime/artifact.py`, `.github/workflows/release.yml`, `docs/cli-in-release-binary-plan.md`, `docs/artifact-registry-plan.md`.
 - **Perf** → `docs/perf/PLAN.md` + `docs/perf/JOURNAL.md`, `scripts/perf/bench_*.py`, baselines in `docs/perf/baseline/`.
+- **Agent review gate** → `scripts/agent/review.py` (Cursor `agent --mode ask` + `greptile review`, headless), prompt `scripts/agent/cursor_review_prompt.md`, skill `.claude/skills/agent-review/SKILL.md`, Cursor rule `.cursor/rules/review-with-greptile.mdc`, docs/testing.md "Review gate".
 
 ## Key seams & entry points
 
