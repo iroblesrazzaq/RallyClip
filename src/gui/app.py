@@ -2528,6 +2528,11 @@ def library_thumbnail(item_id: str):
 
 _export_locks: Dict[str, threading.Lock] = {}
 _export_locks_guard = threading.Lock()
+# Bumped (under _export_locks_guard) whenever an item's points change, so an
+# export already encoding from the old points never publishes its result.
+_export_generations: Dict[str, int] = {}
+# Background exports re-encode full-resolution originals; run one at a time.
+_export_slot = threading.Semaphore(1)
 
 
 def _export_lock(item_id: str) -> threading.Lock:
@@ -2568,12 +2573,17 @@ def _export_library_video(item_id: str, progress_callback=None) -> Path:
     export_path = item_dir / "export.mp4"
     # Serialize per item so simultaneous export requests don't both run the
     # slow re-encode; the loser of the race re-checks freshness and reuses.
+    def is_stale() -> bool:
+        if not export_path.exists():
+            return True
+        export_mtime = export_path.stat().st_mtime
+        return source_path.stat().st_mtime > export_mtime or csv_path.stat().st_mtime > export_mtime
+
     with _export_lock(item_id):
-        needs_export = not export_path.exists()
-        if not needs_export:
-            export_mtime = export_path.stat().st_mtime
-            needs_export = source_path.stat().st_mtime > export_mtime or csv_path.stat().st_mtime > export_mtime
-        if needs_export:
+        # Loops only when the points were edited mid-encode: cut again from the new CSV.
+        while is_stale():
+            with _export_locks_guard:
+                generation = _export_generations.get(item_id, 0)
             intervals = _sorted_point_intervals(csv_path)
             if not intervals:
                 raise FileNotFoundError("No point intervals available")
@@ -2592,9 +2602,14 @@ def _export_library_video(item_id: str, progress_callback=None) -> Path:
                     segment_video_sources(sources, intervals, str(tmp_path), **kwargs)
                 else:
                     _load_segment_video()(str(source_path), intervals, str(tmp_path), **kwargs)
-                tmp_path.replace(export_path)
+                with _export_locks_guard:
+                    published = _export_generations.get(item_id, 0) == generation
+                    if published:
+                        tmp_path.replace(export_path)
             finally:
                 tmp_path.unlink(missing_ok=True)
+            if published:
+                break
     return export_path
 
 
@@ -2604,7 +2619,8 @@ def _run_export_job(item_id: str) -> None:
             export_jobs[item_id]["progress"] = percent
 
     try:
-        _export_library_video(item_id, progress_callback=progress)
+        with _export_slot:
+            _export_library_video(item_id, progress_callback=progress)
         state = {"status": "ready", "progress": 100, "error": None}
     except Exception as exc:
         logging.exception("Could not export library video %s", item_id)
@@ -2834,9 +2850,11 @@ def _parse_segments_request(payload: Any) -> list[tuple[float, float]]:
 
 def _invalidate_library_export(item_id: str) -> None:
     # export.mp4 was cut from the previous point times; drop it so the next
-    # download re-exports from the effective CSV.
-    with _export_lock(item_id):
-        (_library_item_dir(item_id) / "export.mp4").unlink(missing_ok=True)
+    # download re-exports from the effective CSV. No _export_lock: a save must
+    # not wait out a long encode, which sees the new generation and redoes it.
+    with _export_locks_guard:
+        _export_generations[item_id] = _export_generations.get(item_id, 0) + 1
+    (_library_item_dir(item_id) / "export.mp4").unlink(missing_ok=True)
     with jobs_lock:
         if export_jobs.get(item_id, {}).get("status") == "ready":
             export_jobs.pop(item_id)

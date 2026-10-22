@@ -250,3 +250,18 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   mixed-fps folders would play at the wrong speed.
 - **Rejected:** Token map with TTL; restoring the token on preflight failure;
   multi-track rejection in `video_validation` (would regress single uploads).
+
+## 2026-10-22 — Export generations instead of blocking saves; audio reserve
+
+- **What:** `_invalidate_library_export` bumps a per-item generation and unlinks
+  export.mp4 without taking the export lock; an export publishes only if the
+  generation is unchanged, else it cuts again from the new CSV. `AudioTrack.write`
+  leaves 250 ms unencoded so `pad_to` can always trim a cut's audio overrun.
+  Background exports share one slot.
+- **Why:** With minutes-long background exports, a points save would hang on the
+  lock. Encoding audio eagerly (new in this rewrite) let per-cut overruns pile up
+  to ~60 ms; main kept a whole cut in the FIFO, which is too much memory for
+  proxy clips.
+- **Rejected:** Timestamp-gap caps in the proxy (local files the user picked; the
+  gap is what the file claims); moving instead of copying large uploads (the
+  upload path is unchanged from main; folder import is the large-file route).

@@ -88,6 +88,29 @@ def test_export_cuts_across_clip_boundary_from_originals(clips, tmp_path):
     assert abs(samples - len(lumas) * RATE / 10) <= 2048
 
 
+def test_audio_stays_locked_to_video_across_many_short_cuts(tmp_path, monkeypatch):
+    import segmentation.segment as segment
+
+    errors = []
+    pad_to = segment.AudioTrack.pad_to
+
+    def checked_pad_to(track, total):
+        pad_to(track, total)
+        errors.append(track.written - total)
+
+    monkeypatch.setattr(segment.AudioTrack, "pad_to", checked_pad_to)
+    clip = tmp_path / "sixty.mp4"
+    _make_clip(clip, seconds=40, fps=60)
+    # A cut's last AAC block runs past its last video frame. That overrun must be
+    # trimmed before it is encoded, or it piles up cut after cut (~60 ms here).
+    segment_video_sources(
+        [{"path": str(clip), "start_s": 0.0, "duration_s": 40.0}],
+        [(2.003 * i, 2.003 * i + 1.01) for i in range(15)],
+        str(tmp_path / "cuts.mp4"),
+    )
+    assert len(errors) == 15 and set(errors) == {0}
+
+
 # --------------------------------------------------------------------------- GUI
 
 
@@ -283,3 +306,21 @@ def test_persist_writes_sources_manifest(gui, tmp_path, monkeypatch):
     item_dir = gui._library_item_dir(item_id)
     assert json.loads((item_dir / "sources.json").read_text())["sources"] == manifest
     assert json.loads((item_dir / "meta.json").read_text())["source_name"] == "2 consecutive clips"
+
+
+def test_points_edited_mid_export_are_not_lost(gui, monkeypatch):
+    item_dir = _library_item(gui)
+    calls = []
+
+    def fake_segment(input_video, intervals, output_video):
+        calls.append(intervals)
+        if len(calls) == 1:
+            # The user saves new points while this encode runs. The save must not
+            # wait for the export lock (this would deadlock if it did).
+            (item_dir / "segments.csv").write_text("start_time,end_time\n3.0,4.0\n", encoding="utf-8")
+            gui._invalidate_library_export("m1")
+        Path(output_video).write_bytes(f"cut{len(calls)}".encode())
+
+    monkeypatch.setattr(gui, "segment_video", fake_segment)
+    assert gui.app.test_client().get("/api/library/m1/video").data == b"cut2"
+    assert calls == [[(1.0, 2.0)], [(3.0, 4.0)]]

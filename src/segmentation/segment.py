@@ -84,6 +84,7 @@ class AudioTrack:
     Video and audio are quantised on different grids (1/fps frames vs ~1024-sample
     AAC frames). Padding or trimming to the video length after each cut (issue #21)
     keeps the error bounded (<~25 ms) instead of drifting across concatenated cuts.
+    write() holds back `reserve` samples unencoded so that trim is always possible.
     """
 
     def __init__(self, container, rate: int, layout) -> None:
@@ -93,6 +94,8 @@ class AudioTrack:
         self.rate = int(rate)
         self.fifo = av.AudioFifo()
         self.encoded = 0
+        # A cut's audio can overrun its last video frame by a decoded frame or so.
+        self.reserve = self.rate // 4
 
     @property
     def written(self) -> int:
@@ -105,7 +108,7 @@ class AudioTrack:
         for frame in frames:
             frame.pts = None
             self.fifo.write(frame)
-        self._drain()
+        self._drain(keep=self.reserve)
 
     def pad_to(self, total: int) -> None:
         """Pad with silence, or trim pending samples, so the track holds `total` samples."""
@@ -129,9 +132,9 @@ class AudioTrack:
         for packet in self.stream.encode():
             self.container.mux(packet)
 
-    def _drain(self, flush: bool = False) -> None:
+    def _drain(self, flush: bool = False, keep: int = 0) -> None:
         size = self.stream.frame_size or 1024
-        while self.fifo.samples >= size or (flush and self.fifo.samples > 0):
+        while self.fifo.samples >= size + keep or (flush and self.fifo.samples > 0):
             frame = self.fifo.read(min(size, self.fifo.samples))
             frame.pts = self.encoded
             frame.time_base = Fraction(1, self.rate)

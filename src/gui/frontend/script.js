@@ -2926,9 +2926,6 @@ class RallyClipApp {
         this.prefetchPointAwareWindows(sourceTime);
     }
 
-    // A real navigation to an attachment URL: the browser downloads it, and in
-    // the desktop webview it fires QWebEngineProfile.downloadRequested (handled
-    // in desktop.py with a native Save dialog).
     // Exports can take minutes for a long match: cut in the background, show
     // progress on the button, then download the finished file.
     async exportVideo(id, button) {
@@ -2955,6 +2952,9 @@ class RallyClipApp {
         }
     }
 
+    // A real navigation to an attachment URL: the browser downloads it, and in
+    // the desktop webview it fires QWebEngineProfile.downloadRequested (handled
+    // in desktop.py with a native Save dialog).
     triggerDownload(url) {
         const anchor = document.createElement("a");
         anchor.href = url;

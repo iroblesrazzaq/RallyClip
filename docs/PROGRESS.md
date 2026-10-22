@@ -25,9 +25,13 @@ _Last updated: 2026-10-22 (session: lean large-video import, replaces #59/#60)._
    exports are cut from the originals (404 if the drive is gone). Exports write
    `export.partial.mp4` then rename. `POST /api/library/<id>/export` +
    `GET .../export/status` run it in the background; the button shows progress.
-6. Cancel race: a cancel that lands before the worker handle is recorded now
+6. Review round 1 fixes: AudioTrack keeps a 250 ms unencoded reserve so each
+   cut's audio overrun is trimmed (it drifted up to ~60 ms over 15 cuts); a
+   points save bumps an export generation instead of waiting on the export lock;
+   one background export encodes at a time.
+7. Cancel race: a cancel that lands before the worker handle is recorded now
    terminates the worker; a cancelled job dir is removed.
-7. Gates: default **339 passed, 49 deselected**; golden parity 1
+8. Gates: default **341 passed, 49 deselected**; golden parity 1
    passed; `test_gui_playwright.py` 11 passed.
 
 ## Next steps
