@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import stat
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -34,6 +38,13 @@ def test_extract_findings_takes_last_block_not_quoted_example():
 
 def test_extract_findings_empty_block():
     assert review.extract_findings("BEGIN_FINDINGS\n[]\nEND_FINDINGS") == []
+
+
+@pytest.mark.parametrize("body", ["", "   \n", "```json\n```"])
+def test_extract_findings_rejects_block_without_array(body):
+    # Markers with no array is an unusable response, not "no findings".
+    with pytest.raises(ValueError, match="empty findings block"):
+        review.extract_findings(f"BEGIN_FINDINGS\n{body}\nEND_FINDINGS")
 
 
 def test_extract_findings_requires_markers():
@@ -241,6 +252,44 @@ def test_main_rejects_out_inside_repo(branch_repo, monkeypatch, capsys):
     assert review.main(argv) == 1
     assert "--out must be outside the repo" in capsys.readouterr().err
     assert not (branch_repo / "review-out").exists()
+
+
+def test_default_out_dir_is_private_and_directly_in_tmp():
+    out = review.default_out_dir("feat/x y")
+    try:
+        assert out.parent == Path(tempfile.gettempdir())  # no shared, pre-creatable parent
+        assert out.name.startswith("rallyclip-review-feat-x-y-")
+        if os.name == "posix":
+            assert stat.S_IMODE(out.stat().st_mode) == 0o700
+    finally:
+        out.rmdir()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups; no `sh` on Windows runners")
+def test_stop_reviewers_kills_running_and_blocks_new(tmp_path):
+    errors = []
+
+    def worker():
+        try:
+            review.run_capped(["sh", "-c", "sleep 30 & sleep 30"], tmp_path, 60)
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    t = threading.Thread(target=worker)
+    start = time.monotonic()
+    t.start()
+    try:
+        while not review._LIVE and time.monotonic() - start < 5:
+            time.sleep(0.01)
+        assert review._LIVE, "reviewer process never registered"
+        review.stop_reviewers()
+        t.join(10)
+        assert not t.is_alive() and time.monotonic() - start < 10
+        with pytest.raises(RuntimeError, match="review cancelled"):  # a retry after the stop
+            review.run_capped(["sh", "-c", "true"], tmp_path, 5)
+    finally:
+        review._STOP.clear()
+        t.join(30)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups; no `sh` on Windows runners")

@@ -17,7 +17,7 @@ PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovi
 ```
 
 Last known (2026-10-22, agent review gate, macOS `.venv-train`):
-**347 passed, 11 skipped, 49 deselected, ~22s**. `tests/test_agent_review.py` 31 passed.
+**352 passed, 11 skipped, 49 deselected, ~24s**. `tests/test_agent_review.py` 36 passed.
 (2026-09-09, Linux py3.12: 321 passed, 6 skipped, 27 deselected; `tests/test_release_packaging.py`
 21 passed; `tests/test_artifact_fetch.py` 6 passed.)
 
@@ -87,7 +87,7 @@ python3 scripts/agent/review.py --lenses correctness,invariants,tests,perf   # p
 ```
 
 Reviews committed changes only (`merge-base..HEAD`). Output (diff, raw reviewer
-output, `findings.json`) goes to `$TMPDIR/rallyclip-review/<branch>-<ts>/`, never the
+output, `findings.json`) goes to `$TMPDIR/rallyclip-review-<branch>-<ts>-XXXX/`, never the
 repo. Cursor model defaults to `cursor-grok-4.6-high` (`--model` /
 `RALLYCLIP_REVIEW_MODEL`; `agent --list-models`). Exit 0 ok, 2 a reviewer failed
 (partial results kept), 3 a reviewer modified the tree. Triage every finding
@@ -102,5 +102,5 @@ and `--timeout` kills the whole `agent` process group. If Cursor is down
 (`Cannot use this model ... Available models:` with an empty list), run
 `--reviewers greptile` and say so in the digest.
 
-Unit tests for the script: `tests/test_agent_review.py` (31, no reviewer CLIs invoked).
+Unit tests for the script: `tests/test_agent_review.py` (36, no reviewer CLIs invoked).
 

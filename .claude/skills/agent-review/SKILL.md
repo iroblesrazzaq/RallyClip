@@ -26,7 +26,7 @@ every push. Uncommitted changes are not reviewed.
    Options: `--base <ref>` (default `origin/main`), `--reviewers cursor,greptile`,
    `--lenses correctness,invariants,tests[,perf]` (add `perf` when touching
    pipeline IO/memory), `--model <cursor model>` (default `cursor-grok-4.6-high`,
-   env `RALLYCLIP_REVIEW_MODEL`). Output goes to `$TMPDIR/rallyclip-review/...`;
+   env `RALLYCLIP_REVIEW_MODEL`). Output goes to `$TMPDIR/rallyclip-review-<branch>-<ts>-XXXX/`;
    the summary line prints the `findings.json` path.
 
    Exit codes: 0 ok, 2 a reviewer failed (partial findings kept; say which one in

@@ -3,8 +3,8 @@
 
 Claude Code authors every change; this script only collects second opinions.
 It reviews committed changes (merge-base..HEAD) and never writes into the repo:
-diff, raw reviewer output and normalized findings go to an out dir under
-$TMPDIR/rallyclip-review/. Triage is the caller's job (see /agent-review).
+diff, raw reviewer output and normalized findings go to an private out dir
+$TMPDIR/rallyclip-review-<branch>-<ts>-XXXX/. Triage is the caller's job (see /agent-review).
 
 Exit codes: 0 all reviewers ran, 1 usage/git error, 2 a reviewer failed
 (partial findings still written), 3 a reviewer modified the working tree.
@@ -23,6 +23,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -57,6 +58,21 @@ def git(root: Path, *args: str) -> str:
 
 
 _LIVE: set[subprocess.Popen] = set()  # reviewer processes still running (killed on Ctrl-C)
+_LIVE_LOCK = threading.Lock()  # guards _LIVE and _STOP so a starting reviewer cannot escape a stop
+_STOP = threading.Event()  # set on Ctrl-C: no new reviewer processes (retries included)
+
+
+def default_out_dir(branch: str) -> Path:
+    slug = re.sub(r"[^A-Za-z0-9._-]", "-", branch)
+    return Path(tempfile.mkdtemp(prefix=f"rallyclip-review-{slug}-{time.strftime('%Y%m%d-%H%M%S')}-"))
+
+
+def stop_reviewers() -> None:
+    with _LIVE_LOCK:
+        _STOP.set()
+        procs = list(_LIVE)
+    for proc in procs:
+        kill_tree(proc)
 
 
 def kill_tree(proc: subprocess.Popen) -> None:
@@ -76,11 +92,14 @@ def run_capped(cmd: list[str], cwd: Path, timeout: int, env: dict | None = None)
     wrapper and then waits for the grandchildren's pipes, so the cap never fires.
     Run in a fresh process group and kill the whole group instead.
     """
-    proc = subprocess.Popen(
-        cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, start_new_session=True,
-    )
-    _LIVE.add(proc)
+    with _LIVE_LOCK:
+        if _STOP.is_set():
+            raise RuntimeError("review cancelled")
+        proc = subprocess.Popen(
+            cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
+        )
+        _LIVE.add(proc)
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -88,7 +107,8 @@ def run_capped(cmd: list[str], cwd: Path, timeout: int, env: dict | None = None)
         proc.communicate()
         raise
     finally:
-        _LIVE.discard(proc)
+        with _LIVE_LOCK:
+            _LIVE.discard(proc)
     return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
 
 
@@ -143,7 +163,9 @@ def extract_findings(text: str) -> list[dict]:
     if not blocks:
         raise ValueError("no BEGIN_FINDINGS/END_FINDINGS block in reviewer output")
     body = re.sub(r"^```(?:json)?\s*|\s*```$", "", blocks[-1].strip(), flags=re.I)
-    data = json.loads(body or "[]")
+    if not body:
+        raise ValueError("empty findings block (expected a JSON array; `[]` for no findings)")
+    data = json.loads(body)
     if not isinstance(data, list):
         raise ValueError("findings block is not a JSON array")
     return data
@@ -220,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
                     help=f"Cursor lenses, comma list of {','.join(LENSES)}")
     ap.add_argument("--model", default=os.environ.get("RALLYCLIP_REVIEW_MODEL", DEFAULT_MODEL),
                     help="Cursor model (env RALLYCLIP_REVIEW_MODEL; see `agent --list-models`)")
-    ap.add_argument("--out", type=Path, help="output dir (default: $TMPDIR/rallyclip-review/<branch>-<ts>)")
+    ap.add_argument("--out", type=Path, help="output dir (default: $TMPDIR/rallyclip-review-<branch>-<ts>-XXXX)")
     ap.add_argument("--timeout", type=int, default=900, help="per-reviewer timeout in seconds")
     args = ap.parse_args(argv)
 
@@ -260,11 +282,10 @@ def main(argv: list[str] | None = None) -> int:
             print("error: --out must be outside the repo", file=sys.stderr)
             return 1
         out.mkdir(parents=True, exist_ok=True)
-    else:  # private, unpredictable dir: no pre-created folder or symlink can redirect writes
-        parent = Path(tempfile.gettempdir()) / "rallyclip-review"
-        parent.mkdir(mode=0o700, exist_ok=True)
-        slug = re.sub(r"[^A-Za-z0-9._-]", "-", branch)
-        out = Path(tempfile.mkdtemp(prefix=f"{slug}-{time.strftime('%Y%m%d-%H%M%S')}-", dir=parent))
+    else:
+        # mkdtemp directly in the temp dir: created atomically, 0700, unpredictable name.
+        # No shared parent, since another user could pre-create one and swap our child.
+        out = default_out_dir(branch)
     diff_path = out / "diff.patch"
     diff_path.write_text(diff, encoding="utf-8")
     ctx = {
@@ -292,8 +313,7 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             # Reviewers run in their own sessions, so Ctrl-C does not reach them; kill them
             # here, before the pool's shutdown(wait=True) would block on their threads.
-            for proc in list(_LIVE):
-                kill_tree(proc)
+            stop_reviewers()
             raise
     modified = tree_snapshot(root) != before
 
