@@ -5,6 +5,8 @@ _Last updated: 2026-10-22 (session: lean large-video import, replaces #59/#60)._
 ## Repo state
 
 - `main` has published app **v0.5.0**; inference artifact stays `artifact-rallyclip_v0.5.0`.
+- Review gate (PR #65) and the cancel-during-hash fix (PR #66) are on main and
+  merged into this branch. `artifact-rallyclip_v0.6.0` is a prerelease.
 - Active work: `feat/large-video-import` — a from-scratch rewrite of PRs #59/#60
   (which stay open until the user closes them).
 
@@ -35,7 +37,7 @@ _Last updated: 2026-10-22 (session: lean large-video import, replaces #59/#60)._
    folder preflight skips the length check when a clip reports no duration.
 8. Cancel race: a cancel that lands before the worker handle is recorded now
    terminates the worker; a cancelled job dir is removed.
-9. Gates: default **350 passed, 49 deselected**; golden parity 1
+9. Gates (after merging main): default **399 passed, 49 deselected**; golden parity 1
    passed; `test_gui_playwright.py` 11 passed.
 
 ## Next steps

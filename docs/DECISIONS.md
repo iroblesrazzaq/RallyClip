@@ -237,6 +237,40 @@ Format per entry: date — what / why / rejected alternative. Never rewrite old 
   DMG. An unnamed sidecar hash could verify the wrong bytes.
 - **Rejected:** Client-only AbortController as the cancel mechanism.
 
+## 2026-10-21 — Claude authors; Cursor and Greptile review locally, headless
+
+- **What:** Claude Code is the only code author. Before every push,
+  `scripts/agent/review.py` runs Cursor (`agent -p --mode ask`, default
+  `cursor-grok-4.6-high`, three lenses in parallel) and `greptile review --json`
+  on `merge-base..HEAD`, read-only, writing findings outside the repo. Claude
+  triages each finding, fixes confirmed ones (max 2 rounds) and adds a Review
+  digest to the PR body. The user merges every PR. Replaces the
+  `@greptileai` PR-comment loop.
+- **Why:** Spend the Cursor subscription on review, where a second model family
+  catches different mistakes, without adding code from a weaker author. Local
+  CLI runs give findings before the push instead of after. The digest keeps the
+  user's merge decision to evidence + open items, not raw reviewer output.
+- **Rejected:** Cursor or Grok writing code; Bugbot; Greptile via GitHub
+  comments; auto-merge of low-risk PRs (user merges everything); a copied
+  invariants checklist (the script reads AGENTS.md "Hard constraints" at
+  runtime so it cannot drift).
+
+## 2026-10-22 — Cancel is re-checked after the DMG checksum
+
+- **What:** `sha256_file` checks the cancel event between chunks, and
+  `download_and_open_latest_dmg` checks it again after the hash, before
+  replacing anything in `~/Downloads`.
+- **Why:** Greptile flagged it, and a test confirmed it: a cancel that arrived
+  while a large DMG was hashing still overwrote the user's existing DMG and
+  sidecar, then reported "cancelled". That broke the rule that a cancelled
+  download leaves `~/Downloads` alone.
+- **Not changed:** the update check still reads only page 1 of `/releases`
+  (`per_page=30`), also a Greptile flag. GitHub sorts that list newest first,
+  so the newest `v*` release is missed only after 30+ newer non-app releases
+  (artifact zips, drafts, prereleases). On 2026-10-22 the repo had 6 releases,
+  2 of them `artifact-*` (about one artifact per app release). Revisit if
+  artifact or prerelease tags start piling up. `/releases/latest` is still not
+  an option (it can return an artifact release).
 
 ## 2026-10-22 — Large-video import rewritten lean (supersedes #59/#60)
 

@@ -317,3 +317,89 @@ def test_download_url_stops_on_cancel(tmp_path, monkeypatch):
     with pytest.raises(UpdateDownloadCancelled):
         _download_url(url, dest, cancel_event=cancel)
     assert not dest.exists()
+
+
+def test_download_keeps_existing_dmg_when_cancelled_during_hash(tmp_path, monkeypatch):
+    from gui import update_release
+
+    dmg_name = "RallyClip-0.5.1-macOS-arm64.dmg"
+    dest = tmp_path / dmg_name
+    dest.write_bytes(b"keep-me")
+    opened: list[Path] = []
+    cancel = threading.Event()
+    body = b"dmg-bytes"
+    real_sha256_file = update_release.sha256_file
+    monkeypatch.setattr("gui.update_release.downloads_dir", lambda: tmp_path)
+
+    def fake_download(
+        url: str, dest_path: Path, *, timeout: float = 300, cancel_event=None
+    ) -> None:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        if url.endswith(".sha256"):
+            dest_path.write_text(
+                f"{hashlib.sha256(body).hexdigest()}  {dmg_name}\n",
+                encoding="utf-8",
+            )
+            return
+        dest_path.write_bytes(body)
+
+    def hash_then_cancel(path: Path, **kwargs) -> str:
+        # The user clicks Cancel while the (large) DMG is being hashed.
+        assert kwargs.get("cancel_event") is cancel
+        digest = real_sha256_file(path)
+        cancel.set()
+        return digest
+
+    monkeypatch.setattr("gui.update_release._download_url", fake_download)
+    monkeypatch.setattr("gui.update_release.sha256_file", hash_then_cancel)
+    monkeypatch.setattr("gui.update_release.open_downloaded_dmg", opened.append)
+
+    latest = parse_latest_release(
+        {
+            "tag_name": "v0.5.1",
+            "html_url": "https://github.com/iroblesrazzaq/RallyClip/releases/tag/v0.5.1",
+            "assets": [_asset(dmg_name), _asset(f"{dmg_name}.sha256")],
+        }
+    )
+    with pytest.raises(UpdateDownloadCancelled):
+        download_and_open_latest_dmg(latest, cancel_event=cancel)
+    assert opened == []
+    assert dest.read_bytes() == b"keep-me"
+    assert not (tmp_path / f"{dmg_name}.sha256").exists()
+    assert list(tmp_path.glob("*.partial")) == []
+
+
+def test_sha256_file_stops_on_cancel(tmp_path, monkeypatch):
+    from gui.update_release import _HASH_CHUNK, sha256_file
+
+    hashed: list[int] = []
+    real_sha256 = hashlib.sha256
+
+    class _CountingDigest:
+        def __init__(self):
+            self._digest = real_sha256()
+
+        def update(self, chunk: bytes) -> None:
+            hashed.append(len(chunk))
+            self._digest.update(chunk)
+
+        def hexdigest(self) -> str:
+            return self._digest.hexdigest()
+
+    monkeypatch.setattr("gui.update_release.hashlib.sha256", _CountingDigest)
+
+    class _CancelAfterFirstChunk(threading.Event):
+        checks = 0
+
+        def is_set(self) -> bool:
+            self.checks += 1
+            return self.checks > 1
+
+    path = tmp_path / "big.dmg"
+    path.write_bytes(b"x" * (_HASH_CHUNK * 3))
+    cancel = _CancelAfterFirstChunk()
+    with pytest.raises(UpdateDownloadCancelled):
+        sha256_file(path, cancel_event=cancel)
+    # Clear on entry, set after chunk 1: hashing stopped between chunks.
+    assert cancel.checks == 2
+    assert hashed == [_HASH_CHUNK]

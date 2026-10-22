@@ -1,12 +1,16 @@
 ---
-description: PR review is Greptile only — never Bugbot
+description: Cursor is a read-only reviewer here; Claude Code writes the code. Never Bugbot.
 alwaysApply: true
 ---
 
-# Review with Greptile only
+# Cursor reviews, never writes
 
-Never request, mention, or run Cursor Bugbot (`cursor[bot]`, `/review-bugbot`, `cursor review`, `bugbot run`, or the Bugbot subagent).
+In this repo Claude Code is the only code author. When Cursor runs here (normally
+headless via `scripts/agent/review.py`, `agent -p --mode ask`), it is a reviewer:
 
-For pull request review, use Greptile only:
-- Comment `@greptileai` on the PR
-- Use the `greptile` CLI for local review (`greptile review --branch main --agent`)
+- Do not edit, create, move or delete files. Do not commit or run state-changing commands.
+- Return findings in the format the review prompt asks for (`scripts/agent/cursor_review_prompt.md`).
+
+Never request, mention, or run Cursor Bugbot (`cursor[bot]`, `/review-bugbot`, `bugbot run`,
+or the Bugbot subagent), and never post `cursor review` or `@greptileai` PR comments.
+Greptile also runs locally only: `greptile review --branch origin/main --json`, via `scripts/agent/review.py`.
