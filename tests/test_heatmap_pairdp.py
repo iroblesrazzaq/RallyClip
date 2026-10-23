@@ -1,17 +1,13 @@
 """Dynamic-programming start/end pairing (decode mode `pairdp`)."""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+pytest.importorskip("torch")
 
-from training.eval.heatmap_evaluator import (  # noqa: E402
-    HeatmapDecodeConfig, decode_pairdp, decode_peakpair,
-)
+from infer.heatmap_decode import decode_peakpair  # noqa: E402
+from training.eval.heatmap_evaluator import HeatmapDecodeConfig, decode_pairdp  # noqa: E402
 
 N = 60
 

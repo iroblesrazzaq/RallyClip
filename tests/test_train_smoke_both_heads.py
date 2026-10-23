@@ -1,14 +1,16 @@
-"""Synthetic 1-epoch smoke for classic + e2e_seg heads (no YOLO / no real video)."""
+"""Synthetic 1-epoch smoke for the classic and e2e_heatmap heads (no YOLO / no real video)."""
 from __future__ import annotations
 
 from pathlib import Path
 
 import h5py
 import numpy as np
-import torch
+import pytest
 
-from training.train.loop import train as train_classic
-from training.train.seg_loop import train_seg
+torch = pytest.importorskip("torch")
+
+from training.train.heatmap_loop import load_heatmap_model, train_heatmap  # noqa: E402
+from training.train.loop import train as train_classic  # noqa: E402
 
 
 def _write_split(path: Path, *, n_seq: int = 4, seq_len: int = 8, feat_dim: int = 16) -> None:
@@ -64,25 +66,35 @@ def test_classic_train_smoke(tmp_path):
     assert ckpt["arch"]["bidirectional"] is True
 
 
-def test_e2e_seg_train_smoke(tmp_path):
-    torch.manual_seed(0)
+def test_heatmap_train_smoke(tmp_path):
     np.random.seed(0)
-    dataset_dir = _dataset_dir(tmp_path / "e2e")
-    run_dir = tmp_path / "e2e_run"
-    train_seg(
-        dataset_dir,
-        run_dir,
-        {
-            "device": "cpu",
-            "epochs": 1,
-            "batch_size": 2,
-            "lr": 1e-3,
-            "pos_weight": 3.0,
-            "fps": 5.0,
-            "selection_metric": "val_loss",
-            "early_stopping_patience": 0,
-            "threshold": 0.5,
-        },
-    )
-    assert (run_dir / "checkpoints" / "best.pth").exists()
+    dataset_dir = _dataset_dir(tmp_path / "heatmap")
+    run_dir = tmp_path / "heatmap_run"
+    config = {
+        "device": "cpu",
+        "epochs": 2,
+        "batch_size": 2,
+        "lr": 1e-3,
+        "pos_weight": 3.0,
+        "seed": 0,
+        "fps": 5.0,
+        "hidden_size": 16,
+        "heatmap_tcn_levels": 2,
+        "selection_metric": "val_loss",
+        "lr_schedule": "cosine",
+        "threshold": 0.5,
+    }
+    train_heatmap(dataset_dir, run_dir, config)
     assert (run_dir / "metrics.jsonl").exists()
+    manifest = (run_dir / "manifest.json").read_text()
+    assert '"runtime_params"' in manifest
+    ckpt = torch.load(run_dir / "checkpoints" / "best.pth", map_location="cpu")
+    assert ckpt["arch"]["levels"] == 2
+    load_heatmap_model(run_dir / "checkpoints" / "best.pth", config)
+
+    # Same seed -> same weights.
+    rerun_dir = tmp_path / "heatmap_rerun"
+    train_heatmap(dataset_dir, rerun_dir, config)
+    again = torch.load(rerun_dir / "checkpoints" / "last.pth", map_location="cpu")["model_state_dict"]
+    first = torch.load(run_dir / "checkpoints" / "last.pth", map_location="cpu")["model_state_dict"]
+    assert all(torch.equal(first[k], again[k]) for k in first)

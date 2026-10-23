@@ -1,22 +1,16 @@
-"""TCN heatmap backbone + hybrid-decode false-positive filtering."""
+"""TCN heatmap backbone: output contract, receptive field, factory, checkpoint reload."""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-import numpy as np
 import pytest
-import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+torch = pytest.importorskip("torch")
 
-from training.eval.heatmap_evaluator import (  # noqa: E402
-    HeatmapDecodeConfig,
-    decode_hybrid,
-)
-from training.models.heatmap_lstm import TennisPointHeatmapLSTM  # noqa: E402
 from training.models.heatmap_tcn import TennisPointHeatmapTCN  # noqa: E402
-from training.train.heatmap_loop import build_heatmap_model  # noqa: E402
+from training.train.heatmap_loop import (  # noqa: E402
+    _save_checkpoint,
+    build_heatmap_model,
+    load_heatmap_model,
+)
 
 INPUT_SIZE, SEQ_LEN = 362, 100
 
@@ -57,84 +51,34 @@ def test_is_non_causal_so_it_sees_the_future_like_the_bilstm():
     assert delta[:, 70].max() > 0, "must influence later frames"
 
 
-def test_uses_fewer_parameters_than_the_bilstm_it_replaces():
-    n = lambda m: sum(p.numel() for p in m.parameters())  # noqa: E731
-    tcn = n(_tcn())
-    lstm = n(TennisPointHeatmapLSTM(input_size=INPUT_SIZE, hidden_size=64))
-    assert tcn < lstm / 1.5, f"expected a large param saving, got {tcn} vs {lstm}"
-
-
-def test_factory_dispatches_tcn_and_rejects_unknown_backbones():
-    assert isinstance(build_heatmap_model("tcn", INPUT_SIZE, "mlp", 64, 5, 3),
-                      TennisPointHeatmapTCN)
-    assert isinstance(build_heatmap_model("lstm", INPUT_SIZE, "mlp", 64),
-                      TennisPointHeatmapLSTM)
+def test_factory_builds_from_train_config_and_rejects_other_backbones():
+    cfg = {"hidden_size": 32, "heatmap_tcn_levels": 4, "heatmap_tcn_kernel_size": 5, "dropout": 0.1}
+    model = build_heatmap_model(cfg, INPUT_SIZE)
+    assert model.arch() == {
+        "input_size": INPUT_SIZE, "hidden_size": 32, "levels": 4, "kernel_size": 5,
+        "dropout": 0.1, "head": "mlp", "stem_hidden": None,
+    }
     with pytest.raises(ValueError, match="tcn"):
-        build_heatmap_model("nope", INPUT_SIZE, "mlp", 64)
+        build_heatmap_model({"heatmap_backbone": "lstm"}, INPUT_SIZE)
 
 
-# --- hybrid decode: smoothing + duration floor ------------------------------
+@pytest.mark.parametrize("stem_hidden,head", [(None, "mlp"), (128, "mlp"), (None, "linear")])
+def test_checkpoint_reloads_with_and_without_stored_arch(tmp_path, stem_hidden, head):
+    """New checkpoints carry "arch"; the v0.6 CV checkpoints do not, so their
+    shape is read off the state dict. Both must rebuild the same network."""
+    cfg = {"hidden_size": 32, "heatmap_tcn_levels": 3, "heatmap_tcn_kernel_size": 3,
+           "heatmap_tcn_stem_hidden": stem_hidden, "heatmap_head": head, "dropout": 0.2}
+    model = build_heatmap_model(cfg, INPUT_SIZE).eval()
+    path = tmp_path / "best.pth"
+    _save_checkpoint(path, model, torch.optim.AdamW(model.parameters()), epoch=1, metrics={})
+    legacy = tmp_path / "legacy.pth"
+    torch.save({"model_state_dict": torch.load(path)["model_state_dict"]}, legacy)
 
-def _tracks(n=60):
-    """Two clean point runs plus a short spurious burst between them.
-
-    The burst is 3 frames (0.6s), not 1: a single-frame run collapses to
-    s == e and is already dropped by decode_hybrid's `e > s` guard, so it would
-    never exercise the duration floor.
-    """
-    point = np.zeros(n, dtype=np.float32)
-    point[5:20] = 0.9        # real point
-    point[30:33] = 0.9       # 3-frame spurious burst -> ~0.6s segment
-    point[40:55] = 0.9       # real point
-    start = np.zeros(n, dtype=np.float32); start[[5, 30, 40]] = 1.0
-    end = np.zeros(n, dtype=np.float32); end[[19, 32, 54]] = 1.0
-    ts = np.arange(n, dtype=np.float64) / 5.0  # 5 fps
-    return point, start, end, ts
-
-
-def _cfg(**kw):
-    base = dict(mode="hybrid", threshold=0.5, sigma_frames=2.5,
-                min_duration_sec=0.3, max_duration_sec=60.0)
-    base.update(kw)
-    return HeatmapDecodeConfig(**base)
-
-
-def test_new_filters_default_to_no_ops():
-    """Defaults must reproduce the previous hybrid behaviour bit-for-bit,
-    so existing runs stay comparable."""
-    point, start, end, ts = _tracks()
-    cfg = _cfg()
-    assert cfg.smooth_sigma_frames is None
-    assert cfg.hybrid_min_duration_sec == 0.0
-    segs = decode_hybrid(point, start, end, ts, cfg)
-    assert len(segs) == 3, "unfiltered decode keeps the spurious short burst"
-
-
-def test_duration_floor_drops_the_spurious_spike_but_keeps_real_points():
-    point, start, end, ts = _tracks()
-    segs = decode_hybrid(point, start, end, ts, _cfg(hybrid_min_duration_sec=1.0))
-    assert len(segs) == 2
-    for s, e in segs:
-        assert (e - s) >= 1.0
-
-
-def test_smoothing_suppresses_an_isolated_burst():
-    """Smoothing pushes a narrow burst below threshold while a genuine
-    multi-second run stays well above it."""
-    point, start, end, ts = _tracks()
-    segs = decode_hybrid(point, start, end, ts, _cfg(smooth_sigma_frames=2.5))
-    assert len(segs) == 2, "a 3-frame burst should not survive smoothing"
-
-
-def test_duration_floor_applies_after_merging():
-    """Adjacent fragments that together form a real point must not be dropped
-    individually — the floor is applied to merged intervals."""
-    n = 40
-    point = np.zeros(n, dtype=np.float32)
-    point[10:15] = 0.9
-    point[15:20] = 0.9  # contiguous with the above -> one merged run
-    start = np.zeros(n, dtype=np.float32); start[10] = 1.0
-    end = np.zeros(n, dtype=np.float32); end[19] = 1.0
-    ts = np.arange(n, dtype=np.float64) / 5.0
-    segs = decode_hybrid(point, start, end, ts, _cfg(hybrid_min_duration_sec=1.5))
-    assert len(segs) == 1
+    x = torch.randn(1, 40, INPUT_SIZE)
+    with torch.no_grad():
+        want = model(x)[0]
+    for ckpt in (path, legacy):
+        reloaded = load_heatmap_model(ckpt, cfg)
+        assert reloaded.arch() == model.arch()
+        with torch.no_grad():
+            assert torch.allclose(reloaded(x)[0], want, atol=1e-6)

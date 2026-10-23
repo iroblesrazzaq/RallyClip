@@ -4,7 +4,6 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import pytest
 
 from training.normalize.normalize import NormalizeConfig, is_canonical, normalize_video, probe_video
 

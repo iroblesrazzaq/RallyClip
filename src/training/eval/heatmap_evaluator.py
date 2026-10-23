@@ -2,48 +2,53 @@
 per-video timelines, decode segments from (pointness, startness, endness), and
 score with the six-bin metric (docs/segment_eval_metrics.md).
 
-Two decode modes:
-  - "hybrid" (default): detect points as runs of above-threshold pointness (the
-    same robust detector the classic/e2e_seg heads use — one segment per detected
-    point, no chance of losing a point to a missed boundary peak), then *refine*
-    each run's start/end to sub-frame precision via soft-argmax of the
-    start/end heatmap near the run edge. Targets the bad_segmentation failure
-    (boundaries off 0.5–1.5s) without touching recall.
-  - "peakpair": pure BSN-style — peak-pick startness and endness (with NMS),
-    soft-argmax refine, greedy-pair start→next-end under a duration gate,
-    optional pointness gate. More fragile (a point needs both peaks + a valid
-    pair); kept selectable for comparison.
-Both modes end with an overlap-merge of decoded segments.
+The hybrid and peakpair decodes ARE the shipped runtime's (infer.heatmap_decode),
+so offline numbers are the numbers the app produces. Training adds one mode the
+runtime does not ship:
+  - "pairdp": globally optimal start->end pairing by dynamic programming over
+    boundary log-odds (see decode_pairdp). An experiment arm; not shipped.
 """
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import h5py
 import numpy as np
 import torch
 
-from training.eval.seg_evaluator import gt_segments_from_targets
+from infer.heatmap_decode import HeatmapDecodeConfig as RuntimeDecodeConfig
+from infer.heatmap_decode import _merge_intervals, _pick_peaks, _soft_argmax_time
+from infer.heatmap_decode import decode_heatmap_segments as runtime_decode
 from training.metrics.frame import compute_frame_metrics
 from training.metrics.segments6 import SixBinConfig, aggregate_six_bin, compute_six_bin
 
 Interval = Tuple[float, float]
 
+# train-config key -> decode field, for every knob a run config may set.
+_TRAIN_KEYS = {
+    "heatmap_decode_mode": "mode",
+    "threshold": "threshold",
+    "heatmap_peak_threshold": "peak_threshold",
+    "heatmap_decode_window_frames": "refine_window_frames",
+    "heatmap_nms_frames": "nms_frames",
+    "heatmap_min_duration_sec": "min_duration_sec",
+    "heatmap_max_duration_sec": "max_duration_sec",
+    "heatmap_pointness_gate": "pointness_gate",
+    "heatmap_smooth_sigma_frames": "smooth_sigma_frames",
+    "heatmap_hybrid_min_duration_sec": "hybrid_min_duration_sec",
+    "heatmap_merge_gap_sec": "merge_gap_sec",
+    "heatmap_pair_penalty": "pair_penalty",
+    "heatmap_pointness_weight": "pointness_weight",
+}
+
 
 @dataclass
-class HeatmapDecodeConfig:
-    mode: str = "hybrid"  # hybrid | peakpair
-    threshold: float = 0.5  # pointness threshold (hybrid run detection; frame metrics)
-    peak_threshold: float = 0.3  # start/end heatmap peak threshold (peakpair mode)
-    sigma_frames: float = 2.5  # sets default refine / NMS windows
-    refine_window_frames: Optional[int] = None  # default ceil(2*sigma)
-    nms_frames: Optional[int] = None  # default ceil(sigma); min peak separation
-    min_duration_sec: float = 0.3
-    max_duration_sec: float = 60.0
-    pointness_gate: Optional[float] = None  # peakpair mode; None disables
+class HeatmapDecodeConfig(RuntimeDecodeConfig):
+    """The runtime decode config plus the training-only pairdp knobs."""
+
     # pairdp: per-segment cost subtracted from each segment's log-odds score. A
     # prior on how many segments exist -- without it the DP admits every pair that
     # scores positive and over-segments (878 preds for 460 GT at lambda=0).
@@ -51,173 +56,41 @@ class HeatmapDecodeConfig:
     # pairdp: weight on the pointness evidence for a candidate span. The span's
     # log-likelihood ratio of in-play vs out-of-play is sum_t logit(pointness[t]),
     # so this term lets the dense track say WHICH spans are real -- the one thing
-    # two boundary heatmaps cannot express, and the whole of hybrid's recall
-    # advantage. 0.0 = pure boundary DP.
+    # two boundary heatmaps cannot express. 0.0 = pure boundary DP.
     pointness_weight: float = 0.0
-    # --- hybrid-mode false-positive filtering (both default to no-ops, so
-    # existing hybrid results reproduce bit-for-bit) ---
-    # Gaussian-smooth pointness before run detection. The classic decode has
-    # always smoothed (sigma 1.5); hybrid never did, which penalises backbones
-    # with noisier per-frame output (e.g. the TCN vs the naturally-smoothed LSTM).
-    smooth_sigma_frames: Optional[float] = None
-    # Drop decoded segments shorter than this. `min_duration_sec` above is only
-    # consulted by peakpair's pairing loop; hybrid had no duration filter at all.
-    hybrid_min_duration_sec: float = 0.0
 
-    def _refine_window(self) -> int:
-        return int(self.refine_window_frames if self.refine_window_frames is not None
-                   else max(1, math.ceil(2.0 * self.sigma_frames)))
+    @classmethod
+    def from_train_cfg(cls, train_cfg: Dict[str, Any], fps: float) -> "HeatmapDecodeConfig":
+        """The one place a train config becomes a decode config (train loop,
+        pipeline eval, and the run manifest all go through here)."""
+        sigma_seconds = float(train_cfg.get("heatmap_sigma_seconds", 0.5))
+        params: Dict[str, Any] = {"sigma_frames": sigma_seconds * float(fps)}
+        for key, field_name in _TRAIN_KEYS.items():
+            if train_cfg.get(key) is not None:
+                params[field_name] = train_cfg[key]
+        return cls(**params)
 
-    def _nms(self) -> int:
-        return int(self.nms_frames if self.nms_frames is not None
-                   else max(1, math.ceil(self.sigma_frames)))
-
-
-def _merge_intervals(segments: List[Interval]) -> List[Interval]:
-    segments = sorted(s for s in segments if s[1] > s[0])
-    merged: List[Interval] = []
-    for seg in segments:
-        if merged and seg[0] <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], seg[1]))
-        else:
-            merged.append(seg)
-    return merged
+    def runtime_params(self) -> Dict[str, Any]:
+        """Fields the shipped runtime understands, for the model manifest's
+        postprocess.params."""
+        return {f.name: getattr(self, f.name) for f in fields(RuntimeDecodeConfig)}
 
 
-def _soft_argmax_time(
-    prob: np.ndarray, timestamps: np.ndarray, center: int, window: int
-) -> float:
-    """Probability-weighted mean of frame times in [center-window, center+window].
-    Falls back to the plain window-centre time if the local heatmap mass vanishes
-    (so a frame with no boundary signal still yields the run-edge time)."""
-    lo = max(0, center - window)
-    hi = min(len(prob), center + window + 1)
-    w = prob[lo:hi]
-    ts = timestamps[lo:hi]
-    total = float(w.sum())
-    if total <= 1e-9:
-        return float(ts.mean())
-    return float(np.average(ts, weights=w))
-
-
-def _pick_peaks(prob: np.ndarray, threshold: float, nms_frames: int) -> List[int]:
-    """Local maxima (>= both neighbours) above threshold, then NMS: keep peaks in
-    descending prob, drop any within nms_frames of an already-kept, stronger peak."""
-    n = len(prob)
-    cand: List[int] = []
-    for i in range(n):
-        if prob[i] < threshold:
-            continue
-        left_ok = i == 0 or prob[i] >= prob[i - 1]
-        right_ok = i == n - 1 or prob[i] >= prob[i + 1]
-        if left_ok and right_ok:
-            cand.append(i)
-    cand.sort(key=lambda i: float(prob[i]), reverse=True)
-    kept: List[int] = []
-    for i in cand:
-        if all(abs(i - k) > nms_frames for k in kept):
-            kept.append(i)
-    kept.sort()
-    return kept
-
-
-def _runs_above(prob: np.ndarray, threshold: float) -> List[Tuple[int, int]]:
-    """(first_idx, last_idx) of each contiguous run of prob >= threshold."""
-    runs: List[Tuple[int, int]] = []
-    n = len(prob)
+def gt_segments_from_targets(targets: np.ndarray, timestamps: np.ndarray) -> List[Interval]:
+    """Runs of 1s -> (timestamp of first frame, timestamp of last frame)."""
+    segments: List[Interval] = []
+    n = len(targets)
     i = 0
     while i < n:
-        if prob[i] < threshold:
+        if targets[i] < 0.5:
             i += 1
             continue
         j = i
-        while j + 1 < n and prob[j + 1] >= threshold:
+        while j + 1 < n and targets[j + 1] >= 0.5:
             j += 1
-        runs.append((i, j))
+        segments.append((float(timestamps[i]), float(timestamps[j])))
         i = j + 1
-    return runs
-
-
-def _gaussian_smooth(data: np.ndarray, sigma: float) -> np.ndarray:
-    """1D Gaussian filter, numpy-only. Kept identical to infer.inference's
-    gaussian_filter1d so training and the shipped runtime stay in parity."""
-    if sigma <= 0:
-        return data.copy()
-    radius = int(3 * sigma + 0.5)
-    x = np.arange(-radius, radius + 1)
-    kernel = np.exp(-0.5 * (x / sigma) ** 2)
-    kernel = kernel / kernel.sum()
-    padded = np.pad(data, radius, mode="edge")
-    return np.convolve(padded, kernel, mode="valid").astype(data.dtype)
-
-
-def decode_hybrid(
-    pointness: np.ndarray,
-    start_prob: np.ndarray,
-    end_prob: np.ndarray,
-    timestamps: np.ndarray,
-    cfg: HeatmapDecodeConfig,
-) -> List[Interval]:
-    window = cfg._refine_window()
-    # Run detection sees the (optionally) smoothed track; the start/end heatmaps
-    # are left raw so boundary refinement keeps its sub-frame sharpness.
-    detect_track = (
-        pointness if cfg.smooth_sigma_frames is None
-        else _gaussian_smooth(pointness, float(cfg.smooth_sigma_frames))
-    )
-    segments: List[Interval] = []
-    for i, j in _runs_above(detect_track, cfg.threshold):
-        s = _soft_argmax_time(start_prob, timestamps, i, window)
-        e = _soft_argmax_time(end_prob, timestamps, j, window)
-        # Refinement must not invert or escape the detected run's rough span.
-        if e <= s:
-            s, e = float(timestamps[i]), float(timestamps[j])
-        if e > s:
-            segments.append((s, e))
-    merged = _merge_intervals(segments)
-    # Duration floor applied AFTER merging, so adjacent fragments that together
-    # form a real point are not discarded individually.
-    if cfg.hybrid_min_duration_sec > 0:
-        merged = [(s, e) for s, e in merged if (e - s) >= cfg.hybrid_min_duration_sec]
-    return merged
-
-
-def decode_peakpair(
-    pointness: np.ndarray,
-    start_prob: np.ndarray,
-    end_prob: np.ndarray,
-    timestamps: np.ndarray,
-    cfg: HeatmapDecodeConfig,
-) -> List[Interval]:
-    window = cfg._refine_window()
-    nms = cfg._nms()
-    start_peaks = _pick_peaks(start_prob, cfg.peak_threshold, nms)
-    end_peaks = _pick_peaks(end_prob, cfg.peak_threshold, nms)
-    start_times = sorted(_soft_argmax_time(start_prob, timestamps, p, window) for p in start_peaks)
-    end_times = sorted(_soft_argmax_time(end_prob, timestamps, p, window) for p in end_peaks)
-
-    segments: List[Interval] = []
-    ei = 0
-    used = [False] * len(end_times)
-    for st in start_times:
-        k = ei
-        while k < len(end_times) and (used[k] or end_times[k] < st + cfg.min_duration_sec):
-            k += 1
-        if k >= len(end_times):
-            continue
-        et = end_times[k]
-        if et - st > cfg.max_duration_sec:
-            continue
-        used[k] = True
-        ei = k + 1
-        if cfg.pointness_gate is not None:
-            lo = np.searchsorted(timestamps, st)
-            hi = np.searchsorted(timestamps, et)
-            span = pointness[lo:hi + 1]
-            if span.size and float(span.mean()) < cfg.pointness_gate:
-                continue
-        segments.append((st, et))
-    return _merge_intervals(segments)
+    return segments
 
 
 def _logit(p: float, eps: float = 1e-6) -> float:
@@ -234,30 +107,26 @@ def decode_pairdp(
 ) -> List[Interval]:
     """Globally optimal start->end pairing by dynamic programming.
 
-    `decode_peakpair` walks starts left to right and takes the first unused end
-    that clears min_duration. That commits irrevocably: one bad match shifts every
-    later pairing, which is why its recall collapsed to 8.9% despite the model
-    scoring 0.85 on true boundaries and 0.18 on background.
+    peakpair walks starts left to right and takes the first unused end that
+    clears min_duration. That commits irrevocably: one bad match shifts every
+    later pairing. Here the segmentation is chosen jointly. A candidate segment
+    scores the sum of its boundary LOG-ODDS:
 
-    Here the segmentation is chosen jointly. Score a candidate segment by the sum
-    of boundary LOG-ODDS:
+        score(s, e) = logit(start_prob[s]) + logit(end_prob[e]) - pair_penalty
 
-        score(s, e) = logit(start_prob[s]) + logit(end_prob[e])
+    which is self-calibrating -- a boundary with p > 0.5 contributes positively
+    and one with p < 0.5 negatively, so the optimiser decides how many segments
+    to emit. Maximising the total over all valid segmentations (non-overlapping,
+    duration within [min, max]) is a longest-path problem on a DAG, solved
+    exactly in O(m*n) over peak candidates.
 
-    which is self-calibrating -- a boundary with p > 0.5 contributes positively and
-    one with p < 0.5 contributes negatively, so the optimiser decides how many
-    segments to emit instead of a threshold deciding for it. Maximising the total
-    over all valid segmentations (strictly alternating, non-overlapping, duration
-    within [min, max]) is a shortest-path problem on a DAG, solved exactly here in
-    O(m*n) over peak candidates.
-
-    peak_threshold is only a candidate filter (keep it low); the log-odds objective
-    does the real selection.
+    peak_threshold is only a candidate filter (keep it low); the log-odds
+    objective does the real selection.
     """
     nms = cfg._nms()
     window = cfg._refine_window()
-    s_idx = sorted(_pick_peaks(start_prob, cfg.peak_threshold, nms))
-    e_idx = sorted(_pick_peaks(end_prob, cfg.peak_threshold, nms))
+    s_idx = _pick_peaks(start_prob, cfg.peak_threshold, nms)
+    e_idx = _pick_peaks(end_prob, cfg.peak_threshold, nms)
     if not s_idx or not e_idx:
         return []
 
@@ -268,24 +137,19 @@ def decode_pairdp(
     m, n = len(s_idx), len(e_idx)
 
     # Prefix sums of pointness log-odds, so a span's evidence is O(1) to query.
-    if cfg.pointness_weight:
-        cum = np.concatenate(([0.0], np.cumsum([_logit(p) for p in pointness])))
-    else:
-        cum = None
+    cum = (np.concatenate(([0.0], np.cumsum([_logit(p) for p in pointness])))
+           if cfg.pointness_weight else None)
 
-    # best_closed[j] = best total score using ends up to (and including) j, all
-    # segments closed. best_closed_before(t) is the running prefix max.
-    NEG = float("-inf")
-    best_closed = [0.0] * (n + 1)      # best_closed[j] = best score using ends[:j]
-    back = [None] * (n + 1)            # (prev_j, start_i) that produced best_closed[j]
+    best_closed = [0.0] * (n + 1)      # best score using ends[:j], all segments closed
+    back: List[Optional[Tuple[int, Optional[int]]]] = [None] * (n + 1)
 
     for j in range(1, n + 1):
-        # option A: do not close a segment at end j
+        # option A: no segment closes at end j
         best_closed[j] = best_closed[j - 1]
         back[j] = (j - 1, None)
-        # option B: close a segment at end j, opened at some start i
+        # option B: a segment opened at some start i closes at end j
         et = e_time[j - 1]
-        cand, cand_i, cand_pj = NEG, None, None
+        cand, cand_i, cand_pj = float("-inf"), None, None
         for i in range(m):
             dur = et - s_time[i]
             if dur < cfg.min_duration_sec:
@@ -312,7 +176,7 @@ def decode_pairdp(
             segments.append((s_time[i], e_time[j - 1]))
         j = prev_j
     segments.reverse()
-    return _merge_intervals(segments)
+    return _merge_intervals(segments, gap=cfg.merge_gap_sec)
 
 
 def _last_end_before(e_time: List[float], t: float, upto: int) -> int:
@@ -334,13 +198,9 @@ def decode_heatmap_segments(
     timestamps: np.ndarray,
     cfg: HeatmapDecodeConfig,
 ) -> List[Interval]:
-    if cfg.mode == "hybrid":
-        return decode_hybrid(pointness, start_prob, end_prob, timestamps, cfg)
-    if cfg.mode == "peakpair":
-        return decode_peakpair(pointness, start_prob, end_prob, timestamps, cfg)
     if cfg.mode == "pairdp":
         return decode_pairdp(pointness, start_prob, end_prob, timestamps, cfg)
-    raise ValueError(f"Unknown decode mode: {cfg.mode!r} (expected hybrid | peakpair | pairdp)")
+    return runtime_decode(pointness, start_prob, end_prob, timestamps, cfg)
 
 
 def _stitch_videos_heatmap(
@@ -427,6 +287,7 @@ def evaluate_heatmap_model(
             start_p[start:end] = torch.sigmoid(s_logits).cpu().numpy()
             end_p[start:end] = torch.sigmoid(e_logits).cpu().numpy()
 
+    # Frame metrics count overlapping windows once per window, not per frame.
     frame_metrics = compute_frame_metrics(
         targets.reshape(-1), point.reshape(-1).astype(np.float64), threshold=decode_cfg.threshold
     )
@@ -435,7 +296,7 @@ def evaluate_heatmap_model(
         video_idx, frame_idx, timestamps, targets, point, start_p, end_p
     )
     per_video = []
-    for vid, tl in stitched.items():
+    for tl in stitched.values():
         gt_segs = gt_segments_from_targets(tl["targets"], tl["timestamps"])
         pred_segs = decode_heatmap_segments(
             tl["pointness"], tl["start_prob"], tl["end_prob"], tl["timestamps"], decode_cfg

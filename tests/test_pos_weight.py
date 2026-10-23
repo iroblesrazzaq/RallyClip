@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 import h5py
 import numpy as np
-import torch
+import pytest
 
-from training.dataset.hdf5_dataset import Hdf5SequenceDataset
-from training.train.loop import _default_pos_weight
+torch = pytest.importorskip("torch")
+
+from training.dataset.hdf5_dataset import Hdf5SequenceDataset  # noqa: E402
+from training.train.loop import _default_pos_weight  # noqa: E402
 
 
 def test_default_pos_weight_from_25pct_positive(tmp_path):

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from pathlib import Path
 
-import torch
+import pytest
 
-from training.eval.checkpoint import build_model_from_checkpoint
-from training.models.lstm import TennisPointLSTM
-from training.train.loop import _save_checkpoint
+torch = pytest.importorskip("torch")
+
+from training.eval.checkpoint import build_model_from_checkpoint  # noqa: E402
+from training.models.lstm import TennisPointLSTM  # noqa: E402
+from training.train.loop import _save_checkpoint  # noqa: E402
 
 
 def test_checkpoint_roundtrip_uses_arch_keys(tmp_path):

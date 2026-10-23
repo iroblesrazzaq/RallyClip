@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 from training.artifact_paths import (
     feature_root_from_config,

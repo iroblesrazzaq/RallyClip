@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from training.pipeline import _run_train
+pytest.importorskip("torch")
+
+from training.pipeline import _run_train  # noqa: E402
 
 
 def test_unknown_head_errors(monkeypatch, tmp_path):
@@ -11,11 +13,11 @@ def test_unknown_head_errors(monkeypatch, tmp_path):
     def fake_classic(*args, **kwargs):
         calls.append("classic")
 
-    def fake_seg(*args, **kwargs):
-        calls.append("e2e_seg")
+    def fake_heatmap(*args, **kwargs):
+        calls.append("e2e_heatmap")
 
     monkeypatch.setattr("training.pipeline.train_loop", fake_classic)
-    monkeypatch.setattr("training.pipeline.train_seg", fake_seg)
+    monkeypatch.setattr("training.pipeline.train_heatmap", fake_heatmap)
 
     config = {
         "data_root": str(tmp_path),
@@ -30,17 +32,17 @@ def test_unknown_head_errors(monkeypatch, tmp_path):
         _run_train(config)
 
 
-def test_classic_and_e2e_dispatch(monkeypatch, tmp_path):
+def test_classic_and_heatmap_dispatch(monkeypatch, tmp_path):
     calls = []
 
     def fake_classic(dataset_dir, run_dir, train_cfg):
         calls.append(("classic", train_cfg["fps"]))
 
-    def fake_seg(dataset_dir, run_dir, train_cfg):
-        calls.append(("e2e_seg", train_cfg["fps"]))
+    def fake_heatmap(dataset_dir, run_dir, train_cfg):
+        calls.append(("e2e_heatmap", train_cfg["fps"]))
 
     monkeypatch.setattr("training.pipeline.train_loop", fake_classic)
-    monkeypatch.setattr("training.pipeline.train_seg", fake_seg)
+    monkeypatch.setattr("training.pipeline.train_heatmap", fake_heatmap)
 
     base = {
         "data_root": str(tmp_path),
@@ -51,8 +53,8 @@ def test_classic_and_e2e_dispatch(monkeypatch, tmp_path):
         "features": {"feature_set": "v1"},
     }
     _run_train({**base, "train": {"head": "classic", "segment_eval": {}}})
-    _run_train({**base, "train": {"head": "e2e_seg", "segment_eval": {}}})
-    assert calls == [("classic", 5.0), ("e2e_seg", 5.0)]
+    _run_train({**base, "train": {"head": "e2e_heatmap", "segment_eval": {}}})
+    assert calls == [("classic", 5.0), ("e2e_heatmap", 5.0)]
 
 
 def test_eval_skips_without_test_h5(monkeypatch, tmp_path, caplog):

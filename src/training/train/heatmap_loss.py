@@ -2,9 +2,8 @@
 
 Each frame predicts (pointness logit, startness logit, endness logit). The two
 boundary maps are trained against a soft Gaussian bump centred on the true
-start/end frame of every point, so — unlike the anchor-free offset regression in
-seg_loss.py — *every* frame gets a boundary gradient, including the negative
-(off-point) regions the offset loss leaves with pointness-only signal.
+start/end frame of every point, so *every* frame gets a boundary gradient,
+including the off-point regions a pointness-only loss leaves without one.
 
 Two heatmap loss modes:
   - "bce"   (default): balanced binary cross-entropy against the soft Gaussian
@@ -16,13 +15,12 @@ Two heatmap loss modes:
             More knobs; opt-in.
 
 Targets are derived on the fly from the per-frame binary point targets [B, T],
-mirroring how seg_loss.compute_offset_targets derives its offsets — no dataset
-or builder change is needed.
+so no dataset or builder change is needed.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -40,7 +38,7 @@ class HeatmapLossConfig:
     # nearly free; the val pad sweep measured a systematic ~0.5s late-start bias
     # this is designed to absorb in a learned, per-boundary way.
     sigma_out_seconds: Optional[float] = None
-    pos_weight: float = 3.0  # pointness BCE (same default as e2e_seg)
+    pos_weight: float = 3.0  # pointness BCE
     cls_weight: float = 1.0
     start_weight: float = 1.0
     end_weight: float = 1.0
@@ -51,13 +49,24 @@ class HeatmapLossConfig:
     # "focal" mode (CenterNet):
     focal_alpha: float = 2.0
     focal_beta: float = 4.0
-    # soft-argmax time term: collapse each boundary's heatmap to a predicted time
-    # and penalize squared error to the true boundary time (seconds). Opt-in via
-    # time_weight (0 = off). Directly optimizes the decoded boundary time (absolute
-    # seconds), which the per-frame shape loss only constrains indirectly.
-    time_weight: float = 0.0
-    time_window_frames: Optional[int] = None  # None => round(2 * sigma_frames)
-    time_temperature: float = 1.0
+
+    @classmethod
+    def from_train_cfg(cls, train_cfg: Dict[str, Any], fps: float, pos_weight: float) -> "HeatmapLossConfig":
+        sigma_out = train_cfg.get("heatmap_sigma_out_seconds")
+        return cls(
+            fps=float(fps),
+            sigma_seconds=float(train_cfg.get("heatmap_sigma_seconds", 0.5)),
+            sigma_out_seconds=float(sigma_out) if sigma_out is not None else None,
+            pos_weight=float(pos_weight),
+            cls_weight=float(train_cfg.get("heatmap_cls_weight", 1.0)),
+            start_weight=float(train_cfg.get("heatmap_start_weight", 1.0)),
+            end_weight=float(train_cfg.get("heatmap_end_weight", 1.0)),
+            heatmap_loss=str(train_cfg.get("heatmap_loss", "bce")),
+            heatmap_pos_threshold=float(train_cfg.get("heatmap_pos_threshold", 0.1)),
+            heatmap_pos_weight=float(train_cfg.get("heatmap_pos_weight", 20.0)),
+            focal_alpha=float(train_cfg.get("heatmap_focal_alpha", 2.0)),
+            focal_beta=float(train_cfg.get("heatmap_focal_beta", 4.0)),
+        )
 
 
 def _shift_right(x: torch.Tensor) -> torch.Tensor:
@@ -73,8 +82,11 @@ def _shift_left(x: torch.Tensor) -> torch.Tensor:
 
 def boundary_markers(targets: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """First frame of each positive run (start marker) and last frame (end marker),
-    both bool [B, T]. Same primitive as seg_loss (`pos & ~prev`), plus the mirror
-    for run ends."""
+    both bool [B, T].
+
+    A run cut by the window edge gets a marker at frame 0 / T-1 even though its
+    true boundary lies outside the window; those edge markers are still trained
+    on (a known approximation, kept for parity with the shipped model)."""
     pos = targets > 0.5
     start_marker = pos & ~_shift_right(pos)
     end_marker = pos & ~_shift_left(pos)
@@ -177,37 +189,6 @@ def _penalty_reduced_focal(logits: torch.Tensor, target: torch.Tensor, cfg: Heat
     return -(pos_term + neg_term) / n_pos
 
 
-def soft_argmax_time_loss(
-    logits: torch.Tensor, marker: torch.Tensor, fps: float, window_frames: int, temperature: float = 1.0
-) -> torch.Tensor:
-    """For each True in `marker` (a true boundary frame at index c), soft-argmax the
-    heatmap logits over the window [c-W, c+W] to a predicted frame time, and penalize
-    the squared time error to c in seconds. Fully vectorized: pad by W with -inf so
-    every frame has a full centered window, softmax each, weighted-sum the absolute
-    frame indices, then masked-mean the squared per-boundary error over markers.
-
-    At init (flat logits over a window symmetric about c) the soft-argmax returns c,
-    so the term starts near zero and only grows as the peak drifts off the boundary."""
-    b, t = logits.shape
-    device, dtype = logits.device, logits.dtype
-    w = int(window_frames)
-    if w < 1 or marker.sum() == 0:
-        return logits.sum() * 0.0
-    neg = torch.finfo(dtype).min
-    padded = torch.nn.functional.pad(logits, (w, w), value=neg)  # [b, t + 2w]
-    win = padded.unfold(dimension=1, size=2 * w + 1, step=1)  # [b, t, 2w+1], window per center
-    offsets = torch.arange(-w, w + 1, device=device, dtype=dtype)  # [2w+1]
-    centers = torch.arange(t, device=device, dtype=dtype).unsqueeze(1)  # [t, 1]
-    abs_idx = centers + offsets.unsqueeze(0)  # [t, 2w+1] absolute frame index per slot
-    weights = torch.softmax(win / temperature, dim=2)  # -inf pads -> 0 weight
-    t_pred = (weights * abs_idx.unsqueeze(0)).sum(dim=2)  # [b, t] predicted boundary frame
-    target_frame = torch.arange(t, device=device, dtype=dtype).unsqueeze(0)  # center == true boundary
-    err_sec = (t_pred - target_frame) / fps
-    sq = err_sec * err_sec
-    m = marker.to(dtype)
-    return (sq * m).sum() / m.sum().clamp_min(1.0)
-
-
 def _heatmap_term(logits: torch.Tensor, target: torch.Tensor, cfg: HeatmapLossConfig) -> torch.Tensor:
     if cfg.heatmap_loss == "focal":
         return _penalty_reduced_focal(logits, target, cfg)
@@ -237,30 +218,10 @@ class E2EHeatmapLoss(nn.Module):
         loss_start = _heatmap_term(start_logits, start_t, cfg)
         loss_end = _heatmap_term(end_logits, end_t, cfg)
 
-        loss_time_start = pointness_logits.sum() * 0.0
-        loss_time_end = pointness_logits.sum() * 0.0
-        if cfg.time_weight > 0.0:
-            sigma_frames = cfg.sigma_seconds * cfg.fps
-            w = cfg.time_window_frames if cfg.time_window_frames is not None else max(1, round(2 * sigma_frames))
-            start_marker, end_marker = boundary_markers(targets)
-            # Drop boundaries touching the window edge: their true time may lie off-window
-            # (truncated run), so the center frame isn't a trustworthy target.
-            start_marker = start_marker.clone(); start_marker[:, 0] = False
-            end_marker = end_marker.clone(); end_marker[:, -1] = False
-            loss_time_start = soft_argmax_time_loss(start_logits, start_marker, cfg.fps, w, cfg.time_temperature)
-            loss_time_end = soft_argmax_time_loss(end_logits, end_marker, cfg.fps, w, cfg.time_temperature)
-
-        total = (
-            cfg.cls_weight * loss_cls
-            + cfg.start_weight * loss_start
-            + cfg.end_weight * loss_end
-            + cfg.time_weight * (loss_time_start + loss_time_end)
-        )
+        total = cfg.cls_weight * loss_cls + cfg.start_weight * loss_start + cfg.end_weight * loss_end
         components = {
             "loss_cls": float(loss_cls.item()),
             "loss_start": float(loss_start.item()),
             "loss_end": float(loss_end.item()),
-            "loss_time_start": float(loss_time_start.item()),
-            "loss_time_end": float(loss_time_end.item()),
         }
         return total, components

@@ -19,6 +19,7 @@ from training.artifact_paths import (
     feature_root_from_run_config,
     features_filename,
     feature_set_from_config,
+    format_conf,
     target_fps_from_config,
     yolo_conf_imgsz_tags,
 )
@@ -48,11 +49,10 @@ from training.metrics.segment import (
     compute_time_segment_metrics,
     compute_weighted_segment_score,
 )
-from training.models.lstm import TennisPointLSTM
 from training.pose.yolo_hdf5 import YoloExtractConfig, YoloHdf5Extractor
 from training.preprocess.preprocessor import Hdf5Preprocessor, PreprocessConfig
+from training.train.heatmap_loop import evaluate_heatmap_run, train_heatmap
 from training.train.loop import train as train_loop
-from training.train.seg_loop import train_seg
 
 logger = logging.getLogger(__name__)
 
@@ -458,7 +458,7 @@ def _run_extract(config: Dict[str, Any]) -> None:
         )
     )
 
-    conf_tag = _format_conf(conf)
+    conf_tag = format_conf(conf)
     model_tag = extractor.model_identity
     imgsz = extractor.imgsz
     output_root = pose_raw_dir(data_root) / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
@@ -488,7 +488,6 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
     preprocess_cfg = config.get("preprocess", {})
     court_cfg = config.get("court", {})
     extract_cfg = config.get("extract", {})
-    yolo_cfg = config.get("yolo", {})
     court_model_path = resolve_court_model_path(config)
 
     raw_dir = raw_videos_dir(data_root)
@@ -623,8 +622,6 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
 def _run_features(config: Dict[str, Any]) -> None:
     data_root = Path(config["data_root"])
     features_cfg = config.get("features", {})
-    preprocess_cfg = config.get("preprocess", {})
-    yolo_cfg = config.get("yolo", {})
 
     raw_dir = raw_videos_dir(data_root)
     ann_dir = annotations_dir(data_root)
@@ -694,9 +691,6 @@ def _run_features(config: Dict[str, Any]) -> None:
 def _run_dataset(config: Dict[str, Any]) -> None:
     data_root = Path(config["data_root"])
     dataset_cfg = config.get("dataset", {})
-    features_cfg = config.get("features", {})
-    preprocess_cfg = config.get("preprocess", {})
-    yolo_cfg = config.get("yolo", {})
 
     raw_dir = raw_videos_dir(data_root)
     ann_dir = annotations_dir(data_root)
@@ -789,14 +783,10 @@ def _run_train(config: Dict[str, Any]) -> None:
     head = str(train_cfg.get("head", "classic")).lower()
     if head == "classic":
         train_loop(dataset_dir, run_dir, train_cfg)
-    elif head in {"e2e_seg", "e2e", "seg"}:
-        train_seg(dataset_dir, run_dir, train_cfg)
     elif head in {"e2e_heatmap", "heatmap"}:
-        from training.train.heatmap_loop import train_heatmap
-
         train_heatmap(dataset_dir, run_dir, train_cfg)
     else:
-        raise ValueError(f"Unknown train.head: {head!r} (expected classic | e2e_seg | e2e_heatmap)")
+        raise ValueError(f"Unknown train.head: {head!r} (expected classic | e2e_heatmap)")
 
 
 def _run_eval(config: Dict[str, Any]) -> None:
@@ -815,138 +805,15 @@ def _run_eval(config: Dict[str, Any]) -> None:
 
     head = str(train_cfg.get("head", "classic")).lower()
     if head in {"e2e_heatmap", "heatmap"}:
-        from training.eval.heatmap_evaluator import HeatmapDecodeConfig, evaluate_heatmap_model
-        from training.metrics.segments6 import SixBinConfig
-        from training.train.heatmap_loop import build_heatmap_model
-        from training.train.heatmap_loss import E2EHeatmapLoss, HeatmapLossConfig
-
-        ckpt = torch.load(str(checkpoint_path), map_location="cpu")
-        state = ckpt.get("model_state_dict", ckpt)
-        # Backbone key differs (lstm.weight_ih_l0 / gru.weight_ih_l0 / the TCN's
-        # input_proj conv); infer shapes from whichever the checkpoint carries.
-        backbone = str(train_cfg.get("heatmap_backbone", "lstm"))
-        tcn_levels = int(train_cfg.get("heatmap_tcn_levels", 5))
-        tcn_kernel_size = int(train_cfg.get("heatmap_tcn_kernel_size", 3))
-        tcn_stem_hidden = None
-        if backbone.lower() == "tcn":
-            # A 2-layer stem makes input_proj a Sequential (input_proj.0/.2), so
-            # read both widths off the checkpoint rather than assuming one conv.
-            stem_first = state.get("input_proj.0.weight")
-            if stem_first is not None:
-                weight = state.get("input_proj.2.weight")
-                input_size = int(stem_first.shape[1])
-                tcn_stem_hidden = int(stem_first.shape[0])
-                hidden_size = int(weight.shape[0])
-            else:
-                weight = state.get("input_proj.weight")  # (channels, input_size, 1)
-                input_size = int(weight.shape[1]) if weight is not None else 0
-                hidden_size = int(weight.shape[0]) if weight is not None else 64
-            # Trust the checkpoint over config for depth.
-            block_ids = {
-                int(k.split(".")[1]) for k in state if k.startswith("blocks.") and ".conv1." in k
-            }
-            if block_ids:
-                tcn_levels = max(block_ids) + 1
-        else:
-            weight = state.get("gru.weight_ih_l0", state.get("lstm.weight_ih_l0"))
-            input_size = int(weight.shape[1]) if weight is not None else 0
-            # weight_ih_l0 rows = gates*hidden (LSTM=4, GRU=3) -> recover hidden_size.
-            gates = 3 if backbone.lower() == "gru" else 4
-            hidden_size = int(weight.shape[0] // gates) if weight is not None else 128
-        model = build_heatmap_model(
-            backbone, input_size, str(train_cfg.get("heatmap_head", "mlp")), hidden_size,
-            tcn_levels, tcn_kernel_size, float(train_cfg.get("dropout", 0.2)), tcn_stem_hidden,
-        )
-        model.load_state_dict(state)
         fps = float(preprocess_cfg.get("target_fps", 5))
-        sigma_seconds = float(train_cfg.get("heatmap_sigma_seconds", 0.5))
-        loss_cfg = HeatmapLossConfig(
-            fps=fps,
-            sigma_seconds=sigma_seconds,
-            pos_weight=float(train_cfg.get("pos_weight") or 3.0),
-            cls_weight=float(train_cfg.get("heatmap_cls_weight", 1.0)),
-            start_weight=float(train_cfg.get("heatmap_start_weight", 1.0)),
-            end_weight=float(train_cfg.get("heatmap_end_weight", 1.0)),
-            heatmap_loss=str(train_cfg.get("heatmap_loss", "bce")),
-            heatmap_pos_threshold=float(train_cfg.get("heatmap_pos_threshold", 0.1)),
-            heatmap_pos_weight=float(train_cfg.get("heatmap_pos_weight", 20.0)),
-            focal_alpha=float(train_cfg.get("heatmap_focal_alpha", 2.0)),
-            focal_beta=float(train_cfg.get("heatmap_focal_beta", 4.0)),
-            time_weight=float(train_cfg.get("heatmap_time_weight", 0.0)),
-            time_window_frames=(None if train_cfg.get("heatmap_time_window_frames") is None
-                                else int(train_cfg["heatmap_time_window_frames"])),
-            time_temperature=float(train_cfg.get("heatmap_time_temperature", 1.0)),
-        )
-
-        def _opt(key):
-            v = train_cfg.get(key)
-            return None if v is None else v
-
-        decode_cfg = HeatmapDecodeConfig(
-            mode=str(train_cfg.get("heatmap_decode_mode", "hybrid")),
-            threshold=float(train_cfg.get("threshold", 0.5)),
-            peak_threshold=float(train_cfg.get("heatmap_peak_threshold", 0.3)),
-            sigma_frames=sigma_seconds * fps,
-            refine_window_frames=None if _opt("heatmap_decode_window_frames") is None else int(train_cfg["heatmap_decode_window_frames"]),
-            nms_frames=None if _opt("heatmap_nms_frames") is None else int(train_cfg["heatmap_nms_frames"]),
-            min_duration_sec=float(train_cfg.get("heatmap_min_duration_sec", 0.3)),
-            max_duration_sec=float(train_cfg.get("heatmap_max_duration_sec", 60.0)),
-            pointness_gate=None if _opt("heatmap_pointness_gate") is None else float(train_cfg["heatmap_pointness_gate"]),
-        )
-        metrics, loss = evaluate_heatmap_model(
-            model,
-            test_path,
-            device=torch.device("cpu"),
-            criterion=E2EHeatmapLoss(loss_cfg),
-            decode_cfg=decode_cfg,
-            six_bin_cfg=SixBinConfig(),
-        )
+        metrics, loss = evaluate_heatmap_run(run_dir, test_path, train_cfg, fps)
         eval_path = run_dir / "eval.json"
         with eval_path.open("w", encoding="utf-8") as handle:
             json.dump({"loss": float(loss), "metrics": metrics, "head": "e2e_heatmap"}, handle, indent=2)
         logger.info("Heatmap test loss: %.4f metrics: %s", loss, metrics)
         return
-
-    if head in {"e2e_seg", "e2e", "seg"}:
-        from training.eval.seg_evaluator import DecodeConfig, evaluate_seg_model
-        from training.metrics.segments6 import SixBinConfig
-        from training.models.seg_lstm import TennisPointSegLSTM
-        from training.train.seg_loss import E2ESegLoss, SegLossConfig
-
-        ckpt = torch.load(str(checkpoint_path), map_location="cpu")
-        state = ckpt.get("model_state_dict", ckpt)
-        weight = state.get("lstm.weight_ih_l0")
-        input_size = int(weight.shape[1]) if weight is not None else 0
-        model = TennisPointSegLSTM(
-            input_size=input_size,
-            head=str(train_cfg.get("model_head", train_cfg.get("seg_head", "linear"))),
-        )
-        model.load_state_dict(state)
-        fps = float(preprocess_cfg.get("target_fps", 5))
-        loss_cfg = SegLossConfig(
-            fps=fps,
-            pos_weight=float(train_cfg.get("pos_weight") or 3.0),
-            cls_weight=float(train_cfg.get("cls_weight", 1.0)),
-            boundary_weight=float(train_cfg.get("boundary_weight", 1.0)),
-            diou_weight=float(train_cfg.get("diou_weight", 0.25)),
-        )
-        decode_cfg = DecodeConfig(
-            threshold=float(train_cfg.get("threshold", 0.5)),
-            vote=str(train_cfg.get("decode_vote", "mean")),
-        )
-        metrics, loss = evaluate_seg_model(
-            model,
-            test_path,
-            device=torch.device("cpu"),
-            criterion=E2ESegLoss(loss_cfg),
-            decode_cfg=decode_cfg,
-            six_bin_cfg=SixBinConfig(),
-        )
-        eval_path = run_dir / "eval.json"
-        with eval_path.open("w", encoding="utf-8") as handle:
-            json.dump({"loss": float(loss), "metrics": metrics, "head": "e2e_seg"}, handle, indent=2)
-        logger.info("E2E test loss: %.4f metrics: %s", loss, metrics)
-        return
+    if head != "classic":
+        raise ValueError(f"Unknown train.head: {head!r} (expected classic | e2e_heatmap)")
 
     seg_cfg = train_cfg.get("segment_eval", {})
     segment_cfg = SegmentEvalConfig(
@@ -1087,11 +954,6 @@ def _evaluate_postprocess_run(
         "false_detected_rate": float(point_metrics.get("false_detected_rate", 0.0)),
         "unmatched_predicted_rate": float(point_metrics.get("unmatched_predicted_rate", 0.0)),
     }
-
-
-def _format_conf(conf: float) -> str:
-    text = f"{conf:.3f}".rstrip("0").rstrip(".")
-    return text.replace(".", "p")
 
 
 def _format_time(value: Optional[float]) -> str:
