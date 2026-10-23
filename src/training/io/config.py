@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import yaml
 
@@ -65,3 +65,9 @@ def resolve_court_model_path(config: Dict[str, Any]) -> str:
     if explicit:
         return str(explicit)
     return resolve_yolo_model_path(config)
+
+
+def court_target_time(court_cfg: Dict[str, Any]) -> Optional[int]:
+    """court.target_time as an int, or None (anchor at the middle of the video)."""
+    value = court_cfg.get("target_time")
+    return int(value) if value is not None else None

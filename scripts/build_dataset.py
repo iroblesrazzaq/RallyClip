@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from training.dataset.builder import DatasetBuilder, DatasetConfig  # noqa: E402
 from training.dataset.splits import SplitConfig  # noqa: E402
+from training.artifact_paths import yolo_conf_imgsz_tags  # noqa: E402
 from training.io.config import load_config  # noqa: E402
 from training.io.videos import resolve_videos  # noqa: E402
 from training.paths import (
@@ -37,7 +38,6 @@ def main() -> int:
     dataset_cfg = config.get("dataset", {})
     features_cfg = config.get("features", {})
     preprocess_cfg = config.get("preprocess", {})
-    yolo_cfg = config.get("yolo", {})
 
     mode = args.mode or dataset_cfg.get("mode", "annotated")
     explicit = args.video or dataset_cfg.get("videos")
@@ -49,10 +49,8 @@ def main() -> int:
     if not videos:
         raise SystemExit("No videos to process")
 
-    yolo_model = Path(yolo_cfg.get("model", "yolov8s-pose.pt")).name
-    conf = float(yolo_cfg.get("conf", 0.25))
-    conf_tag = f"{conf:.3f}".rstrip("0").rstrip(".").replace(".", "p")
-    imgsz = int(yolo_cfg.get("imgsz", 1920))
+    # Same resolution as the pipeline: a manifest model supplies its own tag and imgsz.
+    yolo_model, conf_tag, imgsz = yolo_conf_imgsz_tags(config)
     fps = float(preprocess_cfg.get("target_fps", 15))
 
     feature_set = features_cfg.get("feature_set", "v1")

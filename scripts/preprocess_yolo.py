@@ -9,7 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from training.io.config import load_config, resolve_court_model_path  # noqa: E402
+from training.artifact_paths import yolo_conf_imgsz_tags  # noqa: E402
+from training.io.config import court_target_time, load_config, resolve_court_model_path  # noqa: E402
 from training.io.videos import resolve_videos  # noqa: E402
 from training.paths import (
     annotations_dir,
@@ -54,7 +55,6 @@ def main() -> int:
     preprocess_cfg = config.get("preprocess", {})
     court_cfg = config.get("court", {})
     extract_cfg = config.get("extract", {})
-    yolo_cfg = config.get("yolo", {})
 
     mode = args.mode or preprocess_cfg.get("mode", "annotated")
     explicit = args.video or preprocess_cfg.get("videos")
@@ -66,10 +66,8 @@ def main() -> int:
     if not videos:
         raise SystemExit("No videos to process")
 
-    yolo_model = Path(yolo_cfg.get("model", "yolov8s-pose.pt")).name
-    conf = float(yolo_cfg.get("conf", 0.25))
-    conf_tag = f"{conf:.3f}".rstrip("0").rstrip(".").replace(".", "p")
-    imgsz = int(yolo_cfg.get("imgsz", 1920))
+    # Same resolution as the pipeline: a manifest model supplies its own tag and imgsz.
+    yolo_model, conf_tag, imgsz = yolo_conf_imgsz_tags(config)
 
     output_root = (
         pose_preprocessed_dir(data_root)
@@ -89,7 +87,7 @@ def main() -> int:
             target_fps=float(preprocess_cfg.get("target_fps", 15)),
             save_court_masks=bool(preprocess_cfg.get("save_court_masks", False)),
             court_model_path=court_model_path,
-            court_target_time=int(court_cfg.get("target_time", 60)),
+            court_target_time=court_target_time(court_cfg),
             court_force=bool(court_cfg.get("force", False)),
         )
     )

@@ -29,7 +29,7 @@ from training.dataset.splits import SplitConfig, assert_no_holdout_overlap
 from training.eval.checkpoint import build_model_from_checkpoint, evaluate_checkpoint
 from training.eval.evaluator import SegmentEvalConfig
 from training.features.builder import FeatureBuildConfig, FeatureBuilder
-from training.io.config import resolve_court_model_path
+from training.io.config import court_target_time, resolve_court_model_path
 from training.io.videos import resolve_videos
 from training.normalize.normalize import (
     CANONICAL_HEIGHT,
@@ -537,15 +537,13 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
     sample_fps = _parse_optional_float(extract_cfg.get("sample_fps"))
     raw_root = pose_raw_dir(data_root) / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
 
-    ct = court_cfg.get("target_time")
-    court_target_time = int(ct) if ct is not None else None  # None => midpoint anchor
     normalize_cfg = config.get("normalize", {}) if isinstance(config.get("normalize"), dict) else {}
     preprocessor = Hdf5Preprocessor(
         PreprocessConfig(
             target_fps=fps,
             save_court_masks=bool(preprocess_cfg.get("save_court_masks", False)),
             court_model_path=court_model_path,
-            court_target_time=court_target_time,
+            court_target_time=court_target_time(court_cfg),
             # overwrite_all rebuilds everything derived from the videos, masks included.
             court_force=bool(config.get("overwrite_all") or court_cfg.get("force", False)),
             court_enabled=bool(court_cfg.get("enabled", True)),

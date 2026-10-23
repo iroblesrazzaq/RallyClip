@@ -144,11 +144,14 @@ def main() -> int:
             device=device,
             batch_size=batch_size,
             imgsz=imgsz,
+            provider=str(yolo_cfg.get("provider", "cpu")),
         )
     )
 
     conf_tag = _format_conf(conf)
-    model_tag = Path(model_path).name
+    # A manifest model's identity and imgsz come from the manifest, as in the pipeline.
+    model_tag = extractor.model_identity
+    imgsz = extractor.imgsz
     output_root = pose_raw_dir(data_root) / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
 
     for video_name in videos:
