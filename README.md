@@ -43,7 +43,7 @@ CLI, training, and extra install notes live in [`docs/ENVIRONMENT.md`](docs/ENVI
 
       Also, we have the net and the far baseline now, which is useful for filtering across multiple YOLO windows.
 
-      The model can also handle more diagonal videos. Here's a frame where the old detector would have failed, and the new one's detection is near perfect:
+      The model can also handle more diagonal videos (likely an effect of including image rotations in our augmentation scheme). Here's a frame where the old detector would have failed, and the new one's detection is near perfect:
 
       ![Old heuristic court detector vs new DL court model, diagonal view](docs/images/court_old_vs_new_diagonal.jpg)
     - using a pretrained HRNet base (to maintain high resolution court line features)
