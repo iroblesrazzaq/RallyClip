@@ -16,8 +16,8 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-10-23, review round cap, macOS `.venv-train` py3.11):
-**377 passed, 11 skipped, 49 deselected, ~50s**. `tests/test_agent_review.py` 59 passed.
+Last known (2026-10-23, review round cap merged with main after #68, macOS `.venv-train` py3.11):
+**542 passed, 16 skipped, 49 deselected, ~51s**. `tests/test_agent_review.py` 59 passed.
 (2026-10-22: 363 passed; `tests/test_update_release.py` 15 passed.)
 (2026-09-09, Linux py3.12: 321 passed, 6 skipped, 27 deselected; `tests/test_release_packaging.py`
 21 passed; `tests/test_artifact_fetch.py` 6 passed.)

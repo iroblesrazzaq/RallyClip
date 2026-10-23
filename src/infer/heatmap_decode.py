@@ -53,9 +53,7 @@ class HeatmapDecodeConfig:
     # Drop decoded segments shorter than this, applied AFTER merging.
     # Distinct from `min_duration_sec` above, which this runtime's hybrid mode
     # applies per-segment BEFORE merging (and which peakpair uses for pairing).
-    # NOTE: the training decode does NOT apply min/max_duration_sec in hybrid at
-    # all -- a known parity gap between the two implementations, tracked
-    # separately. This knob behaves identically on both sides.
+    # Training eval calls this decode too (training.eval.heatmap_evaluator).
     hybrid_min_duration_sec: float = 0.0
     # Merge neighbouring segments whose gap is <= this. Default 0 keeps
     # touch-or-overlap-only merging. TCN pointness can dip below threshold for

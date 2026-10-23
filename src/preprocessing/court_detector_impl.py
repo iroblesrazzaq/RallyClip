@@ -4,26 +4,45 @@ import cv2
 import numpy as np
 import os
 import logging
+from pathlib import Path
 from typing import List, Tuple, Optional, Union
 
 def _load_yolo(model_path: str):
     """Load the person detector used for clean-frame extraction.
 
-    .onnx weights use the torch-free onnxruntime runner (same predict surface);
-    anything else goes through ultralytics, which is optional at runtime.
-    Returns None when no backend is available so court detection degrades to
-    its single-frame fallback, as before.
+    Resolution order:
+      * a pose **manifest** (``.json``, or a directory holding ``manifest.json``)
+        resolves through ``load_pose_backend`` to the sha-verified ONNX model and
+        runs it torch-free on the CPU EP. Clean-frame extraction only touches a
+        handful of frames, so the faithful dynamic CPU model is the right call
+        over the ANE static sibling (and CoreML is refused for e2e heads anyway).
+      * ``.onnx`` weights use the onnxruntime runner directly.
+      * anything else goes through ultralytics, which is optional at runtime.
+    Returns None when no backend is available so court detection degrades to its
+    single-frame fallback, as before.
+
+    Callers predict without ``imgsz``, so every backend runs at the runner
+    default (640), the manifest's 960 included. That is deliberate: the court
+    regression goldens and the v0.6 training court cache were built at 640, and
+    occlusion masks only need coarse person boxes.
     """
-    if str(model_path).lower().endswith(".onnx"):
+    p = str(model_path)
+    lower = p.lower()
+    if lower.endswith(".json") or Path(p).is_dir():
+        from extraction.pose_backend import load_pose_backend
+
+        model, _meta = load_pose_backend(p, provider="cpu")
+        return model
+    if lower.endswith(".onnx"):
         from extraction.yolo_onnx_runner import YOLO as OnnxYOLO
 
-        return OnnxYOLO(model_path)
+        return OnnxYOLO(p)
     try:
         from ultralytics import YOLO
     except ImportError:
         logging.warning("YOLO not available. Install ultralytics and ensure yolov8n.pt exists.")
         return None
-    return YOLO(model_path)
+    return YOLO(p)
 
 
 class CourtDetector:
