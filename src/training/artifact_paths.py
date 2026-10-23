@@ -12,7 +12,7 @@ def format_conf(conf: float) -> str:
 
 def yolo_conf_imgsz_tags(config: Dict[str, Any]) -> tuple[str, str, int]:
     yolo_cfg = config.get("yolo", {}) if isinstance(config.get("yolo"), dict) else {}
-    model = Path(str(yolo_cfg.get("model", "yolov8n-pose.pt")))
+    model = Path(str(yolo_cfg.get("model", "yolov8s-pose.pt")))
     conf_tag = format_conf(float(yolo_cfg.get("conf", 0.25)))
     if model.name == "manifest.json" or (model.is_dir() and (model / "manifest.json").exists()):
         from extraction.pose_backend import load_manifest
@@ -95,7 +95,7 @@ def feature_root_from_run_config(data_root: Path, run_cfg: Dict[str, Any]) -> Pa
     preprocess = run_cfg.get("preprocess") if isinstance(run_cfg.get("preprocess"), dict) else {}
     features = run_cfg.get("features") if isinstance(run_cfg.get("features"), dict) else {}
 
-    model = yolo.get("model") or run_cfg.get("yolo_model") or "yolov8n-pose.pt"
+    model = yolo.get("model") or run_cfg.get("yolo_model") or "yolov8s-pose.pt"
     conf = yolo.get("conf", run_cfg.get("yolo_conf", 0.25))
     imgsz = yolo.get("imgsz", run_cfg.get("yolo_imgsz", run_cfg.get("imgsz", 1920)))
     fps = preprocess.get("target_fps", run_cfg.get("fps", 5.0))

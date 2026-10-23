@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 
 from training.artifact_paths import (
     feature_root_from_config,
@@ -52,3 +53,9 @@ def test_feature_root_from_run_config_matches_pipeline(tmp_path):
     a = feature_root_from_run_config(tmp_path, run_cfg)
     b = feature_root_from_config(tmp_path, run_cfg)
     assert a == b
+
+
+def test_default_model_matches_extraction():
+    # _run_extract writes yolo=yolov8s-pose.pt when the config names no model.
+    assert yolo_conf_imgsz_tags({})[0] == "yolov8s-pose.pt"
+    assert "yolo=yolov8s-pose.pt" in str(feature_root_from_run_config(Path("d"), {"yolo": {}}))
