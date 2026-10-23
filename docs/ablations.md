@@ -19,6 +19,7 @@ Planning doc for the next training round (~30 hrs labeled data, more incoming).
 - **e2e:** same LSTM backbone, anchor-free per-frame regression heads (pointness + dist-to-start + dist-to-end), asymmetric two-knee boundary hinge loss, decode + cross-window offset aggregation. Lives on the `training/e2e-segment-model` branch (`models/seg_lstm.py`, `train/seg_loss.py`, `train/seg_loop.py`).
 - Question: does learning the boundaries end-to-end beat hand-tuned hysteresis, especially on start/end boundary error (decent→good movement)?
 - Note: branches need unifying — the ablation runner should be able to instantiate either arch from one config, on one branch.
+- Outcome (v0.6): neither shipped. The e2e_seg arm was removed; the TCN boundary-heatmap head (`train.head: e2e_heatmap`) replaced both.
 
 ### 2. Architecture: LSTM + attention
 

@@ -1,3 +1,5 @@
 # Overlay: point the pipeline at the unified container-level data root.
 # Usage: --config configs/train/base.yaml,configs/train/data_container.yaml
-data_root: /Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/training_data
+# Relative to the working directory: run from a checkout that sits next to
+# training_data/ in the container folder.
+data_root: ../training_data

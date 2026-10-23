@@ -96,3 +96,21 @@ Outputs land in `data/visualizations/<run_id>/` and use the source video FPS.
 - `dataset.split.strategy`: `by_video`, `within_video`, or `hybrid`.
 - `train.device`: `cuda`, `mps`, or `cpu` (auto-picks if null).
 - `yolo.imgsz`: input resize for YOLO (higher = more compute).
+- `train.head`: `classic` (BiLSTM per-frame logit + hysteresis) or `e2e_heatmap`
+  (TCN pointness + start/end heatmaps, v0.6). The heatmap head's val/test
+  decode is the runtime's (`infer.heatmap_decode`), plus a training-only
+  `pairdp` mode.
+- `preprocess.slot_mode`: `classic` (full-frame near/far) or `netline`
+  (2-slot singles gated on the DL court detector's net line; needs
+  `preprocess.court_geometry_dir`).
+
+## Reproducing v0.6.0
+`configs/train/v060_netline.yaml` holds the shipped recipe (TCN c64 L5 k3,
+cosine lr 1e-4, net-line slots, `v2_nearfar`). Overlay it on `base.yaml` and
+set `dataset.split` for the run:
+```bash
+uv run python train.py --config configs/train/base.yaml,configs/train/v060_netline.yaml
+```
+The CV and final-model drivers (`cv_netline.py`, `final_train.py`,
+`decode_sweep.py`) live next to the data in `training_data_netline/`, not in
+this repo.

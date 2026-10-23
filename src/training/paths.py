@@ -20,6 +20,9 @@ VISUALIZATIONS_DIRNAME = "visualizations"
 # Video normalization contract (see src/training/normalize/). The tag is a path
 # level for everything derived from normalized video, so a future contract
 # (e.g. 1080p native) becomes a sibling tree instead of a silent collision.
+# Every path helper uses the default tag. The 1080p data roots (v0.6) predate
+# that split: their 1920x1080 videos sit under norm=1280x720@5fps, and the
+# config's normalize block, not the tag, says what they contain.
 NORM_WIDTH_DEFAULT = 1280
 NORM_HEIGHT_DEFAULT = 720
 NORM_FPS_DEFAULT = 5.0

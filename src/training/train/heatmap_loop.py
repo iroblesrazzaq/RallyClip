@@ -10,7 +10,7 @@ import json
 import logging
 import subprocess
 import time
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -283,7 +283,9 @@ def evaluate_heatmap_run(
     config_path = run_dir / "config.json"
     saved = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
     if saved.get("loss"):
-        loss_cfg = HeatmapLossConfig(**saved["loss"])
+        # Filter to current fields: older runs also saved the removed time_* knobs.
+        known = {f.name for f in fields(HeatmapLossConfig)}
+        loss_cfg = HeatmapLossConfig(**{k: v for k, v in saved["loss"].items() if k in known})
     else:
         pos_weight = train_cfg.get("pos_weight")
         loss_cfg = HeatmapLossConfig.from_train_cfg(train_cfg, fps, 3.0 if pos_weight is None else pos_weight)
