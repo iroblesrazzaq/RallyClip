@@ -59,7 +59,7 @@ from training.metrics.segment import (
 )
 from training.pose.yolo_hdf5 import YoloExtractConfig, YoloHdf5Extractor
 from training.preprocess.preprocessor import Hdf5Preprocessor, PreprocessConfig
-from training.train.heatmap_loop import evaluate_heatmap_run, train_heatmap
+from training.train.heatmap_loop import _selection_score, evaluate_heatmap_run, train_heatmap
 from training.train.loop import _default_pos_weight, train as train_loop
 
 logger = logging.getLogger(__name__)
@@ -1320,11 +1320,17 @@ def _stopped_by_early_stopping(run_dir: Path, records: List[Dict[str, Any]]) -> 
     min_delta = float(cfg.get("early_stopping_min_delta", 0.0))
     if patience <= 0:
         return False
+    # Replay the stopping rule of the head that trained the run.
+    heatmap = str(cfg.get("head", "classic")).lower() in {"e2e_heatmap", "heatmap"}
+    selection_metric = str(cfg.get("selection_metric", "acceptable"))
 
     best_metric = float("-inf")
     epochs_without_improvement = 0
     for record in sorted(records, key=lambda item: int(item.get("epoch", 0))):
-        metric_value = float(record.get("balanced_accuracy", 0.0))
+        if heatmap:
+            metric_value = _selection_score(selection_metric, float(record.get("val_loss", 0.0)), record)
+        else:
+            metric_value = float(record.get("balanced_accuracy", 0.0))
         if metric_value > (best_metric + min_delta):
             best_metric = metric_value
             epochs_without_improvement = 0

@@ -78,3 +78,18 @@ def test_loso_folds_build_only_from_the_checked_pool(tmp_path, monkeypatch):
     folds = [cfg for cfg, steps in runs if "dataset" in steps]
     assert [f["dataset"]["split"]["test_videos"] for f in folds] == [["a.mp4"], ["b.mp4"]]
     assert all(f["videos"] == ["a.mp4", "b.mp4"] for f in folds)
+
+
+@pytest.mark.parametrize("head, stopped", [("classic", False), ("e2e_heatmap", True)])
+def test_restart_replays_the_stopping_rule_of_the_head(tmp_path, head, stopped):
+    import json
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "config.json").write_text(json.dumps({"head": head, "early_stopping_patience": 2}))
+    # balanced_accuracy keeps rising, the heatmap's acceptable share is flat.
+    records = [
+        {"epoch": e, "balanced_accuracy": 0.5 + 0.1 * e, "val_loss": 1.0, "share_good": 0.4, "share_decent": 0.1}
+        for e in range(1, 4)
+    ]
+    assert pipeline._stopped_by_early_stopping(run_dir, records) is stopped
