@@ -279,6 +279,9 @@ class DatasetBuilder:
         held_out = self.cfg.split.test_videos[0]
         if held_out not in video_list:
             raise ValueError(f"Held-out test video not found in selected videos: {held_out}")
+        if is_flipped_video(held_out):
+            # A flip would route to train with its original, leaving no test footage.
+            raise ValueError(f"Hold out the original video, not its flip: {held_out}")
         if not (0.0 < float(self.cfg.split.val_ratio) < 1.0):
             raise ValueError("dataset.split.val_ratio must be in (0, 1) for loso_temporal_val")
         return held_out

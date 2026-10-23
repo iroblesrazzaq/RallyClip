@@ -6,6 +6,7 @@ from pathlib import Path
 
 import h5py
 import numpy as np
+import pytest
 
 from training.dataset.builder import DatasetBuilder, DatasetConfig
 from training.dataset.splits import SplitConfig
@@ -51,3 +52,8 @@ def test_ratio_split_never_trains_on_a_held_out_mirror(tmp_path):
     held_out = {Path(v).stem for v in manifest["splits"]["val"] + manifest["splits"]["test"]}
     for video in manifest["splits"]["train"]:
         assert Path(video).stem.removesuffix("__flip_h") not in held_out
+
+
+def test_loso_refuses_a_flipped_holdout(tmp_path):
+    with pytest.raises(ValueError, match="not its flip"):
+        _build(tmp_path, SplitConfig(strategy="loso_temporal_val", test_videos=["b__flip_h.mp4"], val_ratio=0.2))

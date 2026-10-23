@@ -152,6 +152,17 @@ def expected_frames(raw_h5: Path):
         return h["frames"]["frame_index"][:], h["frames"]["timestamps"][:]
 
 
+def check_grid(timestamps) -> None:
+    """Refuse raw poses not sampled at FPS: the crop decode below always is,
+    so any other grid would stamp crop detections with the wrong times."""
+    steps = np.diff(np.asarray(timestamps, np.float64))
+    if len(steps) and abs(float(np.median(steps)) - 1.0 / FPS) > 0.1 / FPS:
+        raise ValueError(
+            f"raw poses step {float(np.median(steps)):.3f}s, not the {FPS:g} fps grid "
+            f"the crop decode uses; normalize at fps={FPS:g} or change FPS"
+        )
+
+
 def extract_one(model, video: Path, out: Path, frame_index, timestamps, model_tag: str = "") -> None:
     x1, y1, x2, y2 = CROP
     n_expected = len(frame_index)
@@ -268,6 +279,7 @@ def main():
             print(f"[{i}/{len(stems)}] {stem[:12]} no raw h5 to align to, skip", flush=True)
             continue
         fi, ts = grid
+        check_grid(ts)
         extract_one(model, video, out, fi, ts, meta.tag)
         with h5py.File(out, "r") as h:
             nd = len(h["detections"]["boxes"])
