@@ -41,3 +41,26 @@ def test_mismatched_normalized_video_is_not_silently_replaced(tmp_path, calls, m
 
     pipeline._run_normalize({**_config(tmp_path, fps=10), "overwrite_all": True})
     assert len(calls) == 1
+
+
+def test_mismatched_video_is_not_replaced_in_place(tmp_path, calls, monkeypatch):
+    # No source dir: the normalized tree itself is the input.
+    out = raw_videos_dir(tmp_path)
+    out.mkdir(parents=True)
+    (out / "m.mp4").write_bytes(b"")
+    monkeypatch.setattr(pipeline, "is_canonical", lambda path, cfg: False)
+
+    with pytest.raises(ValueError, match="does not match normalize settings"):
+        pipeline._run_normalize(_config(tmp_path, fps=10))
+    assert calls == []
+
+
+def test_train_saves_the_feature_drops_for_the_sweep(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(pipeline, "train_loop", lambda dataset_dir, run_dir, cfg: seen.update(cfg))
+    pipeline._run_train({
+        "data_root": str(tmp_path),
+        "dataset": {"drop_feature_groups": ["derivatives"], "drop_slots": ["far"]},
+    })
+    assert seen["dataset"]["drop_feature_groups"] == ["derivatives"]
+    assert seen["dataset"]["drop_slots"] == ["far"]
