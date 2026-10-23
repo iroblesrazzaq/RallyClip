@@ -107,9 +107,22 @@ Outputs land in `data/visualizations/<run_id>/` and use the source video FPS.
 ## Reproducing v0.6.0
 `configs/train/v060_netline.yaml` holds the shipped recipe (TCN c64 L5 k3,
 cosine lr 1e-4, net-line slots, `v2_nearfar`). Overlay it on `base.yaml` and
-set `dataset.split` for the run:
+set `dataset.split` for the run.
+
+Net-line slots need two inputs the pipeline steps do not create:
+- far-crop poses from `scripts/extract_crop_poses.py`, run after `extract`
+  has written the raw poses. It works on a 1920x1080 canvas, which is why the recipe normalizes at 1080p.
+  Preprocess refuses a crop side-car whose frame grid or frame size differs
+  from the raw poses.
+- court geometry: one DL-court-detector JSON per video in
+  `preprocess.court_geometry_dir`. The detector run that wrote
+  `training_data_1080p/courts_dl` is not in this repo.
+
+So run it in two passes:
 ```bash
-uv run python train.py --config configs/train/base.yaml,configs/train/v060_netline.yaml
+uv run python train.py --config configs/train/base.yaml,configs/train/v060_netline.yaml --steps normalize,extract
+uv run python scripts/extract_crop_poses.py --data-root ../training_data_netline
+uv run python train.py --config configs/train/base.yaml,configs/train/v060_netline.yaml --steps preprocess,features,dataset,train,eval
 ```
 The CV and final-model drivers (`cv_netline.py`, `final_train.py`,
 `decode_sweep.py`) live next to the data in `training_data_netline/`, not in
