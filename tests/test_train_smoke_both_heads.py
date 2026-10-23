@@ -109,9 +109,11 @@ def test_heatmap_trains_without_a_val_split(tmp_path):
     dataset_dir.mkdir()
     _write_split(dataset_dir / "train.h5")
     run_dir = tmp_path / "run"
-    # A best.pth left by an earlier run of this run_id must not survive.
+    # A best.pth or eval.json left by an earlier run of this run_id must not
+    # survive: with the new checkpoints they'd mark an interrupted rerun complete.
     (run_dir / "checkpoints").mkdir(parents=True)
     (run_dir / "checkpoints" / "best.pth").write_bytes(b"stale")
+    (run_dir / "eval.json").write_text("{}")
     train_heatmap(dataset_dir, run_dir, {
         "device": "cpu", "epochs": 4, "batch_size": 2, "pos_weight": 3.0, "seed": 0, "fps": 5.0,
         "hidden_size": 16, "heatmap_tcn_levels": 2, "save_every_n": 3, "early_stopping_patience": 1,
@@ -119,6 +121,7 @@ def test_heatmap_trains_without_a_val_split(tmp_path):
 
     ckpts = sorted(p.name for p in (run_dir / "checkpoints").iterdir())
     assert ckpts == ["epoch_3.pth", "last.pth"]
+    assert not (run_dir / "eval.json").exists()
     assert torch.load(run_dir / "checkpoints" / "last.pth", map_location="cpu")["epoch"] == 4
     manifest = json.loads((run_dir / "manifest.json").read_text())
     assert manifest["training"]["selection_metric"] == "none"

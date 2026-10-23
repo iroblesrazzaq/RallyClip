@@ -182,9 +182,11 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
     started_at = time.time()
 
     # Training always starts from scratch, so a reused run_id gets a fresh
-    # config and metrics log rather than the previous run's.
+    # config and metrics log rather than the previous run's. The old eval.json
+    # goes too: with a new best.pth it would mark an interrupted rerun complete.
     metrics_path = run_dir / "metrics.jsonl"
     metrics_path.unlink(missing_ok=True)
+    (run_dir / "eval.json").unlink(missing_ok=True)
     # The resolved loss (incl. a derived pos_weight) is saved so pipeline eval
     # scores the test split with exactly the loss the run trained with.
     with (run_dir / "config.json").open("w", encoding="utf-8") as handle:

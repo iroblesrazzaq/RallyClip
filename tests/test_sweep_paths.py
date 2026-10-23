@@ -80,6 +80,23 @@ def test_loso_folds_build_only_from_the_checked_pool(tmp_path, monkeypatch):
     assert all(f["videos"] == ["a.mp4", "b.mp4"] for f in folds)
 
 
+def test_flips_train_in_every_fold_but_are_never_held_out(tmp_path, monkeypatch):
+    runs = []
+    monkeypatch.setattr(pipeline, "run_pipeline", lambda cfg, steps_override: runs.append((cfg, steps_override)))
+    monkeypatch.setattr(pipeline, "_resolve_sweep_datasets", lambda *a: [{"name": "d"}])
+    monkeypatch.setattr(pipeline, "_is_fold_complete", lambda **kw: False)
+    pool = ["a.mp4", "a__flip_h.mp4", "b.mp4", "b__flip_h.mp4"]
+    pipeline.run_sweep({
+        "data_root": str(tmp_path),
+        "sweep": {"enabled": True, "fps_values": [5], "seq_len_seconds": [20], "loso": {"videos": pool}},
+    })
+
+    folds = [cfg for cfg, steps in runs if "dataset" in steps]
+    assert [f["dataset"]["split"]["test_videos"] for f in folds] == [["a.mp4"], ["b.mp4"]]
+    assert [f["run_id"].rsplit("_", 2)[-2:] for f in folds] == [["fold01", "a"], ["fold02", "b"]]
+    assert all(f["videos"] == pool for f in folds)
+
+
 @pytest.mark.parametrize("head, stopped", [("classic", False), ("e2e_heatmap", True)])
 def test_restart_replays_the_stopping_rule_of_the_head(tmp_path, head, stopped):
     import json

@@ -31,7 +31,7 @@ from training.eval.checkpoint import build_model_from_checkpoint, evaluate_check
 from training.eval.evaluator import SegmentEvalConfig
 from training.features.builder import FeatureBuildConfig, FeatureBuilder
 from training.io.config import court_target_time, load_config, resolve_court_model_path
-from training.io.videos import resolve_videos
+from training.io.videos import is_flipped_video, resolve_videos
 from training.normalize.normalize import (
     CANONICAL_HEIGHT,
     CANONICAL_WIDTH,
@@ -143,6 +143,11 @@ def run_sweep(config: Dict[str, Any]) -> None:
     videos = sorted(videos)
     holdout_videos = _holdout_videos(config)
     assert_no_holdout_overlap(videos, holdout_videos, context="run_sweep")
+    # Flips stay in every fold's training pool, but only originals are held
+    # out: a flip can't be a LOSO subject (its original would train on it).
+    fold_subjects = [v for v in videos if not is_flipped_video(v)]
+    if not fold_subjects:
+        raise ValueError("No original (non-flipped) videos to hold out in the LOSO sweep")
     required_stems = {Path(v).stem for v in videos}
 
     dataset_specs = _resolve_sweep_datasets(config, sweep_cfg, data_root, required_stems)
@@ -172,7 +177,7 @@ def run_sweep(config: Dict[str, Any]) -> None:
         len(dataset_specs),
         fps_values,
         seq_values,
-        len(videos),
+        len(fold_subjects),
     )
 
     for ds in dataset_specs:
@@ -187,7 +192,7 @@ def run_sweep(config: Dict[str, Any]) -> None:
             run_pipeline(pre_cfg, steps_override=pre_steps)
 
             for seq_len in ds_seq_values:
-                for fold_idx, held_out_video in enumerate(videos, start=1):
+                for fold_idx, held_out_video in enumerate(fold_subjects, start=1):
                     fold_cfg = deepcopy(config)
                     _apply_sweep_dataset(fold_cfg, ds)
                     fold_cfg.setdefault("preprocess", {})["target_fps"] = float(fps)
