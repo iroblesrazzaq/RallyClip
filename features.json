@@ -10,21 +10,21 @@
       "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
-      "evidence": "2026-10-22: 363 passed, 11 skipped, 49 deselected (~25s) on fix/update-pagination-cancel-race (macOS, .venv-train py3.11). Cancel during the DMG SHA-256 check no longer replaces files in ~/Downloads."
+      "evidence": "2026-10-22: 498 passed, 49 deselected (~50s) on training/v060-tcn-netline (macOS, .venv-train py3.11, pose weights fetched). With torch blocked from import: 449 passed, 11 skipped, no collection errors."
     },
     {
       "id": "golden-cli-parity",
       "name": "CLI end-to-end golden parity on committed fixture clip (0.25s boundary tolerance)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_cli_golden_parity.py",
-      "evidence": "2026-08-24: 1 passed after regenerating tests/fixtures/golden_cli/golden_segments.csv for TCN hybrid decode (two segments 3.753-11.964 and 13.040-23.449 vs classic v0.4.0 one 3.800-24.000)."
+      "evidence": "2026-10-22: 1 passed on training/v060-tcn-netline (v0.5.0 artifacts sha-verified against SHA256SUMS). Training-only changes; runtime output unchanged."
     },
     {
       "id": "compileall",
       "name": "src+tests byte-compile cleanly",
       "status": "passing",
       "verification": "$PY -m compileall -q src tests",
-      "evidence": "2026-08-24: exit 0 on feat/v0.5.0-tcn"
+      "evidence": "2026-10-22: exit 0 on training/v060-tcn-netline"
     },
     {
       "id": "tcn-v050-default",
@@ -81,6 +81,13 @@
       "status": "passing",
       "verification": "python3 scripts/agent/review.py on this branch: both reviewers exit ok, findings.json has normalized findings, tree unchanged (exit != 3); PYTHONPATH=src:tests pytest -q tests/test_agent_review.py; default + compile gates.",
       "evidence": "2026-10-21/22 dry runs on chore/agent-review-pipeline. Round 1: cursor x3 lenses + greptile all ran, 7 Cursor findings (after a parser fix) + 6 Greptile (confidence 3/5); confirmed in-diff ones fixed in 5d394e7, 2 rejected as outside the diff. Round 2: greptile 5/5 with 1 medium (null claim crash), fixed in 5d068bb; all Cursor lenses failed on a Cursor backend outage (RetriableError / empty model list), which exposed a timeout that never fired (agent's node child holds the pipes) -> run_capped kills the process group. Round 3 (2026-10-22, on 1f8a1dc): cursor x3 + greptile all ok, exit 0, tree unmodified, greptile 4/5; 7 findings all confirmed and fixed (Windows-safe kill, Ctrl-C kills reviewer process groups, main() exit-code/--out/greptile-mapping/retry-bound tests). Manual SIGINT check: review.py exits in 0.1s, 0 leftover reviewer processes. Tree never modified across rounds (no exit 3). Round 4 (on 0654c45, after Greptile's PR #65 comments) and round 5 (on 1e842a4, cursor x2 ok + 1 lens unparsed, greptile 5/5): confirmed findings fixed (dirty-tree refusal, marker glued to prose, Ctrl-C during submit, tests). tests/test_agent_review.py 45 passed; default gate 361 passed, 11 skipped, 49 deselected; compile exit 0; scoped ruff clean."
+    },
+    {
+      "id": "training-v060-netline",
+      "name": "v0.6 training recipe in git: TCN heatmap head, net-line slots, v2_nearfar features, eval decodes with the runtime decode",
+      "status": "passing",
+      "verification": "PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_train_smoke_both_heads.py tests/test_heatmap_tcn.py tests/test_netline_slots.py tests/test_dataset_flip_leakage.py",
+      "evidence": "2026-10-22: part of the 498-pass default suite on training/v060-tcn-netline, after two review-gate rounds; court flights 24 passed. Full v0.6 retrain from configs/train/v060_netline.yaml not re-run in-session."
     }
   ],
   "active": "artifact-registry"

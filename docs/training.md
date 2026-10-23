@@ -5,9 +5,10 @@ This repo includes a modular, step-based training pipeline driven by a YAML conf
 ## Data layout (default `data_root: data`)
 ```
 data/
-  raw_videos/            # input videos (.mp4, .mov, ...)
+  source_videos/         # input videos (.mp4, .mov, ...); older roots: raw_videos/
+  videos/norm=<WxH@fps>/ # normalized copies the pipeline works on
   annotations/           # per-video JSON labels
-  pose_data/
+  pose_data/norm=<WxH@fps>/
     raw/                 # YOLO outputs (HDF5)
     courts/              # court masks (.npz)
     preprocessed/        # downsampled + filtered detections (HDF5)
@@ -60,11 +61,10 @@ uv run python train.py --config configs/train/base.yaml --steps extract,preproce
 ```
 
 ## Useful scripts
-- `scripts/extract_yolo.py`: run YOLO extraction only.
+- `scripts/extract_yolo.py`, `scripts/preprocess_yolo.py`, `scripts/build_features.py`,
+  `scripts/build_dataset.py`: run one pipeline step (same as `--steps extract` etc.), with
+  `--mode`, repeatable `--video`, and `--overwrite` (`--resume` for extract).
 - `scripts/cache_court_masks.py`: cache court masks only.
-- `scripts/preprocess_yolo.py`: preprocess only.
-- `scripts/build_features.py`: feature engineering only.
-- `scripts/build_dataset.py`: dataset builder only.
 - `scripts/convert_annotations.py`: CSV -> JSON conversion.
 - `scripts/visualize_overlays.py`: debugging overlays.
 
@@ -96,3 +96,39 @@ Outputs land in `data/visualizations/<run_id>/` and use the source video FPS.
 - `dataset.split.strategy`: `by_video`, `within_video`, or `hybrid`.
 - `train.device`: `cuda`, `mps`, or `cpu` (auto-picks if null).
 - `yolo.imgsz`: input resize for YOLO (higher = more compute).
+- `train.head`: `classic` (BiLSTM per-frame logit + hysteresis) or `e2e_heatmap`
+  (TCN pointness + start/end heatmaps, v0.6). The heatmap head's val/test
+  decode is the runtime's (`infer.heatmap_decode`), plus a training-only
+  `pairdp` mode.
+- `preprocess.slot_mode`: `classic` (full-frame near/far) or `netline`
+  (2-slot singles gated on the DL court detector's net line; needs
+  `preprocess.court_geometry_dir`).
+
+## Reproducing v0.6.0
+`configs/train/v060_netline.yaml` holds the shipped recipe (TCN c64 L5 k3,
+cosine lr 1e-4, net-line slots, `v2_nearfar`). Overlay it on `base.yaml` and
+set `dataset.split` for the run.
+
+Net-line slots need two inputs the pipeline steps do not create:
+- far-crop poses from `scripts/extract_crop_poses.py`, run after `extract`
+  has written the raw poses. It works on a 1920x1080 canvas, which is why the recipe normalizes at 1080p.
+  Preprocess refuses a crop side-car whose frame grid or frame size differs
+  from the raw poses.
+- court geometry: one DL-court-detector JSON per video in
+  `preprocess.court_geometry_dir`. The detector run that wrote
+  `training_data_1080p/courts_dl` is not in this repo.
+
+So run it in two passes:
+```bash
+uv run python train.py --config configs/train/base.yaml,configs/train/v060_netline.yaml --steps normalize,extract
+uv run python scripts/extract_crop_poses.py --data-root ../training_data_netline
+uv run python train.py --config configs/train/base.yaml,configs/train/v060_netline.yaml --steps preprocess,features,dataset,train,eval
+```
+For the final model, train on every video: set `dataset.split.val_ratio` and
+`test_ratio` to 0 with no `test_videos`. With no `val.h5`, training runs all
+epochs without checkpoint selection or early stopping, and the shipped weights
+are `checkpoints/epoch_13.pth` (from `save_every_n: 13`), not `best.pth`.
+
+The CV and final-model drivers (`cv_netline.py`, `final_train.py`,
+`decode_sweep.py`) live next to the data in `training_data_netline/`, not in
+this repo.

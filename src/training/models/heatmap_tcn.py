@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Any, Dict, Tuple
 
 import torch
 import torch.nn as nn
@@ -23,10 +23,9 @@ class _TemporalBlock(nn.Module):
     """Residual block: two dilated convs, LayerNorm + ReLU + dropout after each.
 
     Non-causal (centred): padding is split evenly on both sides, so frame t sees
-    an equal span of past and future — the convolutional analogue of the
-    bidirectional LSTM this replaces. LayerNorm (not BatchNorm) keeps train/eval
-    behaviour identical, which matters here because the train loop evaluates on a
-    CPU-reloaded copy of the model (MPS/CPU LSTM eval divergence, see seg_loop).
+    an equal span of past and future. LayerNorm (not BatchNorm) keeps train/eval
+    behaviour identical, which matters because the train loop evaluates a
+    CPU-reloaded copy of the model.
     """
 
     def __init__(self, channels: int, kernel_size: int, dilation: int, dropout: float) -> None:
@@ -58,21 +57,19 @@ class _TemporalBlock(nn.Module):
 class TennisPointHeatmapTCN(nn.Module):
     """Dilated temporal-convnet backbone for the boundary-heatmap head.
 
-    Same contract as TennisPointHeatmapLSTM / TennisPointHeatmapGRU: consumes
-    (B, T, input_size) and returns three per-frame raw logits
-    (pointness, startness, endness), sigmoid applied downstream.
+    Consumes (B, T, input_size) and returns three per-frame raw logits
+    (pointness, startness, endness); sigmoid is applied downstream.
 
     Receptive field with `levels` residual blocks at dilations 1,2,4,... and two
     convs per block:  RF = 1 + 2*(kernel_size-1)*(2**levels - 1).
     Defaults (k=3, levels=5) give RF = 125 frames = 25s @5fps, so every frame
-    sees the whole 20s training window — matching the BiLSTM's full-window view
-    at roughly half the parameters.
+    sees the whole 20s training window.
     """
 
     def __init__(
         self,
         input_size: int,
-        hidden_size: int = 64,     # channel width (named hidden_size for factory parity)
+        hidden_size: int = 64,     # trunk channel width
         levels: int = 5,
         kernel_size: int = 3,
         dropout: float = 0.2,
@@ -119,6 +116,18 @@ class TennisPointHeatmapTCN(nn.Module):
         else:
             raise ValueError(f"Unknown head: {head}")
         self.dropout = nn.Dropout(dropout)
+
+    def arch(self) -> Dict[str, Any]:
+        """Constructor kwargs, stored in checkpoints so a model rebuilds exactly."""
+        return {
+            "input_size": self.input_size,
+            "hidden_size": self.hidden_size,
+            "levels": self.levels,
+            "kernel_size": self.kernel_size,
+            "dropout": self.dropout.p,
+            "head": self.head,
+            "stem_hidden": self.stem_hidden,
+        }
 
     @property
     def receptive_field(self) -> int:

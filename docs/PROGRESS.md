@@ -1,22 +1,41 @@
 # PROGRESS — overwrite me at every session end
 
-_Last updated: 2026-10-22 (session: triaging Greptile's out-of-diff update flags)._
+_Last updated: 2026-10-22 (session: clean v0.6 training PR replacing #61)._
 
-## Repo state
+## State
 
 - `main` has published app **v0.5.0**; `artifact-rallyclip_v0.6.0` is a
-  prerelease. The assisted DMG update (PR #58) is merged.
-- Review gate (PR #65) is on main. Active work: `fix/update-pagination-cancel-race`.
+  prerelease. The review gate (PR #65) and the README court update (PR #67)
+  are merged.
+- Active branch: `training/v060-tcn-netline` (worktree `training-v060-wt`),
+  PR against main that supersedes #61. See `docs/DECISIONS.md` 2026-10-22.
 
-## What shipped this session
+## What the branch does
 
-1. Cancelling during the DMG SHA-256 check now stops before anything in
-   `~/Downloads` is replaced. Two regression tests are in
-   `tests/test_update_release.py`.
-2. The release-pagination flag was checked and is not a real bug yet (see the
-   DECISIONS entry for 2026-10-22): there are 6 releases, all on page 1.
-3. Default gate: **363 passed, 11 skipped, 49 deselected** (macOS).
+- v0.6 training code: TCN heatmap head (`train/heatmap_loop.py`,
+  `train/heatmap_loss.py`), net-line slots + v2_nearfar features,
+  normalize, manifest-backed pose extract, court anchors/clean frame under
+  `src/training/courts/`.
+- Dead arms removed (e2e_seg, LSTM/GRU heatmap, time loss, LR finder,
+  24 configs). Shipped recipe: `configs/train/v060_netline.yaml`.
+- Training eval now decodes with the runtime decode, so numbers may differ
+  from older runs.
+- Flip leakage fixed in `dataset/builder.py`.
+- Torch-only tests skip when torch is missing.
 
-## Next steps
+## Gates (2026-10-22)
 
-1. PR open with a Review digest; the user merges.
+Default suite 498 passed; torch blocked 449 / 11 skipped; golden CLI
+parity 1 passed; court flights 24 passed; compileall clean; remaining ruff
+findings on changed files are pre-existing on main.
+
+## Next
+
+- Update the external driver scripts in `../training_data_netline`
+  (`cv_netline.py`, `final_train.py`, `decode_sweep.py`): they import
+  `gt_segments_from_targets` from the deleted `eval.seg_evaluator` (now
+  `eval.heatmap_evaluator`) and call `build_heatmap_model` positionally
+  (now `build_heatmap_model(train_cfg, input_size)`).
+- Merge #64 and close #59/#60; rebase #62/#63.
+- Court-model training code and driver scripts are still outside git.
+- Try a bigger YOLO pose model (yolov8s/m) after v0.6.0 ships.

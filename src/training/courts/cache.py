@@ -5,12 +5,14 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import cv2
 import numpy as np
 
 from preprocessing.court_detector_impl import CourtDetector
+from training.courts.anchors import court_anchor_times
+from training.courts.clean_frame import MiddleAnchoredCourtDetector
 from training.paths import pose_courts_dir
 
 logger = logging.getLogger(__name__)
@@ -63,12 +65,27 @@ def _warn_on_video_metadata_mismatch(cache_meta: Dict[str, Any], current_meta: D
 
 
 class CourtMaskCache:
-    def __init__(self, model_path: str = "models/yolov8s-pose.pt", target_time: int = 60) -> None:
+    def __init__(self, model_path: str = "models/yolov8s-pose.pt", target_time: Optional[int] = None) -> None:
         self.model_path = model_path
+        # None => anchor court detection at the MIDDLE of the video, retrying a
+        # few midpoint-centred anchors if the exact middle frame is unusable
+        # (changeover/replay). An explicit int pins a single anchor (regression).
         self.target_time = target_time
 
     def cache_path(self, data_root: Path, video_path: Path) -> Path:
         return pose_courts_dir(data_root) / f"{video_path.stem}.npz"
+
+    def _anchor_times(self, video_path: Path) -> list:
+        """Anchor times (seconds) to try, middle-first. A pinned target_time is
+        honoured as the only anchor."""
+        if self.target_time is not None:
+            return [float(self.target_time)]
+        return court_anchor_times(_video_metadata(video_path).get("duration"))
+
+    @property
+    def anchor_policy(self):
+        """What the cache meta records: "middle" or the pinned int."""
+        return "middle" if self.target_time is None else int(self.target_time)
 
     def load(self, cache_path: Path, current_video_meta: Optional[Dict[str, Any]] = None) -> Optional[CourtCacheResult]:
         if not cache_path.exists():
@@ -88,18 +105,35 @@ class CourtMaskCache:
             return None
 
     def compute(self, video_path: Path) -> CourtCacheResult:
-        detector = CourtDetector(yolo_model_path=self.model_path)
-        mask, clean_frame, metadata = detector.process_video(str(video_path), target_time=self.target_time)
+        detector = MiddleAnchoredCourtDetector(yolo_model_path=self.model_path)
+        anchors = self._anchor_times(video_path)
+        mask = clean_frame = metadata = None
+        used_anchor = anchors[0]
+        for anchor in anchors:
+            mask, clean_frame, metadata = detector.process_video(str(video_path), target_time=anchor)
+            used_anchor = anchor
+            if bool(metadata.get("court_detection_success")) and mask is not None:
+                break
+            logger.info(
+                "Court detection did not succeed at anchor=%s for %s: %s",
+                anchor, video_path.name, metadata.get("error"),
+            )
 
         self._inject_line_metadata(detector, metadata, clean_frame)
         lines = self._extract_lines(metadata)
         success = bool(metadata.get("court_detection_success")) and mask is not None
+        if not success:
+            logger.warning(
+                "COURT DETECTION FAILED for %s across %d anchor(s) -> mask unavailable",
+                video_path.name, len(anchors),
+            )
 
         meta = {
             "video": _video_metadata(video_path),
             "detector": {
                 "model_path": self.model_path,
-                "target_time": self.target_time,
+                "anchor_policy": self.anchor_policy,
+                "target_time": used_anchor,
             },
             "heuristics": self._extract_heuristics(metadata, clean_frame),
             "metadata": metadata,
@@ -134,7 +168,16 @@ class CourtMaskCache:
 
         cached = self.load(cache_path, current_video_meta=current_meta)
         if cached and not force:
-            return cached
+            cached_policy = cached.metadata.get("detector", {}).get("anchor_policy")
+            if cached_policy is None:
+                logger.warning("Court cache %s predates anchor_policy; reusing it as-is", cache_path.name)
+                return cached
+            if cached_policy == self.anchor_policy:
+                return cached
+            logger.info(
+                "Court cache %s was built with anchor %s, want %s; recomputing",
+                cache_path.name, cached_policy, self.anchor_policy,
+            )
 
         result = self.compute(video_path)
         self.save(cache_path, result)

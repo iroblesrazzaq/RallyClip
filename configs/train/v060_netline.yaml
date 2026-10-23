@@ -1,0 +1,67 @@
+# v0.6.0 shipped recipe: TCN heatmap head on net-line slots, v2_nearfar (290 dims).
+# Overlay on base.yaml:
+#   --config configs/train/base.yaml,configs/train/v060_netline.yaml
+#
+# Same train settings as training_data_netline/runs/final_netline_all26 and the
+# 5-fold CV behind it (cv_netline.py, CV F1 0.393). The final model trained on
+# all 26 videos with no held-out data, so its checkpoint is fixed at epoch 13
+# (median of the CV folds' selected epochs: 14, 28, 13, 12, 13) via
+# save_every_n rather than chosen on val. Set dataset.split per run.
+#
+# Data root: normalized at 1920x1080 @ 5fps; the tree is still tagged
+# videos/norm=1280x720@5fps (see training.paths.norm_tag). Run from a checkout
+# next to the data roots so the relative paths resolve.
+data_root: ../training_data_netline
+
+normalize:
+  width: 1920
+  height: 1080
+  fps: 5
+
+yolo:
+  model: models/pose/yolov8n/manifest.json
+  conf: 0.25
+
+preprocess:
+  target_fps: 5
+  slot_mode: netline  # 2-slot singles: near/far picked by court coords, gated on the net line
+  court_geometry_dir: ../training_data_1080p/courts_dl  # DL court detector output, one json per video
+
+features:
+  feature_set: v2_nearfar
+
+dataset:
+  seq_len_seconds: 20
+  overlap_seconds: 10
+
+train:
+  head: e2e_heatmap
+  heatmap_backbone: tcn
+  hidden_size: 64
+  heatmap_tcn_levels: 5
+  heatmap_tcn_kernel_size: 3
+  heatmap_head: mlp
+  dropout: 0.2
+  batch_size: 8
+  epochs: 30
+  lr: 0.0001
+  lr_schedule: cosine
+  lr_eta_min: 0.0
+  weight_decay: 0.01
+  early_stopping_patience: 30  # == epochs: the cosine cycle always completes
+  selection_metric: acceptable
+  save_every_n: 13
+  pos_weight: null  # derived from the train positive rate (1.73 on all 26)
+  heatmap_sigma_seconds: 0.5
+  heatmap_loss: bce
+  heatmap_pos_threshold: 0.1
+  heatmap_pos_weight: 20.0
+  # Shipped decode (manifest postprocess.params). The v0.6 CV and final runs
+  # trained and selected with the default hybrid decode (no smoothing, no
+  # floor); smoothing and the 4 s floor were picked afterwards on val with
+  # decode_sweep.py, so per-epoch val numbers here differ from those runs'.
+  heatmap_decode_mode: hybrid
+  threshold: 0.5
+  heatmap_smooth_sigma_frames: 1.5
+  heatmap_hybrid_min_duration_sec: 4.0
+  heatmap_merge_gap_sec: 0.0
