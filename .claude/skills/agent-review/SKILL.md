@@ -39,8 +39,9 @@ every push. Uncommitted changes are not reviewed.
      out of scope, duplicate of #n).
    - **unsure**: you cannot settle it; it goes to the user in the digest.
    The same issue reported by several reviewers or lenses is one item. A finding
-   marked `repeat_of` was rejected in an earlier round: reject it again with the
-   same reason unless the cited code changed.
+   marked `repeat_of` is near one rejected in an earlier round (same file, within
+   10 lines). It is only a hint: if it makes the same claim and the code did not
+   change, reject it with the same reason; a different claim is triaged as new.
 
    Write the outcomes to `triage.json` next to `findings.json`, keyed by finding
    id: `{"1": "fixed in <sha>", "2": "rejected: <reason>", "3": "unsure: <note>"}`

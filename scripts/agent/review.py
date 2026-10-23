@@ -365,8 +365,10 @@ def main(argv: list[str] | None = None) -> int:
 
     state_file = state_path(root, branch)
     rounds: list[dict] = []
+    if args.reset:
+        state_file.unlink(missing_ok=True)
     try:
-        if not args.reset and state_file.is_file():
+        if state_file.is_file():
             rounds = json.loads(state_file.read_text(encoding="utf-8"))["rounds"]
         code, msg, rejected = round_gate(rounds, head)
     except (OSError, ValueError, KeyError, TypeError) as e:  # state or an earlier round's files unreadable

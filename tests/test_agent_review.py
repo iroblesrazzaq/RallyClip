@@ -347,6 +347,19 @@ def test_rounds_stop_at_cap(branch_repo, tmp_path, monkeypatch, capsys):
     assert _round(tmp_path, 10, extra=["--reset"])[0] == 0  # only when the user asks
 
 
+def test_reset_clears_state_even_if_the_run_fails(branch_repo, tmp_path, monkeypatch):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [])
+    _round(tmp_path, 1, triage={})
+    _commit(branch_repo, "fix.py")
+    assert _round(tmp_path, 2)[0] == 4  # no confirmed high
+    def boom(*a):
+        raise RuntimeError("timeout")
+    monkeypatch.setattr(review, "run_greptile", boom)
+    assert _round(tmp_path, 3, extra=["--reset"])[0] == 2
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [])
+    assert _round(tmp_path, 4)[0] == 0
+
+
 @pytest.mark.parametrize("found, outcome", [([_finding()], "fixed in abc"), ([_high()], "rejected: wrong"),
                                             ([], None)])
 def test_rounds_stop_early_without_confirmed_high(branch_repo, tmp_path, monkeypatch, capsys, found, outcome):
@@ -384,6 +397,7 @@ def test_rejected_findings_reach_prompt_and_mark_repeats(branch_repo, tmp_path, 
     out = tmp_path / "out2"
     assert review.main(["--base", "base", "--lenses", "tests", "--out", str(out)]) == 0
     assert "b.py:1 old claim -> rejected: pre-existing" in prompts[0]
+    assert "a.py:1" not in prompts[0]  # fixed findings are not sent back
     report = json.loads((out / "findings.json").read_text())
     assert report["round"] == 2
     repeats = {f["file"]: f.get("repeat_of") for f in report["findings"]}
@@ -435,6 +449,8 @@ def test_repeat_needs_matching_lines():
     assert review.repeat_of({"file": "a.py", "line": 40}, [old]) is None
     assert review.repeat_of({"file": "a.py", "line": None}, [old]) is old
     assert review.repeat_of({"file": "a.py", "line": 5}, [{**old, "line": 12}]) is not None
+    assert review.repeat_of({"file": "a.py", "line": 40}, [{**old, "line": 12}]) is None
+    assert review.repeat_of({"file": "b.py", "line": 12}, [{**old, "line": 12}]) is None
 
 
 def test_round_state_lives_in_git_dir_not_worktree(branch_repo, tmp_path, monkeypatch):

@@ -18,7 +18,7 @@ _Last updated: 2026-10-23 (session: review round cap)._
 2. Rejected findings from earlier rounds go into the Cursor prompt, and new
    findings near one are marked `repeat_of`. Skill, docs/testing.md and
    DECISIONS (2026-10-23) updated.
-3. Default gate: **375 passed, 11 skipped, 49 deselected** (macOS).
+3. Default gate: **376 passed, 11 skipped, 49 deselected** (macOS).
 
 ## Next steps
 
