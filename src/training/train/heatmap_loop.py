@@ -286,6 +286,9 @@ def evaluate_heatmap_run(
     config_path = run_dir / "config.json"
     saved = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
     run_cfg = saved or train_cfg
+    run_fps = float(run_cfg.get("fps", fps))
+    if run_fps != float(fps):
+        raise ValueError(f"{run_dir.name} trained at {run_fps} fps but is being scored at {fps} fps")
     if saved.get("loss"):
         # Filter to current fields: older runs also saved the removed time_* knobs.
         known = {f.name for f in fields(HeatmapLossConfig)}

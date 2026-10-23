@@ -99,3 +99,13 @@ def test_eval_decodes_with_the_settings_the_run_trained_with(tmp_path, monkeypat
     heatmap_loop.evaluate_heatmap_run(tmp_path, tmp_path / "test.h5", {"heatmap_peak_threshold": 0.1}, 5.0)
     assert seen["decode"].peak_threshold == 0.3
     assert seen["model_cfg"]["heatmap_peak_threshold"] == 0.3
+
+
+def test_eval_refuses_another_fps(tmp_path):
+    import json
+
+    from training.train import heatmap_loop
+
+    (tmp_path / "config.json").write_text(json.dumps({"fps": 5.0}))
+    with pytest.raises(ValueError, match="trained at 5.0 fps"):
+        heatmap_loop.evaluate_heatmap_run(tmp_path, tmp_path / "test.h5", {}, 10.0)
