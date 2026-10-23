@@ -139,15 +139,19 @@ def test_crop_sidecar_of_another_frame_size_is_rejected(tmp_path):
         pre.preprocess(tmp_path, raw, tmp_path / "clip.mp4", annotations, tmp_path / "out.h5", crop_h5_path=crop)
 
 
-def test_a_video_with_its_segments_removed_drops_its_old_preprocessed_file(tmp_path):
+@pytest.mark.parametrize("n_frames, segments", [
+    (10, []),  # every segment removed
+    (0, [{"start_time": 0.2, "end_time": 1.0}]),  # no frames to sample
+])
+def test_a_rebuild_with_nothing_to_write_drops_the_old_preprocessed_file(tmp_path, n_frames, segments):
     import json
 
     from training.preprocess.preprocessor import Hdf5Preprocessor, PreprocessConfig
 
     raw = tmp_path / "raw.h5"
-    _write_pose_h5(raw, 10, 1280, 720)
+    _write_pose_h5(raw, n_frames, 1280, 720)
     annotations = tmp_path / "clip.mp4.json"
-    annotations.write_text(json.dumps({"video_path": "clip.mp4", "segments": []}))
+    annotations.write_text(json.dumps({"video_path": "clip.mp4", "segments": segments}))
     old = tmp_path / "out.h5"
     old.write_bytes(b"old build")
     pre = Hdf5Preprocessor(

@@ -126,6 +126,7 @@ class Hdf5Preprocessor:
                 sample_idx = _sample_indices(raw.timestamps, self.cfg.target_fps)
                 if sample_idx.size == 0:
                     logger.warning("No frames sampled for %s", video_path.name)
+                    output_path.unlink(missing_ok=True)
                     return None
 
                 # Optional far-crop side-car (scripts/extract_crop_poses.py), written
