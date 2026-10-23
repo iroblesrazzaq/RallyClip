@@ -25,9 +25,11 @@ sentinel, exactly as v1 fills an undetected far player.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
+
+from training.features.v1 import FeatureSetV1
 
 DEFAULT_SLOTS = ("near", "far", "crop0", "crop1")
 NEARFAR_SLOTS = ("near", "far")
@@ -139,75 +141,24 @@ class FeatureSetV2:
             if prev_kp_vel is not None and prev_kp_vel.shape == kp_vel.shape:
                 kp_accel = self._keypoint_acceleration(kp_vel, prev_kp_vel, dt)
 
-        feature[0] = 1.0
-        idx = 1
-        feature[idx:idx + 4] = box; idx += 4
-        feature[idx:idx + 2] = centroid; idx += 2
-        feature[idx:idx + 2] = velocity; idx += 2
-        feature[idx:idx + 2] = acceleration; idx += 2
-        feature[idx:idx + num_keypoints * 2] = keypoints.flatten(); idx += num_keypoints * 2
-        feature[idx:idx + num_keypoints] = conf; idx += num_keypoints
-        feature[idx:idx + num_keypoints * 2] = kp_vel.flatten(); idx += num_keypoints * 2
-        feature[idx:idx + num_keypoints * 2] = kp_accel.flatten(); idx += num_keypoints * 2
-        feature[idx:idx + 14] = limb_lengths; idx += 14
-        feature[idx] = box_conf
-        return feature
+        # Block order matches SLOT_GROUPS.
+        return np.concatenate([
+            [1.0], box, centroid, velocity, acceleration,
+            keypoints.flatten(), conf, kp_vel.flatten(), kp_accel.flatten(),
+            limb_lengths, [box_conf],
+        ]).astype(np.float32)
 
-    # --- helpers (identical semantics to v1) ----------------------------
-    @staticmethod
-    def _centroid(box: np.ndarray) -> Tuple[float, float]:
-        return (float(box[0] + box[2]) / 2, float(box[1] + box[3]) / 2)
-
-    @staticmethod
-    def _velocity(curr, prev, dt: float):
-        if dt <= 0:
-            return (0.0, 0.0)
-        return ((curr[0] - prev[0]) / dt, (curr[1] - prev[1]) / dt)
-
-    @staticmethod
-    def _acceleration(curr, prev, dt: float):
-        if dt <= 0:
-            return (0.0, 0.0)
-        return ((curr[0] - prev[0]) / dt, (curr[1] - prev[1]) / dt)
-
-    @staticmethod
-    def _keypoint_velocity(curr: np.ndarray, prev: np.ndarray, dt: float) -> np.ndarray:
-        if dt <= 0:
-            return np.zeros((curr.shape[0], 2), dtype=np.float32)
-        return (curr - prev) / dt
-
-    @staticmethod
-    def _keypoint_acceleration(curr_vel: np.ndarray, prev_vel: np.ndarray, dt: float) -> np.ndarray:
-        if dt <= 0:
-            return np.zeros_like(curr_vel, dtype=np.float32)
-        return (curr_vel - prev_vel) / dt
-
-    @staticmethod
-    def _motion_parts(prev_velocities: Dict | None, prefix: str):
-        if not prev_velocities:
-            return None, None
-        value = prev_velocities.get(prefix)
-        if value is None:
-            return None, None
-        if isinstance(value, dict):
-            return value.get("centroid"), value.get("keypoints")
-        if isinstance(value, tuple) and len(value) == 2:
-            return value, None
-        return None, None
-
-    @staticmethod
-    def _limb_lengths(keypoints: np.ndarray) -> np.ndarray:
-        connections = [
-            (5, 7), (7, 9), (6, 8), (8, 10), (11, 13), (13, 15), (12, 14), (14, 16),
-            (5, 6), (11, 12), (5, 11), (6, 12), (6, 5), (12, 11),
-        ]
-        out: List[float] = []
-        for i, j in connections:
-            if i < len(keypoints) and j < len(keypoints):
-                out.append(float(np.sqrt(np.sum((keypoints[i] - keypoints[j]) ** 2))))
-            else:
-                out.append(-1.0)
-        return np.array(out, dtype=np.float32)
+    # --- helpers: shared with v1 so the two layouts cannot drift ---------
+    _centroid = staticmethod(FeatureSetV1._centroid)
+    _velocity = staticmethod(FeatureSetV1._velocity)
+    _acceleration = staticmethod(FeatureSetV1._acceleration)
+    _keypoint_velocity = staticmethod(FeatureSetV1._keypoint_velocity)
+    _keypoint_acceleration = staticmethod(FeatureSetV1._keypoint_acceleration)
+    _motion_parts = staticmethod(FeatureSetV1._motion_parts)
+    # v1's 14 limb pairs include (6, 5) and (12, 11), which repeat (5, 6) and
+    # (11, 12). The shipped v0.6 model was trained on this layout, so the
+    # duplicates stay.
+    _limb_lengths = staticmethod(FeatureSetV1._limb_lengths)
 
 
 @dataclass

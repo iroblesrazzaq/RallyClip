@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from dataclasses import dataclass
@@ -38,8 +39,9 @@ class PreprocessConfig:
     expect_height: int = CANONICAL_HEIGHT
     # "classic": near/far from the full frame (PlayerAssigner).
     # "netline": near from the full frame below the net line, far from the crop
-    # side-car above it, picked in court coordinates. Needs court_geometry_dir
-    # (training_data/court_keypoints/infer_videos.py output) and crop poses.
+    # side-car above it, picked in court coordinates. Needs crop poses and
+    # court_geometry_dir: one <video stem>.json per video from the court
+    # line-map model (net_line_px, homography_px_to_m, width, height).
     slot_mode: str = "classic"
     court_geometry_dir: Optional[str] = None
 
@@ -69,21 +71,32 @@ class Hdf5Preprocessor:
         if not annotations_path.exists():
             logger.warning("No annotations for %s; skipping", video_path.name)
             return None
+        if crop_h5_path is not None and not Path(crop_h5_path).exists():
+            crop_h5_path = None
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         geometry = None
         if self.cfg.slot_mode == "netline":
-            if crop_h5_path is None or not Path(crop_h5_path).exists():
+            if crop_h5_path is None:
                 raise FileNotFoundError(f"slot_mode=netline needs crop poses for {video_path.name}")
-            geometry = CourtGeometry.load(self.cfg.court_geometry_dir, video_path.stem)
+            geometry = CourtGeometry.load(
+                self.cfg.court_geometry_dir, video_path.stem, (self.cfg.expect_width, self.cfg.expect_height)
+            )
         elif self.cfg.slot_mode != "classic":
             raise ValueError(f"Unknown slot_mode {self.cfg.slot_mode!r}")
+
+        # The mask is resolved before the skip check so it can be part of the
+        # fingerprint: a recomputed court (court.force, a detector change, the
+        # default-mask fallback) must invalidate the preprocessed file.
+        court_mask = self._court_mask(data_root, video_path)
         fingerprint_payload = build_preprocess_fingerprint(
             annotations_path=annotations_path,
             raw_h5_path=raw_h5_path,
             target_fps=self.cfg.target_fps,
             court_model_path=self.cfg.court_model_path,
             court_target_time=self.cfg.court_target_time,
+            court_mask=court_mask,
+            frame_size=(self.cfg.expect_width, self.cfg.expect_height),
             crop_h5_path=crop_h5_path,
         )
         if geometry is not None:
@@ -102,163 +115,64 @@ class Hdf5Preprocessor:
             logger.warning("No labeled segments for %s; skipping", video_path.name)
             return None
 
-        if self.cfg.court_enabled:
-            cache = self.court_cache.get_or_create(data_root, video_path, force=self.cfg.court_force)
-            court_mask = cache.mask
-            if not cache.success or court_mask is None:
-                # Fall back to the default mask, matching runtime behaviour
-                # (data_preprocessor.compute_court_mask). Passing frames through
-                # unfiltered was the previous training behaviour and is worse:
-                # spectators and adjacent-court players leak straight into the
-                # player slots, and for the far-crop slots that is pure noise in
-                # the exact block the crop exists to populate.
-                court_mask = _default_court_mask(self.cfg.expect_width, self.cfg.expect_height)
-                logger.warning(
-                    "No court mask for %s (detection failed) -> using DEFAULT court mask",
-                    video_path.name,
-                )
-        else:
-            court_mask = None
-
         tmp_path = tmp_path_for(output_path)
+        crop = None
         try:
             with h5py.File(raw_h5_path, "r") as raw_h5:
                 _assert_canonical_dims(raw_h5, video_path, self.cfg.expect_width, self.cfg.expect_height)
-
-                frame_indices = raw_h5["frames"]["frame_index"][:]
-                timestamps = raw_h5["frames"]["timestamps"][:]
-                offsets = raw_h5["frames"]["frame_offsets"][:]
-                boxes = raw_h5["detections"]["boxes"]
-                box_conf = raw_h5["detections"]["box_conf"]
-                keypoints = raw_h5["detections"]["keypoints"]
-                keypoint_conf = raw_h5["detections"]["keypoint_conf"]
-
-                sample_idx = _sample_indices(timestamps, self.cfg.target_fps)
+                raw = _PoseFrames(raw_h5)
+                sample_idx = _sample_indices(raw.timestamps, self.cfg.target_fps)
                 if sample_idx.size == 0:
                     logger.warning("No frames sampled for %s", video_path.name)
                     return None
 
-                # Optional far-crop side-car (scripts/extract_crop_poses.py). It is
-                # written on the same frame grid as the raw pose h5, so it indexes
-                # with the same sample_idx. Verify that rather than assume it: a
-                # silent misalignment would attach one frame's crop players to
-                # another frame's targets.
-                crop_src = crop_boxes = crop_bconf = crop_kps = crop_kconf = crop_off = None
-                if crop_h5_path is not None and Path(crop_h5_path).exists():
-                    crop_src = h5py.File(crop_h5_path, "r")
-                    if not np.array_equal(crop_src["frames"]["frame_index"][:], frame_indices):
-                        crop_src.close()
+                # Optional far-crop side-car (scripts/extract_crop_poses.py), written
+                # on the raw pose h5's frame grid so it indexes with the same
+                # sample_idx. A regenerated raw h5 would silently pair one frame's
+                # crop players with another frame's targets, so check the grids match.
+                if crop_h5_path is not None:
+                    crop = _PoseFrames(h5py.File(crop_h5_path, "r"), owns_file=True)
+                    if not np.array_equal(crop.frame_index, raw.frame_index):
                         raise ValueError(
                             f"Crop side-car frame grid does not match raw poses for "
                             f"{video_path.name}; regenerate it (extract_crop_poses.py)."
                         )
-                    crop_off = crop_src["frames"]["frame_offsets"][:]
-                    crop_boxes = crop_src["detections"]["boxes"]
-                    crop_bconf = crop_src["detections"]["box_conf"]
-                    crop_kps = crop_src["detections"]["keypoints"]
-                    crop_kconf = crop_src["detections"]["keypoint_conf"]
 
                 with h5py.File(tmp_path, "w") as preproc_h5:
                     frames_group = preproc_h5.create_group("frames")
                     det_group = preproc_h5.create_group("detections")
                     players_group = preproc_h5.create_group("players")
 
-                    frames_group.create_dataset("frame_index", data=frame_indices[sample_idx], dtype="i8")
-                    frames_group.create_dataset("timestamps", data=timestamps[sample_idx], dtype="f8")
+                    frames_group.create_dataset("frame_index", data=raw.frame_index[sample_idx], dtype="i8")
+                    frames_group.create_dataset("timestamps", data=raw.timestamps[sample_idx], dtype="f8")
                     frames_group.create_dataset(
                         "frame_offsets", data=np.array([0], dtype=np.int64), maxshape=(None,), chunks=True
                     )
+                    for name, row_shape in _DETECTION_FIELDS.items():
+                        _create_growable(det_group, name, row_shape)
+                    _create_slot_datasets(players_group, ("near", "far"))
+                    # Classic mode keeps the crop as two extra slots; netline mode
+                    # folds the crop pick into the far slot instead.
+                    crop_slots = crop is not None and geometry is None
+                    if crop_slots:
+                        _create_slot_datasets(players_group, CROP_SLOTS)
 
-                    det_group.create_dataset(
-                        "boxes", shape=(0, 4), maxshape=(None, 4), dtype="f4", chunks=True, compression="gzip"
-                    )
-                    det_group.create_dataset(
-                        "box_conf", shape=(0,), maxshape=(None,), dtype="f4", chunks=True, compression="gzip"
-                    )
-                    det_group.create_dataset(
-                        "keypoints",
-                        shape=(0, 17, 2),
-                        maxshape=(None, 17, 2),
-                        dtype="f4",
-                        chunks=True,
-                        compression="gzip",
-                    )
-                    det_group.create_dataset(
-                        "keypoint_conf",
-                        shape=(0, 17),
-                        maxshape=(None, 17),
-                        dtype="f4",
-                        chunks=True,
-                        compression="gzip",
-                    )
-
-                    players_group.create_dataset(
-                        "near", shape=(0, 17, 2), maxshape=(None, 17, 2), dtype="f4", chunks=True, compression="gzip"
-                    )
-                    players_group.create_dataset(
-                        "far", shape=(0, 17, 2), maxshape=(None, 17, 2), dtype="f4", chunks=True, compression="gzip"
-                    )
-                    players_group.create_dataset(
-                        "near_conf", shape=(0, 17), maxshape=(None, 17), dtype="f4", chunks=True, compression="gzip"
-                    )
-                    players_group.create_dataset(
-                        "far_conf", shape=(0, 17), maxshape=(None, 17), dtype="f4", chunks=True, compression="gzip"
-                    )
-                    players_group.create_dataset(
-                        "near_box", shape=(0, 4), maxshape=(None, 4), dtype="f4", chunks=True, compression="gzip"
-                    )
-                    players_group.create_dataset(
-                        "far_box", shape=(0, 4), maxshape=(None, 4), dtype="f4", chunks=True, compression="gzip"
-                    )
-                    players_group.create_dataset(
-                        "near_box_conf", shape=(0,), maxshape=(None,), dtype="f4", chunks=True, compression="gzip"
-                    )
-                    players_group.create_dataset(
-                        "far_box_conf", shape=(0,), maxshape=(None,), dtype="f4", chunks=True, compression="gzip"
-                    )
-                    if crop_src is not None and geometry is None:
-                        _create_crop_datasets(players_group)
-
-                    targets = _build_targets(timestamps[sample_idx], annotations)
+                    targets = _build_targets(raw.timestamps[sample_idx], annotations)
                     preproc_h5.create_dataset("targets", data=targets.astype(np.int8), dtype="i1")
 
                     if self.cfg.save_court_masks and court_mask is not None:
                         preproc_h5.create_dataset("court_mask", data=court_mask, dtype="u1")
 
                     for idx in sample_idx:
-                        start = int(offsets[idx])
-                        end = int(offsets[idx + 1])
-                        frame_boxes = np.array(boxes[start:end], dtype=np.float32)
-                        frame_box_conf = np.array(box_conf[start:end], dtype=np.float32)
-                        frame_kps = np.array(keypoints[start:end], dtype=np.float32)
-                        frame_kp_conf = np.array(keypoint_conf[start:end], dtype=np.float32)
-
-                        filtered = _filter_by_court(
-                            frame_boxes, frame_box_conf, frame_kps, frame_kp_conf, court_mask
-                        )
+                        filtered = _filter_by_court(*raw.frame(idx), court_mask)
                         _append_detections(frames_group, det_group, filtered)
                         if geometry is not None:
-                            cs, ce = int(crop_off[idx]), int(crop_off[idx + 1])
-                            _append_players(players_group, _netline_players(
-                                self.assigner, filtered,
-                                np.asarray(crop_boxes[cs:ce], dtype=np.float32),
-                                np.asarray(crop_bconf[cs:ce], dtype=np.float32),
-                                np.asarray(crop_kps[cs:ce], dtype=np.float32),
-                                np.asarray(crop_kconf[cs:ce], dtype=np.float32),
-                                court_mask, geometry,
-                            ))
-                            continue
-                        _append_players(players_group, self.assigner.assign(filtered))
-
-                        if crop_src is not None:
-                            cs, ce = int(crop_off[idx]), int(crop_off[idx + 1])
-                            _append_crop_slots(players_group, _crop_slots(
-                                np.asarray(crop_boxes[cs:ce], dtype=np.float32),
-                                np.asarray(crop_bconf[cs:ce], dtype=np.float32),
-                                np.asarray(crop_kps[cs:ce], dtype=np.float32),
-                                np.asarray(crop_kconf[cs:ce], dtype=np.float32),
-                                court_mask,
-                            ))
+                            players = _netline_players(self.assigner, filtered, *crop.frame(idx), court_mask, geometry)
+                        else:
+                            players = self.assigner.assign(filtered)
+                        _append_players(players_group, players)
+                        if crop_slots:
+                            _append_crop_slots(players_group, _crop_slots(*crop.frame(idx), court_mask))
 
                     preproc_h5.attrs["target_fps"] = float(self.cfg.target_fps)
                     preproc_h5.attrs["raw_h5"] = str(raw_h5_path)
@@ -271,13 +185,72 @@ class Hdf5Preprocessor:
 
             tmp_path.replace(output_path)
         finally:
-            if crop_src is not None:
-                crop_src.close()
+            if crop is not None:
+                crop.close()
             if tmp_path.exists():
                 tmp_path.unlink(missing_ok=True)
 
         logger.info("Preprocessed %s", output_path)
         return output_path
+
+    def _court_mask(self, data_root: Path, video_path: Path) -> Optional[np.ndarray]:
+        """Court mask for filtering (0 == on court), or None for no filtering."""
+        if not self.cfg.court_enabled:
+            return None
+        cache = self.court_cache.get_or_create(data_root, video_path, force=self.cfg.court_force)
+        if cache.success and cache.mask is not None:
+            return cache.mask
+        # Fall back to the default mask, matching runtime behaviour
+        # (data_preprocessor.compute_court_mask). Passing frames through
+        # unfiltered was the previous training behaviour and is worse:
+        # spectators and adjacent-court players leak straight into the player
+        # slots, and for the far-crop slots that is pure noise in the exact
+        # block the crop exists to populate.
+        mask = _default_court_mask(self.cfg.expect_width, self.cfg.expect_height)
+        logger.warning(
+            "No court mask for %s (detection failed) -> %s",
+            video_path.name,
+            "using DEFAULT court mask" if mask is not None else "default mask missing too, no court filtering",
+        )
+        return mask
+
+
+# Per-detection fields of a pose h5 and their row shapes.
+_DETECTION_FIELDS = {"boxes": (4,), "box_conf": (), "keypoints": (17, 2), "keypoint_conf": (17,)}
+# Per-slot player datasets: "<slot><suffix>" and their row shapes.
+_SLOT_FIELDS = {"": (17, 2), "_conf": (17,), "_box": (4,), "_box_conf": ()}
+
+
+class _PoseFrames:
+    """Ragged per-frame detections of a pose h5 (raw extract or crop side-car)."""
+
+    def __init__(self, h5: h5py.File, owns_file: bool = False) -> None:
+        self._h5 = h5 if owns_file else None
+        self.frame_index = h5["frames"]["frame_index"][:]
+        self.timestamps = h5["frames"]["timestamps"][:]
+        self._offsets = h5["frames"]["frame_offsets"][:]
+        self._fields = [h5["detections"][name] for name in _DETECTION_FIELDS]
+
+    def frame(self, idx: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """(boxes, box_conf, keypoints, keypoint_conf) detected in frame idx."""
+        start, end = int(self._offsets[idx]), int(self._offsets[idx + 1])
+        return tuple(np.asarray(field[start:end], dtype=np.float32) for field in self._fields)
+
+    def close(self) -> None:
+        if self._h5 is not None:
+            self._h5.close()
+
+
+def _create_growable(group: h5py.Group, name: str, row_shape: tuple) -> None:
+    group.create_dataset(
+        name, shape=(0, *row_shape), maxshape=(None, *row_shape), dtype="f4", chunks=True, compression="gzip"
+    )
+
+
+def _create_slot_datasets(players_group: h5py.Group, slots) -> None:
+    for slot in slots:
+        for suffix, row_shape in _SLOT_FIELDS.items():
+            _create_growable(players_group, f"{slot}{suffix}", row_shape)
 
 
 def _assert_canonical_dims(raw_h5: h5py.File, video_path: Path, expect_w: int, expect_h: int) -> None:
@@ -371,6 +344,35 @@ def _build_targets(timestamps: np.ndarray, annotations: Dict) -> np.ndarray:
     return targets
 
 
+DEFAULT_COURT_MASK_PATH = (
+    Path(__file__).resolve().parents[2] / "preprocessing" / "default_court_mask.png"
+)
+
+
+@lru_cache(maxsize=4)
+def _default_court_mask(width: int, height: int) -> Optional[np.ndarray]:
+    """The runtime's fallback mask, resized to the training frame size.
+
+    Same asset and semantics the desktop app uses when live detection fails
+    (0 == on court, 255 == out). It is a majority vote over the hand-annotated
+    golden courts, so it encodes the typical framing rather than this video's --
+    a coarse filter, but far better than none.
+
+    Nearest-neighbour on resize to keep it strictly binary.
+    """
+    if not DEFAULT_COURT_MASK_PATH.exists():
+        logger.warning("Default court mask missing at %s; falling back to no filtering",
+                       DEFAULT_COURT_MASK_PATH)
+        return None
+    mask = cv2.imread(str(DEFAULT_COURT_MASK_PATH), cv2.IMREAD_GRAYSCALE)
+    if mask is None:
+        logger.warning("Default court mask unreadable at %s", DEFAULT_COURT_MASK_PATH)
+        return None
+    if (mask.shape[1], mask.shape[0]) != (width, height):
+        mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
+    return (mask > 127).astype(np.uint8) * 255
+
+
 def _filter_by_court(
     boxes: np.ndarray,
     box_conf: np.ndarray,
@@ -455,35 +457,6 @@ def _append_rows(dataset: h5py.Dataset, data: np.ndarray) -> None:
 CROP_SLOTS = ("crop0", "crop1")
 
 
-DEFAULT_COURT_MASK_PATH = (
-    Path(__file__).resolve().parents[2] / "preprocessing" / "default_court_mask.png"
-)
-
-
-@lru_cache(maxsize=4)
-def _default_court_mask(width: int, height: int) -> Optional[np.ndarray]:
-    """The runtime's fallback mask, resized to the training frame size.
-
-    Same asset and semantics the desktop app uses when live detection fails
-    (0 == on court, 255 == out). It is a majority vote over the hand-annotated
-    golden courts, so it encodes the typical framing rather than this video's --
-    a coarse filter, but far better than none.
-
-    Nearest-neighbour on resize to keep it strictly binary.
-    """
-    if not DEFAULT_COURT_MASK_PATH.exists():
-        logger.warning("Default court mask missing at %s; falling back to no filtering",
-                       DEFAULT_COURT_MASK_PATH)
-        return None
-    mask = cv2.imread(str(DEFAULT_COURT_MASK_PATH), cv2.IMREAD_GRAYSCALE)
-    if mask is None:
-        logger.warning("Default court mask unreadable at %s", DEFAULT_COURT_MASK_PATH)
-        return None
-    if (mask.shape[1], mask.shape[0]) != (width, height):
-        mask = cv2.resize(mask, (width, height), interpolation=cv2.INTER_NEAREST)
-    return (mask > 127).astype(np.uint8) * 255
-
-
 def _feet_on_court(box: np.ndarray, court_mask: Optional[np.ndarray]) -> bool:
     """Feet (bottom-centre) inside the playable court.
 
@@ -553,18 +526,6 @@ def _append_crop_slots(players_group: h5py.Group, slots) -> None:
         _append_rows(players_group[f"{name}_box_conf"], bconf)
 
 
-def _create_crop_datasets(players_group: h5py.Group) -> None:
-    for name in CROP_SLOTS:
-        players_group.create_dataset(
-            name, shape=(0, 17, 2), maxshape=(None, 17, 2), dtype="f4", chunks=True, compression="gzip")
-        players_group.create_dataset(
-            f"{name}_conf", shape=(0, 17), maxshape=(None, 17), dtype="f4", chunks=True, compression="gzip")
-        players_group.create_dataset(
-            f"{name}_box", shape=(0, 4), maxshape=(None, 4), dtype="f4", chunks=True, compression="gzip")
-        players_group.create_dataset(
-            f"{name}_box_conf", shape=(0,), maxshape=(None,), dtype="f4", chunks=True, compression="gzip")
-
-
 # --- net-line slots ------------------------------------------------------------
 # Court meters: origin at the net center, u to the camera's right, v away from
 # the camera. Far-slot gate: doubles half-width plus room to run wide, and from
@@ -585,7 +546,12 @@ class CourtGeometry:
     source_sha256: str
 
     @classmethod
-    def load(cls, geometry_dir: Optional[str], stem: str) -> "CourtGeometry":
+    def load(cls, geometry_dir: Optional[str], stem: str, frame_size: tuple[int, int]) -> "CourtGeometry":
+        """Load <geometry_dir>/<stem>.json (court-model output for one video).
+
+        The net line and homography are in that video's pixels, and the boxes
+        they are applied to are in the normalized frame_size, so the two must match.
+        """
         if not geometry_dir:
             raise ValueError("slot_mode=netline needs preprocess.court_geometry_dir")
         path = Path(geometry_dir) / f"{stem}.json"
@@ -593,8 +559,10 @@ class CourtGeometry:
         data = json.loads(raw)
         if not data.get("net_line_px") or not data.get("homography_px_to_m"):
             raise ValueError(f"Court geometry for {stem} has no net line or homography: {path}")
-        import hashlib
-
+        size = (data.get("width"), data.get("height"))
+        if size != tuple(frame_size):
+            raise ValueError(f"Court geometry for {stem} is for {size[0]}x{size[1]}, frames are "
+                             f"{frame_size[0]}x{frame_size[1]}: {path}")
         a, b = (np.asarray(p, dtype=np.float64) for p in data["net_line_px"])
         return cls(a, b, np.asarray(data["homography_px_to_m"], dtype=np.float64),
                    hashlib.sha256(raw).hexdigest())
@@ -608,9 +576,12 @@ class CourtGeometry:
         """Box bottom lower on screen than the net line at the box's center x."""
         return float(box[3]) > self.net_y_at((float(box[0]) + float(box[2])) / 2)
 
-    def feet_to_court(self, box: np.ndarray) -> tuple[float, float]:
+    def feet_to_court(self, box: np.ndarray) -> Optional[tuple[float, float]]:
+        """Feet (bottom-center) in court meters, or None at or beyond the horizon."""
         x, y = (float(box[0]) + float(box[2])) / 2, float(box[3])
         u, v, w = self.px_to_m @ np.array([x, y, 1.0])
+        if w <= 1e-9:
+            return None
         return float(u / w), float(v / w)
 
 
@@ -632,7 +603,10 @@ def _pick_far(
     for i in range(len(boxes)):
         if not _feet_on_court(boxes[i], court_mask) or geometry.below_net(boxes[i]):
             continue
-        u, v = geometry.feet_to_court(boxes[i])
+        court_xy = geometry.feet_to_court(boxes[i])
+        if court_xy is None:
+            continue
+        u, v = court_xy
         if abs(u) < FAR_MAX_ABS_U and FAR_MIN_V < v < FAR_MAX_V:
             scored.append((abs(u), v, i))
     if not scored:
@@ -654,7 +628,7 @@ def _netline_players(
     """Near = the assigner's near player among full-frame boxes below the net;
     far = _pick_far over the crop. Same near/far layout as PlayerAssigner.assign."""
     below = np.array([geometry.below_net(b) for b in filtered["boxes"]], dtype=bool)
-    near_only = {k: v[below] if len(v) else v for k, v in filtered.items()}
+    near_only = {k: v[below] for k, v in filtered.items()}
     players = assigner.assign(near_only)
     for key, fill in (("far_kps", (1, 17, 2)), ("far_conf", (1, 17)), ("far_box", (1, 4)), ("far_box_conf", (1,))):
         players[key] = np.full(fill, -1.0, dtype=np.float32)

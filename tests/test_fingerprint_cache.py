@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 import h5py
 import numpy as np
@@ -31,6 +30,8 @@ def test_fingerprint_changes_with_annotation(tmp_path):
             target_fps=5,
             court_model_path="m",
             court_target_time=60,
+            court_mask=None,
+            frame_size=(1920, 1080),
         )
     )
     fb = fingerprint_dict(
@@ -40,6 +41,8 @@ def test_fingerprint_changes_with_annotation(tmp_path):
             target_fps=5,
             court_model_path="m",
             court_target_time=60,
+            court_mask=None,
+            frame_size=(1920, 1080),
         )
     )
     assert fa != fb

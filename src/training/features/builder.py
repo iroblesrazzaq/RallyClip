@@ -71,7 +71,8 @@ class FeatureBuilder:
             # far-crop pass can contribute extra ones. Slots absent from the
             # preprocessed file (e.g. crop* on a video with no side-car) resolve
             # to None and are written as the -1 "not observed" sentinel block.
-            slots = tuple(getattr(builder, "slots", ("near", "far")))
+            multi_slot = hasattr(builder, "slots")
+            slots = tuple(builder.slots) if multi_slot else ("near", "far")
             slot_arrays = {}
             for slot in slots:
                 if slot not in players:
@@ -85,8 +86,6 @@ class FeatureBuilder:
             if missing:
                 logger.warning("Feature slots absent from %s (filled with sentinel): %s",
                                preproc_h5.name, ", ".join(missing))
-            near_kps, near_conf, near_box, near_box_conf = slot_arrays["near"]
-            far_kps, far_conf, far_box, far_box_conf = slot_arrays["far"]
 
             dt = 1.0 / float(self.cfg.target_fps)
             feature_vectors = []
@@ -94,7 +93,6 @@ class FeatureBuilder:
             feature_frames = []
             feature_times = []
 
-            multi_slot = hasattr(builder, "slots")
             prev_slots = {slot: None for slot in slots}
             prev_motion = {slot: {"centroid": None, "keypoints": None} for slot in slots}
 

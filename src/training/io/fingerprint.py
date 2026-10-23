@@ -4,8 +4,10 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from uuid import uuid4
+
+import numpy as np
 
 
 def file_sha256(path: Path, *, chunk_size: int = 1 << 20) -> str:
@@ -31,16 +33,23 @@ def build_preprocess_fingerprint(
     target_fps: float,
     court_model_path: str,
     court_target_time: Optional[int],
+    court_mask: Optional[np.ndarray],
+    frame_size: Tuple[int, int],
     crop_h5_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     return {
-        "kind": "preprocess_v1",
+        "kind": "preprocess_v2",
         "annotations_sha256": file_sha256(annotations_path),
         "raw_h5_sha256": file_sha256(raw_h5_path),
         "target_fps": float(target_fps),
         "court_model_path": str(court_model_path),
         # None => midpoint anchor; keep it distinct from any int in the hash.
         "court_target_time": ("middle" if court_target_time is None else int(court_target_time)),
+        # The mask actually used (detected, default fallback, or None when court
+        # filtering is off), so a recomputed or disabled court invalidates the file.
+        "court_mask_sha256": (None if court_mask is None
+                              else hashlib.sha256(np.ascontiguousarray(court_mask).tobytes()).hexdigest()),
+        "frame_size": [int(frame_size[0]), int(frame_size[1])],
         # None => no far-crop side-car. Including its hash means adding or
         # regenerating crop poses invalidates the preprocessed cache.
         "crop_h5_sha256": (file_sha256(crop_h5_path)
