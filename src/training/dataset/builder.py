@@ -29,6 +29,20 @@ class DatasetConfig:
     drop_slots: Tuple[str, ...] = ()
 
 
+def kept_feature_columns(feature_set: str, drop_groups=(), drop_slots=()) -> Optional[np.ndarray]:
+    """Cached-feature columns a run keeps after its ablation drops (None = all).
+    Anything reading the cached features for a run must apply the same cut."""
+    if not drop_groups and not drop_slots:
+        return None
+    from training.features.registry import FeatureRegistry
+    from training.features.v2 import FeatureSetV2, kept_columns
+
+    builder_cls = FeatureRegistry().get(feature_set)
+    if not issubclass(builder_cls, FeatureSetV2):
+        raise ValueError(f"Feature ablation needs a v2 feature set, got {feature_set}")
+    return kept_columns(builder_cls.slots, tuple(drop_groups), tuple(drop_slots))
+
+
 class DatasetBuilder:
     def __init__(self, cfg: DatasetConfig) -> None:
         self.cfg = cfg
@@ -235,17 +249,10 @@ class DatasetBuilder:
         return output_dir
 
     def _kept_columns(self, feature_set: str) -> Optional[np.ndarray]:
-        if not self.cfg.drop_feature_groups and not self.cfg.drop_slots:
-            return None
-        from training.features.registry import FeatureRegistry
-        from training.features.v2 import FeatureSetV2, kept_columns
-
-        builder_cls = FeatureRegistry().get(feature_set)
-        if not issubclass(builder_cls, FeatureSetV2):
-            raise ValueError(f"Feature ablation needs a v2 feature set, got {feature_set}")
-        keep = kept_columns(builder_cls.slots, self.cfg.drop_feature_groups, self.cfg.drop_slots)
-        logger.info("Feature ablation: keeping %d columns (drop groups=%s slots=%s)", len(keep),
-                    list(self.cfg.drop_feature_groups), list(self.cfg.drop_slots))
+        keep = kept_feature_columns(feature_set, self.cfg.drop_feature_groups, self.cfg.drop_slots)
+        if keep is not None:
+            logger.info("Feature ablation: keeping %d columns (drop groups=%s slots=%s)", len(keep),
+                        list(self.cfg.drop_feature_groups), list(self.cfg.drop_slots))
         return keep
 
     @staticmethod

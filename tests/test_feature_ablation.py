@@ -27,3 +27,12 @@ def test_drop_box_conf_is_last_column_of_each_slot():
 def test_unknown_group_raises():
     with pytest.raises(ValueError):
         kept_columns(NEARFAR_SLOTS, ("speed",))
+
+
+def test_kept_feature_columns_resolves_the_feature_set():
+    from training.dataset.builder import kept_feature_columns
+
+    assert kept_feature_columns("v2_nearfar") is None
+    np.testing.assert_array_equal(kept_feature_columns("v2_nearfar", drop_slots=["far"]), np.arange(145))
+    with pytest.raises(ValueError, match="v2 feature set"):
+        kept_feature_columns("v1", drop_slots=["far"])

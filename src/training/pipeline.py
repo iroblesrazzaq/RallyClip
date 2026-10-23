@@ -23,7 +23,7 @@ from training.artifact_paths import (
     target_fps_from_config,
     yolo_conf_imgsz_tags,
 )
-from training.dataset.builder import DatasetBuilder, DatasetConfig
+from training.dataset.builder import DatasetBuilder, DatasetConfig, kept_feature_columns
 from training.dataset.hdf5_dataset import Hdf5SequenceDataset
 from training.dataset.splits import SplitConfig, assert_no_holdout_overlap
 from training.eval.checkpoint import build_model_from_checkpoint, evaluate_checkpoint
@@ -31,7 +31,13 @@ from training.eval.evaluator import SegmentEvalConfig
 from training.features.builder import FeatureBuildConfig, FeatureBuilder
 from training.io.config import resolve_court_model_path
 from training.io.videos import resolve_videos
-from training.normalize.normalize import CANONICAL_HEIGHT, CANONICAL_WIDTH, NormalizeConfig, normalize_video
+from training.normalize.normalize import (
+    CANONICAL_HEIGHT,
+    CANONICAL_WIDTH,
+    NormalizeConfig,
+    is_canonical,
+    normalize_video,
+)
 from training.paths import (
     annotations_dir,
     datasets_dir,
@@ -379,7 +385,10 @@ def _run_normalize(config: Dict[str, Any]) -> None:
         source_dir = data_root / source_dir_name
     if not source_dir.exists():
         source_dir = source_videos_dir(data_root)
-    # Fall back to raw_videos as source for in-place migration when source_videos/ absent.
+    if not source_dir.exists():
+        # Roots from before the videos/norm=... layout keep their inputs in raw_videos/.
+        source_dir = data_root / "raw_videos"
+    # Last resort: re-check the normalized tree itself in place.
     input_dir = source_dir if source_dir.exists() else raw_dir
 
     explicit = config.get("videos") or normalize_cfg.get("videos")
@@ -410,6 +419,14 @@ def _run_normalize(config: Dict[str, Any]) -> None:
             raise FileNotFoundError(f"Source video not found for normalize: {src}")
         dst = raw_dir / src.name
         before = dst.exists()
+        in_place = src.resolve() == dst.resolve()
+        if before and not in_place and not cfg.overwrite and not is_canonical(dst, cfg):
+            # The tree's path does not encode these settings, so replacing the
+            # video would leave its poses and features on the old frame grid.
+            raise ValueError(
+                f"{dst} does not match normalize settings {cfg.width}x{cfg.height}@{cfg.fps:g}fps; "
+                "set overwrite_all to rebuild everything derived from it, or use a fresh data_root."
+            )
         normalize_video(src, dst, cfg)
         if before and not cfg.overwrite:
             skipped += 1
@@ -903,9 +920,14 @@ def _evaluate_postprocess_run(
         logger.warning("Skipping %s; feature file missing: %s", run_dir.name, feature_path)
         return None
 
+    keep = kept_feature_columns(
+        feature_set, dataset_cfg.get("drop_feature_groups", ()), dataset_cfg.get("drop_slots", ())
+    )
     scaler = joblib.load(scaler_path)
     with h5py.File(feature_path, "r") as h5f:
         features = np.asarray(h5f["features"][:], dtype=np.float32)
+        if keep is not None:
+            features = features[:, keep]   # the run's scaler was fitted on the ablated columns
         targets = np.asarray(h5f["targets"][:], dtype=np.int8)
         timestamps = np.asarray(h5f["timestamps"][:], dtype=np.float64)
     scaled = scaler.transform(features.reshape(-1, features.shape[-1])).reshape(features.shape).astype(np.float32)
