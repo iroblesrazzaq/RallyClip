@@ -306,23 +306,15 @@ def _is_valid_preprocessed_h5(path: Path) -> bool:
 def _sample_indices(timestamps: np.ndarray, target_fps: float) -> np.ndarray:
     if timestamps.size == 0 or target_fps <= 0:
         return np.array([], dtype=np.int64)
+    # Each target time is t0 + k*step (an accumulated t += step drifts) and is
+    # matched with a 1us tolerance, so a source already on the target grid
+    # (normalize-then-extract) keeps every frame exactly once.
     step = 1.0 / target_fps
-    target_times = []
-    t = timestamps[0]
-    while t <= timestamps[-1] + 1e-6:
-        target_times.append(t)
-        t += step
-    target_times = np.array(target_times, dtype=np.float64)
-
-    sampled_indices = []
-    cursor = 0
-    for tt in target_times:
-        while cursor < len(timestamps) and timestamps[cursor] < tt:
-            cursor += 1
-        if cursor >= len(timestamps):
-            break
-        sampled_indices.append(cursor)
-    return np.array(sampled_indices, dtype=np.int64)
+    eps = 1e-6
+    count = int(np.floor((timestamps[-1] - timestamps[0]) / step + eps)) + 1
+    target_times = timestamps[0] + np.arange(count, dtype=np.float64) * step
+    sampled = np.searchsorted(timestamps, target_times - eps, side="left")
+    return sampled[sampled < len(timestamps)].astype(np.int64)
 
 
 def _build_targets(timestamps: np.ndarray, annotations: Dict) -> np.ndarray:

@@ -21,6 +21,19 @@ def test_sample_indices_identity_at_matching_fps():
     assert len(set(sampled.tolist())) == len(sampled)
 
 
+def test_sample_indices_keeps_a_long_rational_grid():
+    from fractions import Fraction
+
+    # PyAV timestamps of a normalized 5 fps video; t += 0.2 drifts off this grid.
+    timestamps = np.array([float(Fraction(i, 5)) for i in range(20000)])
+    assert _sample_indices(timestamps, target_fps=5.0).tolist() == list(range(20000))
+
+
+def test_sample_indices_downsamples_60_to_5():
+    timestamps = np.arange(600, dtype=np.float64) / 60.0
+    assert _sample_indices(timestamps, target_fps=5.0).tolist() == list(range(0, 600, 12))
+
+
 def test_build_targets_segments():
     annotations = {
         "segments": [
