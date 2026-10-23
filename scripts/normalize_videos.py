@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from training.normalize.normalize import NormalizeConfig, normalize_video  # noqa: E402
+from training.normalize.normalize import NormalizeConfig, is_canonical, normalize_video  # noqa: E402
 from training.paths import raw_videos_dir, resolve_data_root  # noqa: E402
 
 
@@ -67,6 +67,14 @@ def main() -> int:
             logging.info("Skipping flipped variant: %s", src)
             continue
         dst = out_dir / src.name
+        if dst.exists() and not is_canonical(dst, cfg):
+            # Same guard as the pipeline's normalize step: the pose tree does not
+            # encode these settings, so replacing the video would leave its
+            # poses and features on the old frame grid.
+            raise SystemExit(
+                f"{dst} does not match {cfg.width}x{cfg.height}@{cfg.fps:g}fps; run the pipeline "
+                "with overwrite_all to rebuild everything derived from it, or use a fresh data_root."
+            )
         normalize_video(src, dst, cfg)
 
     logging.info("Normalized %d videos into %s", len(sources), out_dir)

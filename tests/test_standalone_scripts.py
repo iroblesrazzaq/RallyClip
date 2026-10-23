@@ -103,3 +103,24 @@ def test_cache_court_masks_keeps_the_midpoint_default(config_path, monkeypatch):
 @pytest.mark.parametrize("value, expected", [(None, None), (60, 60), ("30", 30)])
 def test_court_target_time(value, expected):
     assert court_target_time({"target_time": value}) == expected
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_normalize_script_refuses_to_replace_a_video_with_other_settings(tmp_path, monkeypatch, overwrite):
+    script = _load_script("normalize_videos")
+    src = tmp_path / "src" / "m.mp4"
+    src.parent.mkdir()
+    src.write_bytes(b"")
+    dst = raw_videos_dir(tmp_path) / "m.mp4"
+    dst.parent.mkdir(parents=True)
+    dst.write_bytes(b"old")
+    encoded = []
+    monkeypatch.setattr(script, "is_canonical", lambda path, cfg: False)
+    monkeypatch.setattr(script, "normalize_video", lambda s, d, cfg: encoded.append(d))
+    argv = ["normalize_videos", "--data-root", str(tmp_path), "--inputs", str(src), "--fps", "10"]
+    monkeypatch.setattr("sys.argv", argv + (["--overwrite"] if overwrite else []))
+
+    with pytest.raises(SystemExit, match="overwrite_all"):
+        script.main()
+    assert encoded == []
+    assert dst.read_bytes() == b"old"
