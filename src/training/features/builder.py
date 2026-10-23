@@ -61,6 +61,8 @@ class FeatureBuilder:
             labeled_idx = np.where(targets >= 0)[0]
             if labeled_idx.size == 0:
                 logger.warning("No labeled frames in %s", preproc_h5)
+                # The dataset step reads features by name, so an older build must not stand in.
+                output_path.unlink(missing_ok=True)
                 return None
 
             timestamps = h5f["frames"]["timestamps"][:]

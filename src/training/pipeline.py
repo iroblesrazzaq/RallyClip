@@ -467,6 +467,9 @@ def _run_normalize(config: Dict[str, Any]) -> None:
         else:
             processed += 1
 
+    if config.get("videos"):
+        # Later steps must read the normalized copies, not an absolute source path.
+        config["videos"] = [Path(video).name for video in config["videos"]]
     logger.info("Normalize summary: processed=%d skipped_existing=%d out=%s", processed, skipped, raw_dir)
 
 

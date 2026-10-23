@@ -64,3 +64,13 @@ def test_train_saves_the_feature_drops_for_the_sweep(tmp_path, monkeypatch):
     })
     assert seen["dataset"]["drop_feature_groups"] == ["derivatives"]
     assert seen["dataset"]["drop_slots"] == ["far"]
+
+
+def test_absolute_source_paths_point_later_steps_at_the_normalized_copy(tmp_path, calls):
+    source = tmp_path / "elsewhere" / "m.mp4"
+    source.parent.mkdir()
+    source.write_bytes(b"")
+    config = {**_config(tmp_path), "videos": [str(source)]}
+    pipeline._run_normalize(config)
+    assert calls == [(source, raw_videos_dir(tmp_path) / "m.mp4")]
+    assert config["videos"] == ["m.mp4"]
