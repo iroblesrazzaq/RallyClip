@@ -546,7 +546,8 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
             save_court_masks=bool(preprocess_cfg.get("save_court_masks", False)),
             court_model_path=court_model_path,
             court_target_time=court_target_time,
-            court_force=bool(court_cfg.get("force", False)),
+            # overwrite_all rebuilds everything derived from the videos, masks included.
+            court_force=bool(config.get("overwrite_all") or court_cfg.get("force", False)),
             court_enabled=bool(court_cfg.get("enabled", True)),
             expect_width=int(normalize_cfg.get("width", CANONICAL_WIDTH)),
             expect_height=int(normalize_cfg.get("height", CANONICAL_HEIGHT)),
@@ -793,11 +794,8 @@ def _run_train(config: Dict[str, Any]) -> None:
         "drop_slots": list(dataset_cfg.get("drop_slots", ())),
     }
     # Persist yolo/feature tags so postprocess can rebuild feature roots from config.json.
-    train_cfg["yolo"] = {
-        "model": yolo_cfg.get("model"),
-        "conf": yolo_cfg.get("conf"),
-        "imgsz": yolo_cfg.get("imgsz"),
-    }
+    # Unset fields are left out so readers apply the same defaults extraction did.
+    train_cfg["yolo"] = {k: yolo_cfg[k] for k in ("model", "conf", "imgsz") if yolo_cfg.get(k) is not None}
     train_cfg["preprocess"] = {"target_fps": train_cfg["fps"]}
     train_cfg["features"] = {"feature_set": features_cfg.get("feature_set", "v1")}
 

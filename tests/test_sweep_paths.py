@@ -35,3 +35,29 @@ def test_run_with_saved_yolo_uses_it(tmp_path):
     cfg = {"yolo": {"model": "yolov8n-pose.pt", "conf": 0.25, "imgsz": 960}, "preprocess": {"target_fps": 5.0}}
     root = pipeline._run_feature_root(tmp_path, tmp_path / "cv_yolon1440_f0", cfg, 5.0)
     assert "imgsz=960" in str(root)
+
+
+def test_unset_yolo_fields_are_not_saved_as_null(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(pipeline, "train_loop", lambda dataset_dir, run_dir, cfg: seen.update(cfg))
+    pipeline._run_train({"data_root": str(tmp_path), "yolo": {"model": "yolov8n-pose.pt"}})
+    assert seen["yolo"] == {"model": "yolov8n-pose.pt"}
+    # The sweep reads it back with extraction's default imgsz instead of int(None).
+    root = pipeline._run_feature_root(tmp_path, tmp_path / "run", seen, 5.0)
+    assert "imgsz=1920" in str(root)
+
+
+class _Captured(Exception):
+    pass
+
+
+@pytest.mark.parametrize("config, force", [({}, False), ({"overwrite_all": True}, True), ({"court": {"force": True}}, True)])
+def test_overwrite_all_rebuilds_court_masks(tmp_path, monkeypatch, config, force):
+    def capture(**cfg):
+        raise _Captured(cfg["court_force"])
+
+    monkeypatch.setattr(pipeline, "resolve_videos", lambda *a: ["m.mp4"])
+    monkeypatch.setattr(pipeline, "PreprocessConfig", capture)
+    with pytest.raises(_Captured) as info:
+        pipeline._run_preprocess({"data_root": str(tmp_path), "yolo": {"model": "yolov8n-pose.pt"}, **config})
+    assert info.value.args[0] is force
