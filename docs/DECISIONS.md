@@ -479,3 +479,23 @@ data/labels/metric, not optimization.** Do not re-run these:
   2 of them `artifact-*` (about one artifact per app release). Revisit if
   artifact or prerelease tags start piling up. `/releases/latest` is still not
   an option (it can return an artifact release).
+
+## 2026-10-22 — The v0.6 training code lands on main, trimmed to what shipped
+
+- **What:** A fresh branch from main brings in the training work from #61
+  (TCN heatmap head, net-line slots, v2_nearfar features, normalize, pose
+  manifests) and replaces that PR. Arms that never shipped are deleted:
+  `e2e_seg`, the LSTM/GRU heatmap backbones, the soft-argmax time loss, the LR
+  finder and 24 one-off configs. `configs/train/v060_netline.yaml` records the
+  shipped recipe. Training eval decodes hybrid/peakpair with the runtime
+  `infer.heatmap_decode` (pairdp stays training-only). The dataset builder no
+  longer puts a mirror of a val/test or LOSO held-out video in train.
+- **Why:** Main is the only place training code is reviewed and tested; #61
+  carried dead arms and leaked held-out footage into train through flips.
+  Using the runtime decode means val/test numbers measure what the app ships.
+- **Rejected:** Keeping the dead arms behind config flags (unused code still
+  needs tests and review). A separate long-lived training branch (it drifted
+  from the runtime before).
+- **Known approximations kept for parity with the shipped model:** boundary
+  markers at a window edge are still trained on; frame metrics use un-stitched
+  windows; the last partial window of a video is dropped.

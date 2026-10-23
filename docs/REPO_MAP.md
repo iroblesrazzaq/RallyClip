@@ -27,7 +27,7 @@ repo). Sibling layout:
 | `src/` | The Python package (8 subpackages, see seams below). `package-dir = src`. |
 | `tests/` | Pytest suites + `tests/fixtures/` (court goldens ~11MB, golden CLI clip, quality GT) + `tests/helpers/`. |
 | `scripts/` | Training/data tooling + `scripts/export_heatmap_model.py` (TCN ONNX export) + `scripts/fetch_artifact.py` / `scripts/release/pack_artifact.sh` (GitHub artifact zip) + `scripts/perf/` benchmarks + `scripts/release/` (sign, DMG, notarize, CI cert import) + `scripts/agent/` (local review gate). Not shipped. |
-| `configs/` | Training YAMLs (`configs/train/base.yaml`, `holdout.yaml`, `configs/extract/*`). |
+| `configs/` | Training YAMLs (`configs/train/base.yaml`, `holdout.yaml`, `v060_netline.yaml` = the shipped v0.6 recipe, `configs/extract/*`). |
 | `models/` | Tracked **manifests + `rallyclip_v0.5.0/SHA256SUMS`**. ONNX is GitHub Release `artifact-rallyclip_v0.5.0`; `python scripts/fetch_artifact.py` unpacks into `models/rallyclip_v0.5.0/` (gitignored). `RallyClip.spec` still packs that folder into the DMG. |
 | `docs/` | This harness + plans (Tier 3) + `docs/perf/` (streaming-perf loop journal) + `docs/training.md` + `docs/artifact-registry-plan.md` (ONNX off git). |
 | `packaging/`, `RallyClip.spec` | PyInstaller/macOS packaging. |
@@ -49,7 +49,7 @@ repo). Sibling layout:
 - **Pose extraction (ONNX runtime)** → `src/extraction/yolo_onnx_runner.py` + `src/extraction/pose_extractor.py` (dispatch on weights extension), `tests/test_yolo_onnx_runner.py`, `docs/onnx-pose-parity-plan.md`, `../YOLO-ONNX/scripts/parity_v8n_960.py`.
 - **Court detection** → `src/preprocessing/court_detector_impl.py`, `tests/test_court_detection_deterministic.py`, `tests/helpers/court_fixtures.py`; regen fixtures with `scripts/court_fixtures_gen.py`.
 - **Features/preprocessing (runtime)** → `src/features/feature_engineer.py`, `src/preprocessing/data_preprocessor.py`, contract tests `tests/test_runtime_*_contract.py`.
-- **Training pipeline** → `docs/training.md`, `src/training/pipeline.py`, `src/training/normalize/`, `configs/train/base.yaml` + `holdout.yaml`, `train.py`, `scripts/convert_new_data_labels.py`. Pose extract still `src/training/pose/yolo_hdf5.py` (moving to YOLO26 ONNX — `../TODO.md` §2b).
+- **Training pipeline** → `docs/training.md`, `src/training/pipeline.py`, `src/training/normalize/`, `configs/train/base.yaml` + `holdout.yaml` + `v060_netline.yaml`, `train.py`, `scripts/convert_new_data_labels.py`. Pose extract `src/training/pose/yolo_hdf5.py` via manifests (`src/extraction/pose_backend.py`). Heads: `classic` (`train/loop.py`) and `e2e_heatmap` (`train/heatmap_loop.py` + `train/heatmap_loss.py`, TCN only; eval in `eval/heatmap_evaluator.py` decodes with the runtime `infer/heatmap_decode.py`). Net-line slots + v2 features: `src/training/features/v2.py`, `src/training/courts/` (`anchors.py` court geometry, `clean_frame.py` player-free court frame). Split/flip leakage guard: `src/training/dataset/builder.py`. Ablation log: `docs/ablations.md`.
 - **new_data labels (container)** → `../new_data/SINGLES_MATCHES_LABELING.md`, `../new_data/labels/`, `../new_data/generate_labels.py`.
 - **Packaging/release** → `RallyClip.spec`, `packaging/macos/`, `scripts/release/`, `scripts/fetch_artifact.py`, `src/runtime/artifact.py`, `.github/workflows/release.yml`, `docs/cli-in-release-binary-plan.md`, `docs/artifact-registry-plan.md`.
 - **Perf** → `docs/perf/PLAN.md` + `docs/perf/JOURNAL.md`, `scripts/perf/bench_*.py`, baselines in `docs/perf/baseline/`.
