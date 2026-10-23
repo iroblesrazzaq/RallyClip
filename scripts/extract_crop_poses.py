@@ -17,7 +17,7 @@ Boxes and keypoints are remapped back to FULL-FRAME coordinates, so every
 downstream consumer works in one coordinate system.
 
 Usage:
-  python scripts/extract_crop_poses.py [--data-root ...] [--limit N] [--overwrite]
+  python scripts/extract_crop_poses.py --data-root DIR [--limit N] [--overwrite]
 """
 from __future__ import annotations
 
@@ -34,10 +34,8 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-DEFAULT_ROOT = Path("/Users/ismaelrobles-razzaq/2_cs_projects/rallyclip_container/training_data_1080p")
-NORM = "norm=1280x720@5fps"          # path tag inherited from the pipeline contract
-YOLO_TAG = "yolo=yolov8n-960@4a3fe0de"
-CONF_TAG, IMGSZ_TAG = "conf=0p25", "imgsz=960"
+from training.artifact_paths import format_conf  # noqa: E402
+from training.paths import annotations_dir, pose_data_dir, pose_raw_dir, source_videos_dir  # noqa: E402
 
 W, H = 1920, 1080
 CROP = (480, 0, 1440, 540)           # fixed 16:9 top-half window, frame-centred
@@ -131,22 +129,26 @@ def _arrays(result):
     return b, bc, k, kc
 
 
-def crop_raw_path(root: Path, stem: str) -> Path:
-    return (root / "pose_data" / NORM / "crop_raw" / YOLO_TAG / CONF_TAG / IMGSZ_TAG
+def _branch(model_tag: str, imgsz: int) -> Path:
+    return Path(f"yolo={model_tag}") / f"conf={format_conf(CONF)}" / f"imgsz={imgsz}"
+
+
+# Both trees come from the same helpers the pipeline reads them with (including
+# its default norm= tag), so the side-car lands exactly where preprocess looks.
+def crop_raw_path(root: Path, stem: str, model_tag: str, imgsz: int) -> Path:
+    return (pose_data_dir(root) / "crop_raw" / _branch(model_tag, imgsz)
             / f"{stem}__start0__durfull.h5")
 
 
-def raw_path(root: Path, stem: str) -> Path:
-    return (root / "pose_data" / NORM / "raw" / YOLO_TAG / CONF_TAG / IMGSZ_TAG
-            / f"{stem}__start0__durfull.h5")
+def raw_path(root: Path, stem: str, model_tag: str, imgsz: int) -> Path:
+    return pose_raw_dir(root) / _branch(model_tag, imgsz) / f"{stem}__start0__durfull.h5"
 
 
-def expected_frames(root: Path, stem: str):
+def expected_frames(raw_h5: Path):
     """Frame grid from the full-frame raw h5, so the side-car aligns exactly."""
-    p = raw_path(root, stem)
-    if not p.exists():
+    if not raw_h5.exists():
         return None
-    with h5py.File(p, "r") as h:
+    with h5py.File(raw_h5, "r") as h:
         return h["frames"]["frame_index"][:], h["frames"]["timestamps"][:]
 
 
@@ -180,8 +182,10 @@ def extract_one(model, video: Path, out: Path, frame_index, timestamps, model_ta
                     # crop -> full-frame coordinates
                     b = b + np.array([x1, y1, x1, y1], np.float32)
                     k = k + np.array([x1, y1], np.float32)
-                    boxes_all.append(b); bconf_all.append(bc)
-                    kps_all.append(k); kconf_all.append(kc)
+                    boxes_all.append(b)
+                    bconf_all.append(bc)
+                    kps_all.append(k)
+                    kconf_all.append(kc)
                     offsets.append(offsets[-1] + len(b))
                 else:
                     offsets.append(offsets[-1])
@@ -193,7 +197,8 @@ def extract_one(model, video: Path, out: Path, frame_index, timestamps, model_ta
                 break
             batch.append(fr)
             if len(batch) >= BATCH:
-                flush(batch); batch = []
+                flush(batch)
+                batch = []
         flush(batch)
         cap.release()
 
@@ -202,8 +207,9 @@ def extract_one(model, video: Path, out: Path, frame_index, timestamps, model_ta
     while len(offsets) - 1 < n_expected:
         offsets.append(offsets[-1])
 
-    cat = lambda xs, shape, dt: (np.concatenate(xs).astype(dt) if xs
-                                 else np.empty(shape, dt))  # noqa: E731
+    def cat(xs, shape, dt):
+        return np.concatenate(xs).astype(dt) if xs else np.empty(shape, dt)
+
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_suffix(".tmp.h5")
     with h5py.File(tmp, "w") as h:
@@ -229,7 +235,7 @@ def extract_one(model, video: Path, out: Path, frame_index, timestamps, model_ta
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-root", type=Path, default=DEFAULT_ROOT)
+    ap.add_argument("--data-root", type=Path, required=True)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--videos", nargs="*", default=None)
@@ -237,24 +243,27 @@ def main():
 
     from extraction.pose_backend import load_pose_backend
 
-    root = args.data_root
-    stems = args.videos or sorted(p.name[:-9] for p in (root / "annotations").glob("*.mp4.json"))
+    root = args.data_root.expanduser().resolve()
+    stems = args.videos or sorted(p.name[:-9] for p in annotations_dir(root).glob("*.mp4.json"))
     if args.limit:
         stems = stems[: args.limit]
     model, meta = load_pose_backend(MANIFEST, provider=PROVIDER)
     print(f"pose backend: {meta.tag}  head={meta.head_family}  imgsz={meta.imgsz}  "
           f"provider={PROVIDER}", flush=True)
 
+    if meta.imgsz != IMGSZ:
+        raise SystemExit(f"{MANIFEST} has imgsz={meta.imgsz}; the crop window assumes {IMGSZ}")
+
     for i, stem in enumerate(stems, 1):
-        out = crop_raw_path(root, stem)
+        out = crop_raw_path(root, stem, meta.tag, meta.imgsz)
         if out.exists() and not args.overwrite:
             print(f"[{i}/{len(stems)}] {stem[:12]} exists, skip", flush=True)
             continue
-        video = root / "source_videos" / f"{stem}.mp4"
+        video = source_videos_dir(root) / f"{stem}.mp4"
         if not video.exists():
             print(f"[{i}/{len(stems)}] {stem[:12]} MISSING VIDEO", flush=True)
             continue
-        grid = expected_frames(root, stem)
+        grid = expected_frames(raw_path(root, stem, meta.tag, meta.imgsz))
         if grid is None:
             print(f"[{i}/{len(stems)}] {stem[:12]} no raw h5 to align to, skip", flush=True)
             continue

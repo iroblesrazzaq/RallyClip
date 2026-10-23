@@ -80,11 +80,13 @@ def load_manifest(manifest_path: Path) -> PoseBackendMeta:
             f"Unsupported head_family {head_family!r} in {manifest_path}; "
             f"expected one of {sorted(SUPPORTED_HEAD_FAMILIES)}"
         )
+    static_sha = manifest.get("static_model_sha256")
+    if manifest.get("static_model_file") and not static_sha:
+        raise ValueError(f"{manifest_path} names static_model_file but no static_model_sha256")
     model_path = _verified_model_path(
         manifest_path.parent, manifest["model_file"], manifest["model_sha256"]
     )
     static_model_path = None
-    static_sha = manifest.get("static_model_sha256")
     if manifest.get("static_model_file"):
         static_model_path = _verified_model_path(
             manifest_path.parent, manifest["static_model_file"], static_sha

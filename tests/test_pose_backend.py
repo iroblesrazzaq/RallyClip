@@ -107,6 +107,17 @@ def test_load_manifest_sha_mismatch_raises(tmp_path):
         load_manifest(bundle)
 
 
+def test_load_manifest_requires_static_sha(tmp_path):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    manifest = json.loads((V8_DIR / "manifest.json").read_text())
+    manifest.pop("static_model_sha256", None)
+    (bundle / "manifest.json").write_text(json.dumps(manifest))
+    (bundle / manifest["model_file"]).write_bytes(b"x")
+    with pytest.raises(ValueError, match="static_model_sha256"):
+        load_manifest(bundle)
+
+
 def test_load_manifest_rejects_unknown_head_family(tmp_path):
     bundle = tmp_path / "bundle"
     bundle.mkdir()
