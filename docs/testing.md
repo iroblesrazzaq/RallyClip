@@ -16,9 +16,9 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-10-22, cancel-during-hash fix, macOS `.venv-train` py3.11):
-**363 passed, 11 skipped, 49 deselected, ~25s**. `tests/test_update_release.py` 15 passed;
-`tests/test_agent_review.py` 45 passed.
+Last known (2026-10-23, review round cap, macOS `.venv-train` py3.11):
+**370 passed, 11 skipped, 49 deselected, ~37s**. `tests/test_agent_review.py` 52 passed.
+(2026-10-22: 363 passed; `tests/test_update_release.py` 15 passed.)
 (2026-09-09, Linux py3.12: 321 passed, 6 skipped, 27 deselected; `tests/test_release_packaging.py`
 21 passed; `tests/test_artifact_fetch.py` 6 passed.)
 
@@ -93,8 +93,12 @@ output, `findings.json`) goes to `$TMPDIR/rallyclip-review-<branch>-<ts>-XXXX/`,
 repo. Cursor model defaults to `cursor-grok-4.6-high` (`--model` /
 `RALLYCLIP_REVIEW_MODEL`; `agent --list-models`). Exit 0 ok, 2 a reviewer failed
 (partial results kept), 3 a reviewer modified the tree. Triage every finding
-(confirmed / rejected + reason / unsure), fix confirmed high+medium, at most 2
-rounds, then a `## Review digest` table in the PR body. Needs `agent` (Cursor CLI,
+(confirmed / rejected + reason / unsure) into `triage.json` next to `findings.json`,
+fix confirmed high+medium, then a `## Review digest` table in the PR body.
+`review.py` enforces the round limit per branch: at most 3 rounds, and the next round
+runs only if the last one had a confirmed high/P1 and HEAD moved (exit 4 = stop and
+write the digest). Rejected findings from earlier rounds go into the Cursor prompt and
+mark repeats (`repeat_of`). Round state: `<git-common-dir>/rallyclip-review/<branch>.json`. Needs `agent` (Cursor CLI,
 logged in) and `greptile` (`greptile whoami`) on PATH. No Bugbot, no PR-comment reviews.
 
 Runtime (2026-10-21 dry run, ~34 KB diff): Greptile ~2–4 min; each Cursor lens

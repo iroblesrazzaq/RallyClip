@@ -6,8 +6,15 @@ It reviews committed changes (merge-base..HEAD) and never writes into the repo:
 diff, raw reviewer output and normalized findings go to an private out dir
 $TMPDIR/rallyclip-review-<branch>-<ts>-XXXX/. Triage is the caller's job (see /agent-review).
 
+Rounds are capped per branch (state in <git-common-dir>/rallyclip-review/). Before
+round N+1 the caller writes triage.json next to round N's findings.json:
+{"<id>": "fixed in <sha>" | "rejected: <reason>" | "unsure: <note>"}. Round N+1 runs only
+if round N had a fixed/confirmed high (or P1) finding and HEAD moved; rejected findings
+from earlier rounds go into the Cursor prompt and mark repeats.
+
 Exit codes: 0 all reviewers ran, 1 usage/git error, 2 a reviewer failed
-(partial findings still written), 3 a reviewer modified the working tree.
+(partial findings still written), 3 a reviewer modified the working tree,
+4 no more rounds (cap reached or the last round had no confirmed high): write the digest.
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ from pathlib import Path
 
 PROMPT_FILE = Path(__file__).with_name("cursor_review_prompt.md")
 DEFAULT_MODEL = "cursor-grok-4.6-high"
+MAX_ROUNDS = 3
 SEVERITIES = ("high", "medium", "low")
 LENSES = {
     "correctness": (
@@ -145,6 +153,53 @@ def hard_constraints(root: Path) -> str:
     return m.group(1).strip() if m else "(AGENTS.md has no 'Hard constraints' section)"
 
 
+def state_path(root: Path, branch: str) -> Path:
+    common = Path(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir").strip())
+    return common / "rallyclip-review" / (re.sub(r"[^A-Za-z0-9._-]", "-", branch) + ".json")
+
+
+def round_gate(rounds: list[dict], head: str) -> tuple[int, str, list[dict]]:
+    """(exit code, message, rejected findings) for starting round len(rounds)+1; code 0 = go."""
+    rejected = []
+    for n, r in enumerate(rounds, 1):
+        tri = Path(r["out"]) / "triage.json"
+        if not tri.is_file():
+            return 1, f"triage round {n} first: write {tri} (see /agent-review), or --reset", []
+        outcomes = {str(k): str(v) for k, v in json.loads(tri.read_text(encoding="utf-8")).items()}
+        found = json.loads((Path(r["out"]) / "findings.json").read_text(encoding="utf-8"))["findings"]
+        for f in found:
+            outcome = outcomes.get(str(f["id"]), "")
+            f["outcome"] = outcome
+            if outcome.lower().startswith("rejected"):
+                rejected.append({**f, "round": n})
+    if not rounds:
+        return 0, "", []
+    n = len(rounds)
+    if n >= MAX_ROUNDS:
+        return 4, f"round cap reached ({n}/{MAX_ROUNDS}); write the digest, open items stay open", rejected
+    if not any(f["severity"] == "high" and f["outcome"].lower().startswith(("fixed", "confirmed")) for f in found):
+        return 4, f"round {n} had no confirmed high/P1 finding; write the digest", rejected
+    if rounds[-1]["head"] == head:
+        return 1, f"HEAD is unchanged since round {n}; commit the fixes first", rejected
+    return 0, "", rejected
+
+
+def repeat_of(f: dict, rejected: list[dict]) -> dict | None:
+    """An earlier rejected finding on the same file within 10 lines (lines drift as fixes land)."""
+    for r in rejected:
+        if r["file"] == f["file"] and (f["line"] is None or r["line"] is None or abs(f["line"] - r["line"]) <= 10):
+            return r
+    return None
+
+
+def rejected_text(rejected: list[dict]) -> str:
+    if not rejected:
+        return "(none)"
+    return "\n".join(
+        f"- {r['file']}:{r['line']} {' '.join(r['claim'].split())[:200]} -> {r['outcome']}" for r in rejected
+    )
+
+
 def norm_severity(value: object) -> str:
     s = str(value or "").lower()
     if s in SEVERITIES:
@@ -259,6 +314,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--timeout", type=int, default=900, help="per-reviewer timeout in seconds")
     ap.add_argument("--allow-dirty", action="store_true",
                     help="run even with uncommitted tracked edits (reviewers may see them)")
+    ap.add_argument("--reset", action="store_true",
+                    help=f"forget this branch's earlier rounds (cap {MAX_ROUNDS}); only when the user asks")
     args = ap.parse_args(argv)
 
     reviewers = [r.strip() for r in args.reviewers.split(",") if r.strip()]
@@ -295,6 +352,16 @@ def main(argv: list[str] | None = None) -> int:
     if git(root, "status", "--porcelain").strip():
         print("warning: uncommitted changes are NOT reviewed (only merge-base..HEAD)", file=sys.stderr)
 
+    state_file = state_path(root, branch)
+    rounds = [] if args.reset or not state_file.is_file() else json.loads(state_file.read_text())["rounds"]
+    try:
+        code, msg, rejected = round_gate(rounds, head)
+    except (OSError, ValueError, KeyError) as e:  # earlier round's out dir gone or unreadable
+        code, msg, rejected = 1, f"cannot read round {len(rounds)} results ({e}); --reset to start over", []
+    if code:
+        print(f"{'stop' if code == 4 else 'error'}: {msg}", file=sys.stderr)
+        return code
+
     if args.out:
         out = args.out.resolve()
         if out == root or root in out.parents:
@@ -310,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
     ctx = {
         "diff_path": diff_path, "base": args.base, "merge_base": merge_base[:10],
         "head": head[:10], "files_changed": len(files), "constraints": hard_constraints(root),
+        "rejected": rejected_text(rejected),
     }
 
     before = tree_snapshot(root)
@@ -339,21 +407,28 @@ def main(argv: list[str] | None = None) -> int:
     findings.sort(key=lambda f: (SEVERITIES.index(f["severity"]), str(f["file"]), f["line"] or 0))
     for i, f in enumerate(findings, 1):
         f["id"] = i
+        rep = repeat_of(f, rejected)
+        if rep:
+            f["repeat_of"] = f"round {rep['round']} #{rep['id']}: {rep['outcome']}"
     report = {
-        "branch": branch, "base": args.base, "merge_base": merge_base, "head": head,
+        "round": len(rounds) + 1, "branch": branch, "base": args.base, "merge_base": merge_base, "head": head,
         "files_changed": len(files), "reviewers": list(jobs), "failures": failures,
         "tree_modified_by_reviewer": modified, **meta, "findings": findings,
     }
     (out / "findings.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(json.dumps({"rounds": [*rounds, {"head": head, "out": str(out)}]}, indent=2))
 
     counts = {s: sum(f["severity"] == s for f in findings) for s in SEVERITIES}
-    print(f"review {branch} vs {args.base} ({len(files)} files) -> {out / 'findings.json'}")
+    print(f"review round {len(rounds) + 1}/{MAX_ROUNDS} {branch} vs {args.base} ({len(files)} files)"
+          f" -> {out / 'findings.json'}")
     conf = f", greptile confidence {meta['greptile_confidence']}/5" if "greptile_confidence" in meta else ""
     print(f"findings: {counts['high']} high, {counts['medium']} medium, {counts['low']} low{conf}")
     for f in findings:
         loc = f"{f['file']}:{f['line']}" if f["line"] else str(f["file"])
         claim = " ".join(f["claim"].split())[:160]
-        print(f"  #{f['id']} [{f['severity']}] {f['reviewer']}/{f['lens']} {loc} - {claim}")
+        rep = f" (repeat? {f['repeat_of']})" if "repeat_of" in f else ""
+        print(f"  #{f['id']} [{f['severity']}] {f['reviewer']}/{f['lens']} {loc} - {claim}{rep}")
     for name, err in failures.items():
         print(f"FAILED {name}: {err}", file=sys.stderr)
     if modified:

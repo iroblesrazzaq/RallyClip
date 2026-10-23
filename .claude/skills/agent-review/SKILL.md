@@ -31,20 +31,29 @@ every push. Uncommitted changes are not reviewed.
 
    Exit codes: 0 ok, 2 a reviewer failed (partial findings kept; say which one in
    the digest), 3 a reviewer modified the working tree (stop, show the user
-   `git status`, do not continue until they decide).
+   `git status`, do not continue until they decide), 4 no more rounds: go to step 5.
 
 2. Triage every finding in `findings.json`. Open the cited code and decide:
    - **confirmed**: you can reproduce the failure scenario by reading or running it.
    - **rejected**: give a one-line reason (wrong about the code, pre-existing,
      out of scope, duplicate of #n).
    - **unsure**: you cannot settle it; it goes to the user in the digest.
-   The same issue reported by several reviewers or lenses is one item.
+   The same issue reported by several reviewers or lenses is one item. A finding
+   marked `repeat_of` was rejected in an earlier round: reject it again with the
+   same reason unless the cited code changed.
+
+   Write the outcomes to `triage.json` next to `findings.json`, keyed by finding
+   id: `{"1": "fixed in <sha>", "2": "rejected: <reason>", "3": "unsure: <note>"}`
+   (use `confirmed` until the fix is committed). The next round reads it.
 
 3. Fix confirmed high and medium findings (low: fix if cheap, otherwise list).
    Rerun the branch gate, commit.
 
-4. If round 1 had confirmed fixes, run step 1 once more on the new HEAD. Stop
-   after 2 rounds total; anything still open goes in the digest as open.
+4. Run step 1 again on the new HEAD. `review.py` decides if a round runs: at most
+   3 rounds per branch, and a round runs only if the last one had a confirmed
+   high (or P1) finding and HEAD moved. Exit 4 means stop; anything still open
+   goes in the digest as open. Do not use `--reset` (it clears the round count)
+   unless the user asks for more rounds.
 
 5. Add this to the PR body (create or update), and nothing more from the raw
    reviewer output:
