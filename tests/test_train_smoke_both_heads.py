@@ -101,3 +101,22 @@ def test_heatmap_train_smoke(tmp_path):
     again = torch.load(rerun_dir / "checkpoints" / "last.pth", map_location="cpu")["model_state_dict"]
     first = torch.load(run_dir / "checkpoints" / "last.pth", map_location="cpu")["model_state_dict"]
     assert all(torch.equal(first[k], again[k]) for k in first)
+
+
+def test_heatmap_trains_without_a_val_split(tmp_path):
+    # The final model trains on every video: no val.h5, a fixed save_every_n checkpoint.
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+    _write_split(dataset_dir / "train.h5")
+    run_dir = tmp_path / "run"
+    train_heatmap(dataset_dir, run_dir, {
+        "device": "cpu", "epochs": 4, "batch_size": 2, "pos_weight": 3.0, "seed": 0, "fps": 5.0,
+        "hidden_size": 16, "heatmap_tcn_levels": 2, "save_every_n": 3, "early_stopping_patience": 1,
+    })
+
+    ckpts = sorted(p.name for p in (run_dir / "checkpoints").iterdir())
+    assert ckpts == ["epoch_3.pth", "last.pth"]
+    assert torch.load(run_dir / "checkpoints" / "last.pth", map_location="cpu")["epoch"] == 4
+    manifest = json.loads((run_dir / "manifest.json").read_text())
+    assert manifest["training"]["selection_metric"] == "none"
+    assert manifest["source_run"]["checkpoint_path"].endswith("last.pth")

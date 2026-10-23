@@ -124,6 +124,11 @@ uv run python train.py --config configs/train/base.yaml,configs/train/v060_netli
 uv run python scripts/extract_crop_poses.py --data-root ../training_data_netline
 uv run python train.py --config configs/train/base.yaml,configs/train/v060_netline.yaml --steps preprocess,features,dataset,train,eval
 ```
+For the final model, train on every video: set `dataset.split.val_ratio` and
+`test_ratio` to 0 with no `test_videos`. With no `val.h5`, training runs all
+epochs without checkpoint selection or early stopping, and the shipped weights
+are `checkpoints/epoch_13.pth` (from `save_every_n: 13`), not `best.pth`.
+
 The CV and final-model drivers (`cv_netline.py`, `final_train.py`,
 `decode_sweep.py`) live next to the data in `training_data_netline/`, not in
 this repo.

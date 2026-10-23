@@ -118,8 +118,12 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
     val_path = dataset_dir / "val.h5"
     if not train_path.exists():
         raise FileNotFoundError(f"Train dataset not found: {train_path}")
-    if not val_path.exists():
-        raise FileNotFoundError(f"Val dataset not found: {val_path}")
+    # No val split (the final model trains on every video): run all epochs with
+    # no selection or early stopping; the checkpoints are last.pth and the
+    # save_every_n epoch_N.pth files (v0.6 shipped epoch_13.pth).
+    has_val = val_path.exists()
+    if not has_val:
+        logger.warning("No %s: training all epochs without checkpoint selection", val_path)
 
     train_ds = Hdf5SequenceDataset(train_path)
     device = _resolve_device(config.get("device"))
@@ -200,49 +204,55 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
             batches += 1
 
         train_means = {f"train_{k}": v / max(batches, 1) for k, v in running.items()}
-        # Score a CPU-reloaded copy rather than the live (possibly MPS) model:
-        # CPU eval of the saved weights is exactly what gets exported and shipped.
-        eval_model = TennisPointHeatmapTCN(**model.arch())
-        eval_model.load_state_dict({k: v.detach().cpu().clone() for k, v in model.state_dict().items()})
-        val_metrics, val_loss = evaluate_heatmap_model(
-            eval_model, val_path, torch.device("cpu"), criterion_cpu, decode_cfg, six_bin_cfg, batch_size=batch_size
-        )
-        del eval_model
+        val_metrics: Dict[str, float] = {}
+        val_row: Dict[str, Any] = {}
+        if has_val:
+            # Score a CPU-reloaded copy rather than the live (possibly MPS) model:
+            # CPU eval of the saved weights is exactly what gets exported and shipped.
+            eval_model = TennisPointHeatmapTCN(**model.arch())
+            eval_model.load_state_dict({k: v.detach().cpu().clone() for k, v in model.state_dict().items()})
+            val_metrics, val_loss = evaluate_heatmap_model(
+                eval_model, val_path, torch.device("cpu"), criterion_cpu, decode_cfg, six_bin_cfg, batch_size=batch_size
+            )
+            del eval_model
+            val_row = {"val_loss": val_loss, **val_metrics}
 
         log_row = {
             "epoch": epoch,
             "lr": float(optimizer.param_groups[0]["lr"]),
             **train_means,
-            "val_loss": val_loss,
-            **val_metrics,
+            **val_row,
             "epoch_seconds": round(time.time() - epoch_started, 1),
         }
         history.append(log_row)
         with metrics_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(log_row) + "\n")
 
-        logger.info(
-            "Epoch %d: train_loss=%.4f val_loss=%.4f bal_acc=%.4f | shares good=%.3f decent=%.3f bad_seg=%.3f poor=%.3f fp=%.3f fn=%.3f",
-            epoch,
-            train_means["train_loss"],
-            val_loss,
-            float(val_metrics.get("balanced_accuracy", 0.0)),
-            val_metrics.get("share_good", 0.0),
-            val_metrics.get("share_decent", 0.0),
-            val_metrics.get("share_bad_segmentation", 0.0),
-            val_metrics.get("share_poor_recognition", 0.0),
-            val_metrics.get("share_false_positive", 0.0),
-            val_metrics.get("share_false_negative", 0.0),
-        )
-
-        score = _selection_score(selection_metric, val_loss, val_metrics)
-        if score > (best_score + early_stopping_min_delta):
-            best_score = score
-            best_epoch = epoch
-            epochs_without_improvement = 0
-            _save_checkpoint(run_dir / "checkpoints" / "best.pth", model, optimizer, epoch, log_row)
+        if not has_val:
+            logger.info("Epoch %d: train_loss=%.4f", epoch, train_means["train_loss"])
         else:
-            epochs_without_improvement += 1
+            logger.info(
+                "Epoch %d: train_loss=%.4f val_loss=%.4f bal_acc=%.4f | shares good=%.3f decent=%.3f bad_seg=%.3f poor=%.3f fp=%.3f fn=%.3f",
+                epoch,
+                train_means["train_loss"],
+                val_loss,
+                float(val_metrics.get("balanced_accuracy", 0.0)),
+                val_metrics.get("share_good", 0.0),
+                val_metrics.get("share_decent", 0.0),
+                val_metrics.get("share_bad_segmentation", 0.0),
+                val_metrics.get("share_poor_recognition", 0.0),
+                val_metrics.get("share_false_positive", 0.0),
+                val_metrics.get("share_false_negative", 0.0),
+            )
+
+            score = _selection_score(selection_metric, val_loss, val_metrics)
+            if score > (best_score + early_stopping_min_delta):
+                best_score = score
+                best_epoch = epoch
+                epochs_without_improvement = 0
+                _save_checkpoint(run_dir / "checkpoints" / "best.pth", model, optimizer, epoch, log_row)
+            else:
+                epochs_without_improvement += 1
         _save_checkpoint(run_dir / "checkpoints" / "last.pth", model, optimizer, epoch, log_row)
         if config.get("save_every_n") and epoch % int(config["save_every_n"]) == 0:
             _save_checkpoint(run_dir / "checkpoints" / f"epoch_{epoch}.pth", model, optimizer, epoch, log_row)
@@ -268,7 +278,7 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
         decode_cfg=decode_cfg,
         history=history,
         best_epoch=best_epoch,
-        selection_metric=selection_metric,
+        selection_metric=selection_metric if has_val else "none",
         total_seconds=time.time() - started_at,
     )
 
@@ -379,7 +389,8 @@ def write_run_manifest(
             "last_epoch_metrics": history[-1] if history else None,
         },
         "source_run": {
-            "checkpoint_path": str(run_dir / "checkpoints" / "best.pth"),
+            # No val split => nothing was selected; the run ends at last.pth.
+            "checkpoint_path": str(run_dir / "checkpoints" / ("best.pth" if best_epoch else "last.pth")),
             "scaler_path": str(dataset_dir / "scaler.joblib"),
             **_git_info(),
         },
