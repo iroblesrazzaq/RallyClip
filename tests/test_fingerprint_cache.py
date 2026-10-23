@@ -48,6 +48,24 @@ def test_fingerprint_changes_with_annotation(tmp_path):
     assert fa != fb
 
 
+def test_preprocess_files_from_the_drifting_sampler_are_rebuilt(tmp_path):
+    from training.io.fingerprint import build_preprocess_fingerprint
+
+    ann = tmp_path / "a.json"
+    raw = tmp_path / "raw.h5"
+    ann.write_text('{"segments":[]}', encoding="utf-8")
+    raw.write_bytes(b"raw")
+    payload = build_preprocess_fingerprint(
+        annotations_path=ann, raw_h5_path=raw, target_fps=5, court_model_path="m",
+        court_target_time=None, court_mask=None, frame_size=(1920, 1080),
+    )
+    # A v2 file holds frames picked by the old t += step sampler; same inputs
+    # must no longer match it, so preprocess (and features, via its sha) rebuild.
+    v2 = dict(payload, kind="preprocess_v2")
+    assert fingerprint_dict(payload) != fingerprint_dict(v2)
+    assert payload["kind"] == "preprocess_v3"
+
+
 def test_atomic_tmp_path_and_fingerprint_attr(tmp_path):
     out = tmp_path / "feat.h5"
     tmp = tmp_path_for(out)

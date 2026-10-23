@@ -38,7 +38,9 @@ def build_preprocess_fingerprint(
     crop_h5_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     return {
-        "kind": "preprocess_v2",
+        # v3: _sample_indices stopped drifting (t0 + k/fps instead of t += step),
+        # which changes the frames picked on a 5 fps grid; v2 files must rebuild.
+        "kind": "preprocess_v3",
         "annotations_sha256": file_sha256(annotations_path),
         "raw_h5_sha256": file_sha256(raw_h5_path),
         "target_fps": float(target_fps),
