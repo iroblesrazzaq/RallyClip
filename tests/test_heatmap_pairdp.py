@@ -157,3 +157,36 @@ def test_zero_weight_is_exactly_the_previous_behaviour():
     a = decode_pairdp(noise, s, e, TS, _cfg())
     b = decode_pairdp(np.zeros(N) + 0.5, s, e, TS, _cfg())
     assert a == b == [(10.0, 20.0), (30.0, 40.0)]
+
+
+def test_refinement_never_reorders_peaks():
+    """decode_pairdp's early break assumes refined start times stay in peak
+    order; a symmetric soft-argmax window guarantees it."""
+    from infer.heatmap_decode import _soft_argmax_time
+    rng = np.random.default_rng(11)
+    for _ in range(200):
+        prob = rng.random(N) ** 3
+        times = [_soft_argmax_time(prob, TS, i, 4) for i in range(N)]
+        assert times == sorted(times)
+
+def test_from_train_cfg_maps_every_decode_key():
+    cfg = HeatmapDecodeConfig.from_train_cfg({
+        "heatmap_decode_mode": "pairdp",
+        "heatmap_peak_threshold": 0.07,
+        "heatmap_decode_window_frames": 4,
+        "heatmap_min_duration_sec": 1.5,
+        "heatmap_pair_penalty": 2.5,
+        "heatmap_pointness_weight": 0.3,
+        "heatmap_pointness_gate": None,       # None keeps the default
+    }, fps=5.0)
+    assert (cfg.mode, cfg.peak_threshold, cfg.refine_window_frames) == ("pairdp", 0.07, 4)
+    assert (cfg.min_duration_sec, cfg.pair_penalty, cfg.pointness_weight) == (1.5, 2.5, 0.3)
+    assert cfg.pointness_gate == HeatmapDecodeConfig().pointness_gate
+    assert cfg.sigma_frames == 2.5                            # 0.5s default sigma at 5 fps
+
+
+def test_runtime_params_only_for_modes_the_runtime_runs():
+    assert _cfg().runtime_params() is None                    # pairdp
+    params = _cfg(mode="peakpair", pair_penalty=3.0).runtime_params()
+    assert params["mode"] == "peakpair"
+    assert "pair_penalty" not in params and "pointness_weight" not in params

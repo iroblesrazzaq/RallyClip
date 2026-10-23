@@ -20,6 +20,11 @@ def _load_yolo(model_path: str):
       * anything else goes through ultralytics, which is optional at runtime.
     Returns None when no backend is available so court detection degrades to its
     single-frame fallback, as before.
+
+    Callers predict without ``imgsz``, so every backend runs at the runner
+    default (640), the manifest's 960 included. That is deliberate: the court
+    regression goldens and the v0.6 training court cache were built at 640, and
+    occlusion masks only need coarse person boxes.
     """
     p = str(model_path)
     lower = p.lower()

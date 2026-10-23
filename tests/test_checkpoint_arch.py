@@ -36,7 +36,7 @@ def test_bidirectional_default_not_false_when_missing():
     # Archaeology used to default bidirectional=False — that must not resurface.
     ckpt = {
         "model_state_dict": TennisPointLSTM(input_size=8, bidirectional=True).state_dict(),
-        "arch": {"input_size": 8, "hidden_size": 128, "num_layers": 2, "bidirectional": True},
+        "arch": {"input_size": 8, "hidden_size": 128, "num_layers": 2},
     }
     model = build_model_from_checkpoint(ckpt, feature_dim=8)
     assert model.bidirectional is True

@@ -24,6 +24,7 @@ from training.artifact_paths import (
     yolo_conf_imgsz_tags,
 )
 from training.dataset.builder import DatasetBuilder, DatasetConfig
+from training.dataset.hdf5_dataset import Hdf5SequenceDataset
 from training.dataset.splits import SplitConfig, assert_no_holdout_overlap
 from training.eval.checkpoint import build_model_from_checkpoint, evaluate_checkpoint
 from training.eval.evaluator import SegmentEvalConfig
@@ -52,7 +53,7 @@ from training.metrics.segment import (
 from training.pose.yolo_hdf5 import YoloExtractConfig, YoloHdf5Extractor
 from training.preprocess.preprocessor import Hdf5Preprocessor, PreprocessConfig
 from training.train.heatmap_loop import evaluate_heatmap_run, train_heatmap
-from training.train.loop import train as train_loop
+from training.train.loop import _default_pos_weight, train as train_loop
 
 logger = logging.getLogger(__name__)
 
@@ -824,6 +825,9 @@ def _run_eval(config: Dict[str, Any]) -> None:
     )
 
     pos_weight = train_cfg.get("pos_weight")
+    if pos_weight is None:
+        # Same derivation the train loop used, so the test loss weights match.
+        pos_weight = _default_pos_weight(Hdf5SequenceDataset(dataset_dir / "train.h5"))
     metrics, loss = evaluate_checkpoint(
         checkpoint_path,
         test_path,
@@ -831,7 +835,7 @@ def _run_eval(config: Dict[str, Any]) -> None:
         threshold=float(train_cfg.get("threshold", 0.5)),
         segment_cfg=segment_cfg,
         fps=float(preprocess_cfg.get("target_fps", 5)),
-        pos_weight=float(pos_weight if pos_weight is not None else 3.0),
+        pos_weight=float(pos_weight),
     )
     eval_path = run_dir / "eval.json"
     with eval_path.open("w", encoding="utf-8") as handle:
@@ -865,6 +869,11 @@ def _evaluate_postprocess_run(
 
     with config_path.open("r", encoding="utf-8") as handle:
         run_cfg = json.load(handle)
+    if str(run_cfg.get("head", "classic")).lower() != "classic":
+        # The sweep scores classic per-frame probabilities; heatmap runs decode
+        # boundaries instead and are tuned with their own decode settings.
+        logger.info("Skipping %s: postprocess sweep only scores classic runs", run_dir.name)
+        return None
 
     dataset_cfg = run_cfg.get("dataset", {}) if isinstance(run_cfg.get("dataset"), dict) else {}
     split_cfg = dataset_cfg.get("split", {}) if isinstance(dataset_cfg.get("split"), dict) else {}

@@ -137,6 +137,15 @@ class Hdf5Preprocessor:
                             f"Crop side-car frame grid does not match raw poses for "
                             f"{video_path.name}; regenerate it (extract_crop_poses.py)."
                         )
+                    # The crop script works on a fixed 1920x1080 canvas; on a root
+                    # of another size its coordinates would not line up.
+                    crop_dims = (int(crop.attrs.get("width", 0)), int(crop.attrs.get("height", 0)))
+                    raw_dims = (int(raw_h5.attrs.get("width", 0)), int(raw_h5.attrs.get("height", 0)))
+                    if all(raw_dims) and crop_dims != raw_dims:
+                        raise ValueError(
+                            f"Crop side-car for {video_path.name} is {crop_dims[0]}x{crop_dims[1]} "
+                            f"but raw poses are {raw_dims[0]}x{raw_dims[1]}."
+                        )
 
                 with h5py.File(tmp_path, "w") as preproc_h5:
                     frames_group = preproc_h5.create_group("frames")
@@ -226,6 +235,7 @@ class _PoseFrames:
 
     def __init__(self, h5: h5py.File, owns_file: bool = False) -> None:
         self._h5 = h5 if owns_file else None
+        self.attrs = dict(h5.attrs)
         self.frame_index = h5["frames"]["frame_index"][:]
         self.timestamps = h5["frames"]["timestamps"][:]
         self._offsets = h5["frames"]["frame_offsets"][:]

@@ -27,6 +27,9 @@ from training.metrics.segments6 import SixBinConfig, aggregate_six_bin, compute_
 
 Interval = Tuple[float, float]
 
+# Decode modes infer.heatmap_decode implements; pairdp is training-only.
+RUNTIME_MODES = ("hybrid", "peakpair")
+
 # train-config key -> decode field, for every knob a run config may set.
 _TRAIN_KEYS = {
     "heatmap_decode_mode": "mode",
@@ -70,9 +73,11 @@ class HeatmapDecodeConfig(RuntimeDecodeConfig):
                 params[field_name] = train_cfg[key]
         return cls(**params)
 
-    def runtime_params(self) -> Dict[str, Any]:
+    def runtime_params(self) -> Optional[Dict[str, Any]]:
         """Fields the shipped runtime understands, for the model manifest's
-        postprocess.params."""
+        postprocess.params. None for pairdp, which the runtime cannot run."""
+        if self.mode not in RUNTIME_MODES:
+            return None
         return {f.name: getattr(self, f.name) for f in fields(RuntimeDecodeConfig)}
 
 
@@ -130,6 +135,9 @@ def decode_pairdp(
     if not s_idx or not e_idx:
         return []
 
+    # Refined times keep the peaks' order: the windows are symmetric, so what
+    # an earlier peak sees beyond a later peak's window lies before everything
+    # they share. The early break below and _last_end_before rely on that.
     s_time = [_soft_argmax_time(start_prob, timestamps, i, window) for i in s_idx]
     e_time = [_soft_argmax_time(end_prob, timestamps, i, window) for i in e_idx]
     s_score = [_logit(start_prob[i]) for i in s_idx]

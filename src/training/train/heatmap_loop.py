@@ -84,9 +84,10 @@ def _arch_from_state(state: Dict[str, torch.Tensor], train_cfg: Dict[str, Any]) 
 def _acceptable_f1(metrics: Dict[str, float]) -> float:
     """F1 over the (good + decent) set: harmonic mean of precision and recall.
 
-    `acceptable` (the historical default) is (good+decent)/n_gt -- recall with no
-    precision term, so a model that floods the timeline with predictions scores
-    well on it. Selecting on F1 makes over-prediction cost something.
+    `acceptable` (the historical default) is share_good + share_decent, i.e.
+    (good+decent)/n_events. False positives add to n_events, so it does charge
+    for over-prediction, but less directly than F1. (It is not the six-bin
+    `acceptable_rate`, which divides by n_gt and ignores false positives.)
     """
     ok = float(metrics.get("n_good", 0.0)) + float(metrics.get("n_decent", 0.0))
     n_gt = float(metrics.get("n_gt", 0.0))
@@ -169,13 +170,14 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
     history: List[Dict[str, Any]] = []
     started_at = time.time()
 
+    # Training always starts from scratch, so a reused run_id gets a fresh
+    # config and metrics log rather than the previous run's.
     metrics_path = run_dir / "metrics.jsonl"
-    config_path = run_dir / "config.json"
-    if not config_path.exists():
-        # The resolved loss (incl. a derived pos_weight) is saved so pipeline eval
-        # scores the test split with exactly the loss the run trained with.
-        with config_path.open("w", encoding="utf-8") as handle:
-            json.dump(_to_jsonable({**config, "loss": asdict(loss_cfg)}), handle, indent=2)
+    metrics_path.unlink(missing_ok=True)
+    # The resolved loss (incl. a derived pos_weight) is saved so pipeline eval
+    # scores the test split with exactly the loss the run trained with.
+    with (run_dir / "config.json").open("w", encoding="utf-8") as handle:
+        json.dump(_to_jsonable({**config, "loss": asdict(loss_cfg)}), handle, indent=2)
 
     logger.info("Heatmap training setup: device=%s batch=%d loss=%s", device, batch_size, loss_cfg)
 
@@ -353,7 +355,8 @@ def write_run_manifest(
             ),
         },
         # Every decode field, so a manifest reproduces the decode exactly;
-        # runtime_params is the subset the shipped runtime reads.
+        # runtime_params is the subset the shipped runtime reads (null for
+        # pairdp, which only training can decode).
         "decode": {
             "method": "gaussian_peak_softargmax",
             **asdict(decode_cfg),
