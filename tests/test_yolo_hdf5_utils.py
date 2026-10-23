@@ -46,3 +46,34 @@ def test_validate_metadata_mismatch(tmp_path):
                 conf=0.25,
                 imgsz=1920,
             )
+
+
+@pytest.mark.parametrize("overwrite, resumes", [(False, True), (True, False)])
+def test_overwrite_does_not_resume_from_the_old_file(tmp_path, monkeypatch, overwrite, resumes):
+    av = pytest.importorskip("av")
+    video = tmp_path / "m.mp4"
+    with av.open(str(video), "w") as container:
+        stream = container.add_stream("libx264", rate=5)
+        stream.width, stream.height, stream.pix_fmt = 64, 48, "yuv420p"
+        for i in range(3):
+            frame = av.VideoFrame.from_ndarray(np.zeros((48, 64, 3), dtype=np.uint8), format="rgb24")
+            frame.pts = i
+            for pkt in stream.encode(frame):
+                container.mux(pkt)
+        for pkt in stream.encode():
+            container.mux(pkt)
+    output = tmp_path / "m.h5"
+    with h5py.File(output, "w") as h5f:
+        h5f.attrs["complete"] = False
+
+    class Opened(Exception):
+        pass
+
+    read = []
+    extractor = object.__new__(yolo_module.YoloHdf5Extractor)
+    monkeypatch.setattr(extractor, "_read_last_frame_index", lambda path: read.append(path) or 99)
+    monkeypatch.setattr(extractor, "_open_hdf5", lambda *a, **kw: (_ for _ in ()).throw(Opened()))
+    # A rebuild after a normalize change (overwrite_all) must not skip frames the old file had.
+    with pytest.raises(Opened):
+        extractor.extract(video, output, overwrite=overwrite, resume=True)
+    assert bool(read) is resumes

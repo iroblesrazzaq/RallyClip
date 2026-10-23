@@ -96,7 +96,8 @@ class YoloHdf5Extractor:
             fps_nominal = float(stream.average_rate) if stream.average_rate else 0.0
 
         last_frame_index = -1
-        if output_path.exists() and resume:
+        # overwrite rewrites the file from frame 0, so there is nothing to resume.
+        if output_path.exists() and resume and not overwrite:
             last_frame_index = self._read_last_frame_index(output_path)
             logger.info("Resuming from frame index %s for %s", last_frame_index, video_path)
 
