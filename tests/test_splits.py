@@ -59,3 +59,16 @@ def test_holdout_overlap_guard():
     assert_no_holdout_overlap(["a.mp4", "b.mp4"], ["c.mp4"], context="test")
     with pytest.raises(ValueError, match="intersects frozen holdout"):
         assert_no_holdout_overlap(["a.mp4", "b.mp4"], ["b.mp4"], context="test")
+
+
+def test_held_out_flip_name_holds_out_its_original():
+    videos = ["a.mp4", "a__flip_h.mp4", "b.mp4", "b__flip_h.mp4", "c.mp4"]
+    cfg = SplitConfig(strategy="by_video", test_videos=["b__flip_h.mp4"], val_videos=["c.mp4"])
+    split = split_videos(videos, cfg)
+    assert split.test == ["b.mp4"]
+    assert "b.mp4" not in split.train and "b__flip_h.mp4" not in split.train
+
+
+def test_holdout_overlap_guard_catches_flips_of_held_out_videos():
+    with pytest.raises(ValueError, match="intersects frozen holdout"):
+        assert_no_holdout_overlap(["a.mp4", "b__flip_h.mp4"], ["b.mp4"], context="test")

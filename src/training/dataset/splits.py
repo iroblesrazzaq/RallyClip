@@ -36,8 +36,9 @@ def split_videos(videos: List[str], cfg: SplitConfig) -> VideoSplit:
     originals = [v for v in videos if not is_flipped_video(v)]
     flips = [v for v in videos if is_flipped_video(v)]
 
-    test_set = {v for v in cfg.test_videos if not is_flipped_video(v)}
-    val_set = {v for v in cfg.val_videos if not is_flipped_video(v)}
+    # A flip named as held out holds out its original (flips never go to val/test).
+    test_set = {original_video_name(v) for v in cfg.test_videos}
+    val_set = {original_video_name(v) for v in cfg.val_videos}
 
     remaining = [v for v in originals if v not in test_set and v not in val_set]
 
