@@ -57,3 +57,13 @@ def test_ratio_split_never_trains_on_a_held_out_mirror(tmp_path):
 def test_loso_refuses_a_flipped_holdout(tmp_path):
     with pytest.raises(ValueError, match="not its flip"):
         _build(tmp_path, SplitConfig(strategy="loso_temporal_val", test_videos=["b__flip_h.mp4"], val_ratio=0.2))
+
+
+def test_rebuild_with_an_empty_split_removes_the_old_file(tmp_path):
+    _build(tmp_path, SplitConfig(strategy="by_video", test_videos=["b.mp4"], val_videos=["c.mp4"]))
+    assert (tmp_path / "out" / "val.h5").exists()
+    # The final model: every video trains, so val and test are empty.
+    manifest = _build(tmp_path, SplitConfig(strategy="by_video", val_ratio=0.0, test_ratio=0.0))
+    assert not (tmp_path / "out" / "val.h5").exists()
+    assert not (tmp_path / "out" / "test.h5").exists()
+    assert manifest["splits"]["val"] == manifest["splits"]["test"] == []

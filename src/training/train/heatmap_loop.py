@@ -124,6 +124,8 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
     has_val = val_path.exists()
     if not has_val:
         logger.warning("No %s: training all epochs without checkpoint selection", val_path)
+        # Nothing is selected, so a best.pth here is from an earlier run.
+        (run_dir / "checkpoints" / "best.pth").unlink(missing_ok=True)
 
     train_ds = Hdf5SequenceDataset(train_path)
     device = _resolve_device(config.get("device"))
@@ -286,8 +288,8 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
 def evaluate_heatmap_run(
     run_dir: Path, test_path: Path, train_cfg: Dict[str, Any], fps: float
 ) -> Tuple[Dict[str, float], float]:
-    """Score a finished run's best.pth on `test_path` with the run's own loss
-    and decode settings.
+    """Score a finished run's best.pth (last.pth when it trained without a val
+    split) on `test_path` with the run's own loss and decode settings.
 
     Model and decode settings come from the run's config.json when present, so
     editing the YAML after training does not change what is scored. Its "loss"
@@ -306,7 +308,10 @@ def evaluate_heatmap_run(
     else:
         pos_weight = train_cfg.get("pos_weight")
         loss_cfg = HeatmapLossConfig.from_train_cfg(train_cfg, fps, 3.0 if pos_weight is None else pos_weight)
-    model = load_heatmap_model(run_dir / "checkpoints" / "best.pth", run_cfg)
+    checkpoint = run_dir / "checkpoints" / "best.pth"
+    if not checkpoint.exists():
+        checkpoint = run_dir / "checkpoints" / "last.pth"
+    model = load_heatmap_model(checkpoint, run_cfg)
     return evaluate_heatmap_model(
         model,
         test_path,

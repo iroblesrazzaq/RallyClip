@@ -101,6 +101,20 @@ def test_eval_decodes_with_the_settings_the_run_trained_with(tmp_path, monkeypat
     assert seen["model_cfg"]["heatmap_peak_threshold"] == 0.3
 
 
+@pytest.mark.parametrize("present, scored", [(["best.pth", "last.pth"], "best.pth"), (["last.pth"], "last.pth")])
+def test_eval_scores_last_when_nothing_was_selected(tmp_path, monkeypatch, present, scored):
+    from training.train import heatmap_loop
+
+    (tmp_path / "checkpoints").mkdir()
+    for name in present:
+        (tmp_path / "checkpoints" / name).write_bytes(b"")
+    seen = []
+    monkeypatch.setattr(heatmap_loop, "load_heatmap_model", lambda path, cfg: seen.append(path.name))
+    monkeypatch.setattr(heatmap_loop, "evaluate_heatmap_model", lambda model, path, **kw: None)
+    heatmap_loop.evaluate_heatmap_run(tmp_path, tmp_path / "test.h5", {}, 5.0)
+    assert seen == [scored]
+
+
 def test_eval_refuses_another_fps(tmp_path):
     import json
 

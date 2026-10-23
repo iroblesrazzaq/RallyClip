@@ -209,13 +209,15 @@ class DatasetBuilder:
 
         for split_name, datasets in all_splits.items():
             features_arr, targets_arr, video_ids, seq_frame_idx, seq_times, video_names = _merge_sequences(datasets)
+            out_path = output_dir / f"{split_name}.h5"
             if features_arr.size == 0:
                 logger.warning("No data for split %s", split_name)
+                # A rebuild with this split now empty must not leave the last build's file behind.
+                out_path.unlink(missing_ok=True)
                 continue
             flat = features_arr.reshape(-1, features_arr.shape[-1])
             scaled = scaler.transform(flat).reshape(features_arr.shape)
 
-            out_path = output_dir / f"{split_name}.h5"
             tmp_path = _tmp_path_for(out_path)
             with h5py.File(tmp_path, "w") as out:
                 out.create_dataset("features", data=scaled, compression="gzip")
