@@ -169,7 +169,10 @@ def round_gate(rounds: list[dict], head: str) -> tuple[int, str, list[dict]]:
         tri = out / "triage.json"
         if not tri.is_file():
             return 1, f"triage round {n} first: write {tri} (see /agent-review)", []
-        outcomes = {str(k): str(v) for k, v in json.loads(tri.read_text(encoding="utf-8")).items()}
+        outcomes = json.loads(tri.read_text(encoding="utf-8"))
+        if not isinstance(outcomes, dict):
+            return 1, f"{tri} must be a JSON object of finding id -> outcome", []
+        outcomes = {str(k): str(v) for k, v in outcomes.items()}
         found = json.loads((out / "findings.json").read_text(encoding="utf-8"))["findings"]
         missing = [str(f["id"]) for f in found if not outcomes.get(str(f["id"]), "").strip()]
         if missing:

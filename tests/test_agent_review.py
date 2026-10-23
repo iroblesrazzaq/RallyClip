@@ -371,6 +371,17 @@ def test_rounds_stop_early_without_confirmed_high(branch_repo, tmp_path, monkeyp
     assert "no confirmed high/P1" in capsys.readouterr().err
 
 
+def test_clean_round_after_a_fixed_high_stops(branch_repo, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [_high()])
+    assert _round(tmp_path, 1, triage={"1": "fixed in abc"})[0] == 0
+    _commit(branch_repo, "fix1.py")
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [_finding()])
+    assert _round(tmp_path, 2, triage={"1": "rejected: fine"})[0] == 0
+    _commit(branch_repo, "fix2.py")
+    assert _round(tmp_path, 3)[0] == 4
+    assert "round 2 had no confirmed high/P1" in capsys.readouterr().err
+
+
 def test_next_round_needs_triage_and_a_new_head(branch_repo, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(review, "run_greptile", lambda *a: [_high()])
     _, out1 = _round(tmp_path, 1)
@@ -421,6 +432,9 @@ def test_next_round_refuses_incomplete_triage_and_gone_output(branch_repo, tmp_p
     _commit(branch_repo, "fix.py")
     assert _round(tmp_path, 2)[0] == 1
     assert "no outcome for finding(s) 2" in capsys.readouterr().err
+    (out1 / "triage.json").write_text('["fixed in abc"]')
+    assert _round(tmp_path, 2)[0] == 1
+    assert "must be a JSON object" in capsys.readouterr().err
     shutil.rmtree(out1)
     assert _round(tmp_path, 2)[0] == 1
     assert "is gone" in capsys.readouterr().err
