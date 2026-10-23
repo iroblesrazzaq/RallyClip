@@ -453,10 +453,10 @@ def _run_normalize(config: Dict[str, Any]) -> None:
             raise FileNotFoundError(f"Source video not found for normalize: {src}")
         dst = raw_dir / src.name
         before = dst.exists()
-        if before and not cfg.overwrite and not is_canonical(dst, cfg):
+        if before and not config.get("overwrite_all") and not is_canonical(dst, cfg):
             # The tree's path does not encode these settings, so replacing the
-            # video (in place too) would leave its poses and features on the old
-            # frame grid.
+            # video (in place too, or with only normalize.overwrite) would leave
+            # its poses and features on the old frame grid.
             raise ValueError(
                 f"{dst} does not match normalize settings {cfg.width}x{cfg.height}@{cfg.fps:g}fps; "
                 "set overwrite_all to rebuild everything derived from it, or use a fresh data_root."

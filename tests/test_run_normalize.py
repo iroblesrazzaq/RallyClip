@@ -37,6 +37,9 @@ def test_mismatched_normalized_video_is_not_silently_replaced(tmp_path, calls, m
 
     with pytest.raises(ValueError, match="does not match normalize settings"):
         pipeline._run_normalize(_config(tmp_path, fps=10))
+    # normalize.overwrite alone would keep poses extracted from the old video.
+    with pytest.raises(ValueError, match="does not match normalize settings"):
+        pipeline._run_normalize(_config(tmp_path, fps=10, overwrite=True))
     assert calls == []
 
     pipeline._run_normalize({**_config(tmp_path, fps=10), "overwrite_all": True})

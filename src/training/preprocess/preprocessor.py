@@ -113,6 +113,8 @@ class Hdf5Preprocessor:
         annotations = load_annotations_json(annotations_path)
         if not annotations.get("segments"):
             logger.warning("No labeled segments for %s; skipping", video_path.name)
+            # Later steps read this path by name, so an older build must not stand in.
+            output_path.unlink(missing_ok=True)
             return None
 
         tmp_path = tmp_path_for(output_path)

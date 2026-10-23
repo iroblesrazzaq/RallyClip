@@ -124,3 +124,24 @@ def test_crop_sidecar_of_another_frame_size_is_rejected(tmp_path):
     )
     with pytest.raises(ValueError, match="1920x1080 but raw poses are 1280x720"):
         pre.preprocess(tmp_path, raw, tmp_path / "clip.mp4", annotations, tmp_path / "out.h5", crop_h5_path=crop)
+
+
+def test_a_video_with_its_segments_removed_drops_its_old_preprocessed_file(tmp_path):
+    import json
+
+    from training.preprocess.preprocessor import Hdf5Preprocessor, PreprocessConfig
+
+    raw = tmp_path / "raw.h5"
+    _write_pose_h5(raw, 10, 1280, 720)
+    annotations = tmp_path / "clip.mp4.json"
+    annotations.write_text(json.dumps({"video_path": "clip.mp4", "segments": []}))
+    old = tmp_path / "out.h5"
+    old.write_bytes(b"old build")
+    pre = Hdf5Preprocessor(
+        PreprocessConfig(
+            target_fps=5.0, save_court_masks=False, court_model_path="", court_target_time=None,
+            court_enabled=False, expect_width=1280, expect_height=720,
+        )
+    )
+    assert pre.preprocess(tmp_path, raw, tmp_path / "clip.mp4", annotations, old) is None
+    assert not old.exists()
