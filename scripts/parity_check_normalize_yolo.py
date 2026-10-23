@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Parity gate: 5fps-normalize-then-YOLO vs full-fps-YOLO-then-target_fps=5.
 
-Acceptance (plan Tier 4):
+Acceptance:
   - matched-frame detection box IoU > 0.9 (mean)
   - keypoint median delta < ~3 px
   - per-frame targets identical after preprocess

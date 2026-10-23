@@ -17,9 +17,11 @@ def yolo_conf_imgsz_tags(config: Dict[str, Any]) -> tuple[str, str, int]:
     if model.name == "manifest.json" or (model.is_dir() and (model / "manifest.json").exists()):
         from extraction.pose_backend import load_manifest
 
-        meta = load_manifest(model)
+        meta = load_manifest(model, verify=False)
         # Manifest-backed models pin identity to the artifact (name@sha8) and
         # own their imgsz; config imgsz is ignored, matching YoloHdf5Extractor.
+        # The tag comes from the manifest's recorded sha, so the model files
+        # need not be present just to locate cached features.
         return meta.tag, conf_tag, meta.imgsz
     imgsz = int(yolo_cfg.get("imgsz", 1920))
     return model.name, conf_tag, imgsz

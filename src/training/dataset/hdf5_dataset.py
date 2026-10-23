@@ -30,7 +30,8 @@ class Hdf5SequenceDataset(Dataset):
             feats = h5f["features"]
             self._length = int(feats.shape[0])
             self._feature_dim = int(feats.shape[-1])
-            if feats.dtype.itemsize * int(np.prod(feats.shape)) <= IN_MEMORY_MAX_BYTES:
+            # Budget the float32 copy actually held, not the on-disk dtype.
+            if 4 * int(np.prod(feats.shape)) <= IN_MEMORY_MAX_BYTES:
                 # One bulk (decompress-once) read instead of per-item chunk thrash.
                 self._features_mem = np.asarray(feats[:], dtype=np.float32)
                 self._targets_mem = np.asarray(h5f["targets"][:], dtype=np.float32)
@@ -77,6 +78,8 @@ class Hdf5SequenceDataset(Dataset):
     def __getstate__(self):
         state = self.__dict__.copy()
         # File handles are not picklable and each worker should reopen independently.
+        # In-memory arrays are kept, so with spawn-start DataLoader workers each
+        # worker gets its own copy (the shipped configs use num_workers=0).
         state["_h5"] = None
         state["_features_ds"] = None
         state["_targets_ds"] = None

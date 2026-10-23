@@ -30,17 +30,15 @@ def test_feature_root_golden_string(tmp_path):
     expected = (
         tmp_path
         / "pose_data"
+        / "norm=1280x720@5fps"
         / "features"
         / "yolo=yolov8n-pose.pt"
         / "conf=0p25"
         / "imgsz=1920"
         / "fps=5.0"
     )
-    # fps may stringify as 5 or 5.0 depending on float formatting in path — accept either
-    assert root.parent == expected.parent or root.name.startswith("fps=5")
-    assert "yolo=yolov8n-pose.pt" in str(root)
-    assert "conf=0p25" in str(root)
-    assert "imgsz=1920" in str(root)
+    # target_fps is coerced to float, so an int 5 still lands under fps=5.0.
+    assert root == expected
     assert features_filename("clip", "v1") == "clip__features__v1.h5"
 
 

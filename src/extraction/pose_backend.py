@@ -66,8 +66,11 @@ def _verified_model_path(manifest_dir: Path, filename: str, expected_sha: str) -
     return path
 
 
-def load_manifest(manifest_path: Path) -> PoseBackendMeta:
-    """Parse and validate a pose manifest; verifies model file sha256s."""
+def load_manifest(manifest_path: Path, *, verify: bool = True) -> PoseBackendMeta:
+    """Parse and validate a pose manifest; verifies model file sha256s.
+
+    verify=False skips reading the model files, for callers that only need the
+    manifest's identity (tag, imgsz), e.g. resolving cache paths."""
     manifest_path = Path(manifest_path)
     if manifest_path.is_dir():
         manifest_path = manifest_path / "manifest.json"
@@ -83,14 +86,11 @@ def load_manifest(manifest_path: Path) -> PoseBackendMeta:
     static_sha = manifest.get("static_model_sha256")
     if manifest.get("static_model_file") and not static_sha:
         raise ValueError(f"{manifest_path} names static_model_file but no static_model_sha256")
-    model_path = _verified_model_path(
-        manifest_path.parent, manifest["model_file"], manifest["model_sha256"]
-    )
+    resolve = _verified_model_path if verify else (lambda root, name, _sha: root / name)
+    model_path = resolve(manifest_path.parent, manifest["model_file"], manifest["model_sha256"])
     static_model_path = None
     if manifest.get("static_model_file"):
-        static_model_path = _verified_model_path(
-            manifest_path.parent, manifest["static_model_file"], static_sha
-        )
+        static_model_path = resolve(manifest_path.parent, manifest["static_model_file"], static_sha)
     return PoseBackendMeta(
         name=manifest["name"],
         head_family=head_family,

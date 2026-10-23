@@ -107,6 +107,19 @@ def test_load_manifest_sha_mismatch_raises(tmp_path):
         load_manifest(bundle)
 
 
+
+def test_load_manifest_without_verify_needs_no_model_files(tmp_path):
+    # Cache-path resolution only needs the manifest's identity, not the weights.
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    manifest = json.loads((V8_DIR / "manifest.json").read_text())
+    (bundle / "manifest.json").write_text(json.dumps(manifest))
+    meta = load_manifest(bundle, verify=False)
+    assert meta.tag == f"{manifest['name']}@{manifest['model_sha256'][:8]}"
+    assert meta.model_path == bundle / manifest["model_file"]
+    with pytest.raises(FileNotFoundError):
+        load_manifest(bundle)
+
 def test_load_manifest_requires_static_sha(tmp_path):
     bundle = tmp_path / "bundle"
     bundle.mkdir()

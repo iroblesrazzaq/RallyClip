@@ -120,4 +120,7 @@ wandb/
 
 # notebooks
 debug.ipynb
-ios/
+
+# local iOS app checkout (separate repo)
+/ios/
+
