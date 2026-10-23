@@ -170,19 +170,17 @@ def test_refinement_never_reorders_peaks():
         assert times == sorted(times)
 
 def test_from_train_cfg_maps_every_decode_key():
-    cfg = HeatmapDecodeConfig.from_train_cfg({
-        "heatmap_decode_mode": "pairdp",
-        "heatmap_peak_threshold": 0.07,
-        "heatmap_decode_window_frames": 4,
-        "heatmap_min_duration_sec": 1.5,
-        "heatmap_pair_penalty": 2.5,
-        "heatmap_pointness_weight": 0.3,
-        "heatmap_pointness_gate": None,       # None keeps the default
-    }, fps=5.0)
-    assert (cfg.mode, cfg.peak_threshold, cfg.refine_window_frames) == ("pairdp", 0.07, 4)
-    assert (cfg.min_duration_sec, cfg.pair_penalty, cfg.pointness_weight) == (1.5, 2.5, 0.3)
-    assert cfg.pointness_gate == HeatmapDecodeConfig().pointness_gate
+    from training.eval.heatmap_evaluator import _TRAIN_KEYS
+
+    train_cfg = {key: 0.1 * (n + 1) for n, key in enumerate(_TRAIN_KEYS)}
+    train_cfg["heatmap_decode_mode"] = "hybrid"
+    cfg = HeatmapDecodeConfig.from_train_cfg(train_cfg, fps=5.0)
+    for key, field_name in _TRAIN_KEYS.items():
+        assert getattr(cfg, field_name) == train_cfg[key], key
     assert cfg.sigma_frames == 2.5                            # 0.5s default sigma at 5 fps
+
+    defaults = HeatmapDecodeConfig.from_train_cfg({"heatmap_pointness_gate": None}, fps=5.0)
+    assert defaults.pointness_gate == HeatmapDecodeConfig().pointness_gate   # None keeps the default
 
 
 def test_runtime_params_only_for_modes_the_runtime_runs():

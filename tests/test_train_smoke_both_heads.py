@@ -1,6 +1,7 @@
 """Synthetic 1-epoch smoke for the classic and e2e_heatmap heads (no YOLO / no real video)."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import h5py
@@ -9,6 +10,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
+from infer.heatmap_decode import HeatmapDecodeConfig as RuntimeDecodeConfig  # noqa: E402
 from training.train.heatmap_loop import load_heatmap_model, train_heatmap  # noqa: E402
 from training.train.loop import train as train_classic  # noqa: E402
 
@@ -86,8 +88,9 @@ def test_heatmap_train_smoke(tmp_path):
     }
     train_heatmap(dataset_dir, run_dir, config)
     assert (run_dir / "metrics.jsonl").exists()
-    manifest = (run_dir / "manifest.json").read_text()
-    assert '"runtime_params"' in manifest
+    decode = json.loads((run_dir / "manifest.json").read_text())["decode"]
+    runtime = RuntimeDecodeConfig(**decode["runtime_params"])   # the runtime can rebuild it
+    assert runtime.mode == decode["mode"] and runtime.peak_threshold == decode["peak_threshold"]
     ckpt = torch.load(run_dir / "checkpoints" / "best.pth", map_location="cpu")
     assert ckpt["arch"]["levels"] == 2
     load_heatmap_model(run_dir / "checkpoints" / "best.pth", config)
