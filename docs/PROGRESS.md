@@ -25,7 +25,7 @@ _Last updated: 2026-10-22 (session: clean v0.6 training PR replacing #61)._
 
 ## Gates (2026-10-22)
 
-Default suite 471 passed / 17 skipped; torch blocked 427 / 27; golden CLI
+Default suite 498 passed; torch blocked 449 / 11 skipped; golden CLI
 parity 1 passed; court flights 24 passed; compileall clean; remaining ruff
 findings on changed files are pre-existing on main.
 

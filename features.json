@@ -10,7 +10,7 @@
       "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
-      "evidence": "2026-10-22: 471 passed, 17 skipped, 49 deselected (~28s) on training/v060-tcn-netline (macOS, .venv-train py3.11). With torch blocked from import: 427 passed, 27 skipped, no collection errors."
+      "evidence": "2026-10-22: 498 passed, 49 deselected (~50s) on training/v060-tcn-netline (macOS, .venv-train py3.11, pose weights fetched). With torch blocked from import: 449 passed, 11 skipped, no collection errors."
     },
     {
       "id": "golden-cli-parity",
@@ -87,7 +87,7 @@
       "name": "v0.6 training recipe in git: TCN heatmap head, net-line slots, v2_nearfar features, eval decodes with the runtime decode",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_train_smoke_both_heads.py tests/test_heatmap_tcn.py tests/test_netline_slots.py tests/test_dataset_flip_leakage.py",
-      "evidence": "2026-10-22: part of the 471-pass default suite on training/v060-tcn-netline; court flights 24 passed. Full v0.6 retrain from configs/train/v060_netline.yaml not re-run in-session."
+      "evidence": "2026-10-22: part of the 498-pass default suite on training/v060-tcn-netline, after two review-gate rounds; court flights 24 passed. Full v0.6 retrain from configs/train/v060_netline.yaml not re-run in-session."
     }
   ],
   "active": "artifact-registry"
