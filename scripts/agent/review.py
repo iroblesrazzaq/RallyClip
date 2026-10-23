@@ -155,20 +155,27 @@ def hard_constraints(root: Path) -> str:
 
 def state_path(root: Path, branch: str) -> Path:
     common = Path(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir").strip())
-    return common / "rallyclip-review" / (re.sub(r"[^A-Za-z0-9._-]", "-", branch) + ".json")
+    slug = re.sub(r"[^A-Za-z0-9._-]", "-", branch)
+    return common / "rallyclip-review" / f"{slug}-{hashlib.sha256(branch.encode()).hexdigest()[:8]}.json"
 
 
 def round_gate(rounds: list[dict], head: str) -> tuple[int, str, list[dict]]:
     """(exit code, message, rejected findings) for starting round len(rounds)+1; code 0 = go."""
     rejected = []
     for n, r in enumerate(rounds, 1):
-        tri = Path(r["out"]) / "triage.json"
+        out = Path(r["out"])
+        if not (out / "findings.json").is_file():
+            return 1, f"round {n} output {out} is gone (temp dir cleaned?); --reset to start over", []
+        tri = out / "triage.json"
         if not tri.is_file():
-            return 1, f"triage round {n} first: write {tri} (see /agent-review), or --reset", []
+            return 1, f"triage round {n} first: write {tri} (see /agent-review)", []
         outcomes = {str(k): str(v) for k, v in json.loads(tri.read_text(encoding="utf-8")).items()}
-        found = json.loads((Path(r["out"]) / "findings.json").read_text(encoding="utf-8"))["findings"]
+        found = json.loads((out / "findings.json").read_text(encoding="utf-8"))["findings"]
+        missing = [str(f["id"]) for f in found if not outcomes.get(str(f["id"]), "").strip()]
+        if missing:
+            return 1, f"{tri} has no outcome for finding(s) {', '.join(missing)}", []
         for f in found:
-            outcome = outcomes.get(str(f["id"]), "")
+            outcome = outcomes[str(f["id"])]
             f["outcome"] = outcome
             if outcome.lower().startswith("rejected"):
                 rejected.append({**f, "round": n})
@@ -187,7 +194,11 @@ def round_gate(rounds: list[dict], head: str) -> tuple[int, str, list[dict]]:
 def repeat_of(f: dict, rejected: list[dict]) -> dict | None:
     """An earlier rejected finding on the same file within 10 lines (lines drift as fixes land)."""
     for r in rejected:
-        if r["file"] == f["file"] and (f["line"] is None or r["line"] is None or abs(f["line"] - r["line"]) <= 10):
+        if r["file"] != f["file"]:
+            continue
+        if (f["line"] is None and r["line"] is None) or (
+            f["line"] is not None and r["line"] is not None and abs(f["line"] - r["line"]) <= 10
+        ):
             return r
     return None
 
@@ -353,11 +364,13 @@ def main(argv: list[str] | None = None) -> int:
         print("warning: uncommitted changes are NOT reviewed (only merge-base..HEAD)", file=sys.stderr)
 
     state_file = state_path(root, branch)
-    rounds = [] if args.reset or not state_file.is_file() else json.loads(state_file.read_text())["rounds"]
+    rounds: list[dict] = []
     try:
+        if not args.reset and state_file.is_file():
+            rounds = json.loads(state_file.read_text(encoding="utf-8"))["rounds"]
         code, msg, rejected = round_gate(rounds, head)
-    except (OSError, ValueError, KeyError) as e:  # earlier round's out dir gone or unreadable
-        code, msg, rejected = 1, f"cannot read round {len(rounds)} results ({e}); --reset to start over", []
+    except (OSError, ValueError, KeyError, TypeError) as e:  # state or an earlier round's files unreadable
+        code, msg, rejected = 1, f"cannot read earlier review rounds ({e}); --reset to start over", []
     if code:
         print(f"{'stop' if code == 4 else 'error'}: {msg}", file=sys.stderr)
         return code
@@ -366,6 +379,9 @@ def main(argv: list[str] | None = None) -> int:
         out = args.out.resolve()
         if out == root or root in out.parents:
             print("error: --out must be outside the repo", file=sys.stderr)
+            return 1
+        if any(Path(r["out"]).resolve() == out for r in rounds):
+            print("error: --out holds an earlier round's findings; use a new dir", file=sys.stderr)
             return 1
         out.mkdir(parents=True, exist_ok=True)
     else:
@@ -416,8 +432,9 @@ def main(argv: list[str] | None = None) -> int:
         "tree_modified_by_reviewer": modified, **meta, "findings": findings,
     }
     (out / "findings.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    state_file.parent.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(json.dumps({"rounds": [*rounds, {"head": head, "out": str(out)}]}, indent=2))
+    if len(failures) < len(jobs):  # a round where every reviewer failed reviewed nothing: rerun it
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text(json.dumps({"rounds": [*rounds, {"head": head, "out": str(out)}]}, indent=2))
 
     counts = {s: sum(f["severity"] == s for f in findings) for s in SEVERITIES}
     print(f"review round {len(rounds) + 1}/{MAX_ROUNDS} {branch} vs {args.base} ({len(files)} files)"

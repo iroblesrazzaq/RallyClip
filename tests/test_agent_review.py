@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -387,6 +388,53 @@ def test_rejected_findings_reach_prompt_and_mark_repeats(branch_repo, tmp_path, 
     assert report["round"] == 2
     repeats = {f["file"]: f.get("repeat_of") for f in report["findings"]}
     assert repeats["b.py"] == "round 1 #2: rejected: pre-existing" and repeats["c.py"] is None
+
+
+def test_round_where_every_reviewer_failed_does_not_count(branch_repo, tmp_path, monkeypatch):
+    def boom(*a):
+        raise RuntimeError("timeout")
+
+    monkeypatch.setattr(review, "run_greptile", boom)
+    assert _round(tmp_path, 1)[0] == 2
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [])
+    code, out = _round(tmp_path, 2)
+    assert code == 0 and json.loads((out / "findings.json").read_text())["round"] == 1
+
+
+def test_next_round_refuses_incomplete_triage_and_gone_output(branch_repo, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [_high(), _finding("b.py")])
+    _, out1 = _round(tmp_path, 1, triage={"1": "fixed in abc"})
+    _commit(branch_repo, "fix.py")
+    assert _round(tmp_path, 2)[0] == 1
+    assert "no outcome for finding(s) 2" in capsys.readouterr().err
+    shutil.rmtree(out1)
+    assert _round(tmp_path, 2)[0] == 1
+    assert "is gone" in capsys.readouterr().err
+
+
+def test_corrupt_state_and_reused_out_are_errors(branch_repo, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [_high()])
+    _, out1 = _round(tmp_path, 1, triage={"1": "fixed in abc"})
+    _commit(branch_repo, "fix.py")
+    argv = ["--base", "base", "--reviewers", "greptile", "--out", str(out1)]
+    assert review.main(argv) == 1
+    assert "earlier round's findings" in capsys.readouterr().err
+    branch = review.git(branch_repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    review.state_path(branch_repo, branch).write_text("{not json")
+    assert _round(tmp_path, 2)[0] == 1
+    assert "cannot read earlier review rounds" in capsys.readouterr().err
+
+
+def test_state_file_names_do_not_collide():
+    root = _ROOT
+    assert review.state_path(root, "feat/foo") != review.state_path(root, "feat-foo")
+
+
+def test_repeat_needs_matching_lines():
+    old = {"file": "a.py", "line": None, "claim": "c", "outcome": "rejected: x", "round": 1, "id": 1}
+    assert review.repeat_of({"file": "a.py", "line": 40}, [old]) is None
+    assert review.repeat_of({"file": "a.py", "line": None}, [old]) is old
+    assert review.repeat_of({"file": "a.py", "line": 5}, [{**old, "line": 12}]) is not None
 
 
 def test_round_state_lives_in_git_dir_not_worktree(branch_repo, tmp_path, monkeypatch):

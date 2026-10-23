@@ -17,7 +17,7 @@ PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovi
 ```
 
 Last known (2026-10-23, review round cap, macOS `.venv-train` py3.11):
-**370 passed, 11 skipped, 49 deselected, ~37s**. `tests/test_agent_review.py` 52 passed.
+**375 passed, 11 skipped, 49 deselected, ~41s**. `tests/test_agent_review.py` 57 passed.
 (2026-10-22: 363 passed; `tests/test_update_release.py` 15 passed.)
 (2026-09-09, Linux py3.12: 321 passed, 6 skipped, 27 deselected; `tests/test_release_packaging.py`
 21 passed; `tests/test_artifact_fetch.py` 6 passed.)
