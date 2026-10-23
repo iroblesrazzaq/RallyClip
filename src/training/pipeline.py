@@ -1,5 +1,6 @@
 from __future__ import annotations
 from copy import deepcopy
+import argparse
 import json
 import logging
 import re
@@ -29,7 +30,7 @@ from training.dataset.splits import SplitConfig, assert_no_holdout_overlap
 from training.eval.checkpoint import build_model_from_checkpoint, evaluate_checkpoint
 from training.eval.evaluator import SegmentEvalConfig
 from training.features.builder import FeatureBuildConfig, FeatureBuilder
-from training.io.config import court_target_time, resolve_court_model_path
+from training.io.config import court_target_time, load_config, resolve_court_model_path
 from training.io.videos import resolve_videos
 from training.normalize.normalize import (
     CANONICAL_HEIGHT,
@@ -92,6 +93,36 @@ def run_pipeline(config: Dict[str, Any], steps_override: Optional[Iterable[str]]
         if func is None:
             raise ValueError(f"Unknown step: {step}")
         func(config)
+
+
+def run_step_cli(step: str, description: str, argv: Optional[List[str]] = None) -> int:
+    """Entry point for the single-step scripts (scripts/extract_yolo.py etc.).
+
+    They run the pipeline's own step, so paths and settings always match train.py.
+    """
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("--config", required=True, help="Path to YAML config (comma-separated to overlay)")
+    parser.add_argument("--mode", choices=["annotated", "all", "list"], help="Video selection mode")
+    parser.add_argument("--video", action="append", help="Explicit video list (repeatable)")
+    if step != "dataset":
+        parser.add_argument("--overwrite", action="store_true", help="Overwrite existing outputs")
+    if step == "extract":
+        parser.add_argument("--resume", action="store_true", help="Resume incomplete outputs")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+    config = load_config(args.config)
+    step_cfg = config.setdefault(step, {})
+    if args.mode:
+        step_cfg["mode"] = args.mode
+    if args.video:
+        config["videos"] = list(args.video)
+    if getattr(args, "overwrite", False):
+        step_cfg["overwrite"] = True
+    if getattr(args, "resume", False):
+        step_cfg["resume"] = True
+    run_pipeline(config, steps_override=[step])
+    return 0
 
 
 def run_sweep(config: Dict[str, Any]) -> None:
@@ -173,6 +204,9 @@ def run_sweep(config: Dict[str, Any]) -> None:
                     fold_cfg["dataset"]["split"]["val_ratio"] = val_ratio
                     fold_cfg["dataset"]["split"]["test_ratio"] = 0.0
                     fold_cfg["dataset"]["split"]["test_videos"] = [held_out_video]
+                    # Build from the checked pool only; dataset.mode alone would
+                    # also pull in the frozen holdout videos.
+                    fold_cfg["videos"] = list(videos)
 
                     fold_slug = _slug(Path(held_out_video).stem, 36)
                     run_id = (

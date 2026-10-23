@@ -279,11 +279,13 @@ def evaluate_heatmap_run(
     """Score a finished run's best.pth on `test_path` with the run's own loss
     and decode settings.
 
-    The loss comes from the run's config.json "loss" block when present, so a
-    pos_weight derived at train time is reused rather than re-guessed.
+    Model and decode settings come from the run's config.json when present, so
+    editing the YAML after training does not change what is scored. Its "loss"
+    block reuses a pos_weight derived at train time rather than re-guessing it.
     """
     config_path = run_dir / "config.json"
     saved = json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+    run_cfg = saved or train_cfg
     if saved.get("loss"):
         # Filter to current fields: older runs also saved the removed time_* knobs.
         known = {f.name for f in fields(HeatmapLossConfig)}
@@ -291,13 +293,13 @@ def evaluate_heatmap_run(
     else:
         pos_weight = train_cfg.get("pos_weight")
         loss_cfg = HeatmapLossConfig.from_train_cfg(train_cfg, fps, 3.0 if pos_weight is None else pos_weight)
-    model = load_heatmap_model(run_dir / "checkpoints" / "best.pth", train_cfg)
+    model = load_heatmap_model(run_dir / "checkpoints" / "best.pth", run_cfg)
     return evaluate_heatmap_model(
         model,
         test_path,
         device=torch.device("cpu"),
         criterion=E2EHeatmapLoss(loss_cfg),
-        decode_cfg=HeatmapDecodeConfig.from_train_cfg(train_cfg, fps),
+        decode_cfg=HeatmapDecodeConfig.from_train_cfg(run_cfg, fps),
         six_bin_cfg=SixBinConfig(),
     )
 

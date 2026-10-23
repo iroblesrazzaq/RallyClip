@@ -2,12 +2,10 @@
 from __future__ import annotations
 
 import importlib.util
-import sys
 from pathlib import Path
 
 import pytest
 
-from training.artifact_paths import feature_root_from_config, yolo_conf_imgsz_tags
 from training.io.config import court_target_time, load_config
 from training.paths import pose_preprocessed_dir, raw_videos_dir
 
@@ -34,8 +32,31 @@ def config_path(tmp_path, monkeypatch):
     return f"{_BASE},{override}"
 
 
-def test_build_features_uses_the_pipeline_paths(tmp_path, config_path, monkeypatch):
-    script = _load_script("build_features")
+@pytest.mark.parametrize("name, step", [
+    ("extract_yolo", "extract"),
+    ("preprocess_yolo", "preprocess"),
+    ("build_features", "features"),
+    ("build_dataset", "dataset"),
+])
+def test_step_scripts_run_the_pipeline_step(name, step, config_path, monkeypatch):
+    pytest.importorskip("torch")
+    from training import pipeline
+
+    seen = []
+    monkeypatch.setattr(pipeline, "run_pipeline", lambda config, steps_override: seen.append((config, steps_override)))
+    assert _load_script(name).main(["--config", config_path, "--mode", "all", "--video", "m.mp4"]) == 0
+
+    (config, steps), = seen
+    assert steps == [step]
+    assert config["videos"] == ["m.mp4"]
+    assert config[step]["mode"] == "all"
+
+
+def test_build_features_reads_and_writes_the_pipeline_paths(tmp_path, config_path, monkeypatch):
+    pytest.importorskip("torch")
+    from training import pipeline
+    from training.artifact_paths import feature_root_from_config, yolo_conf_imgsz_tags
+
     config = load_config(config_path)
     model_tag, conf_tag, imgsz = yolo_conf_imgsz_tags(config)
     fps = float(config["preprocess"]["target_fps"])
@@ -54,10 +75,10 @@ def test_build_features_uses_the_pipeline_paths(tmp_path, config_path, monkeypat
 
         def build(self, src, dst, overwrite=False):
             built.append((src, dst))
+            return dst
 
-    monkeypatch.setattr(script, "FeatureBuilder", FakeBuilder)
-    monkeypatch.setattr(sys, "argv", ["build_features", "--config", config_path, "--video", "m.mp4"])
-    assert script.main() == 0
+    monkeypatch.setattr(pipeline, "FeatureBuilder", FakeBuilder)
+    assert _load_script("build_features").main(["--config", config_path, "--video", "m.mp4"]) == 0
     assert built == [(preproc, feature_root_from_config(tmp_path, config) / "m__features__v1.h5")]
 
 
@@ -74,7 +95,7 @@ def test_cache_court_masks_keeps_the_midpoint_default(config_path, monkeypatch):
 
     monkeypatch.setattr(script, "CourtMaskCache", FakeCache)
     monkeypatch.setattr(script, "resolve_court_model_path", lambda config: "court.onnx")
-    monkeypatch.setattr(sys, "argv", ["cache_court_masks", "--config", config_path, "--video", "m.mp4"])
+    monkeypatch.setattr("sys.argv", ["cache_court_masks", "--config", config_path, "--video", "m.mp4"])
     assert script.main() == 0
     assert seen["target_time"] is None
 

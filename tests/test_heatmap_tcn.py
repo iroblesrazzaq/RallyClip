@@ -82,3 +82,20 @@ def test_checkpoint_reloads_with_and_without_stored_arch(tmp_path, stem_hidden, 
         assert reloaded.arch() == model.arch()
         with torch.no_grad():
             assert torch.allclose(reloaded(x)[0], want, atol=1e-6)
+
+
+def test_eval_decodes_with_the_settings_the_run_trained_with(tmp_path, monkeypatch):
+    import json
+
+    from training.train import heatmap_loop
+
+    (tmp_path / "config.json").write_text(json.dumps({"heatmap_peak_threshold": 0.3}))
+    seen = {}
+    monkeypatch.setattr(heatmap_loop, "load_heatmap_model", lambda path, cfg: seen.setdefault("model_cfg", cfg))
+    monkeypatch.setattr(heatmap_loop, "evaluate_heatmap_model",
+                        lambda model, path, **kw: seen.setdefault("decode", kw["decode_cfg"]))
+
+    # The YAML was edited after training; eval must still score the run's decoder.
+    heatmap_loop.evaluate_heatmap_run(tmp_path, tmp_path / "test.h5", {"heatmap_peak_threshold": 0.1}, 5.0)
+    assert seen["decode"].peak_threshold == 0.3
+    assert seen["model_cfg"]["heatmap_peak_threshold"] == 0.3

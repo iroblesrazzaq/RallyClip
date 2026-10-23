@@ -61,11 +61,10 @@ uv run python train.py --config configs/train/base.yaml --steps extract,preproce
 ```
 
 ## Useful scripts
-- `scripts/extract_yolo.py`: run YOLO extraction only.
+- `scripts/extract_yolo.py`, `scripts/preprocess_yolo.py`, `scripts/build_features.py`,
+  `scripts/build_dataset.py`: run one pipeline step (same as `--steps extract` etc.), with
+  `--mode`, repeatable `--video`, and `--overwrite` (`--resume` for extract).
 - `scripts/cache_court_masks.py`: cache court masks only.
-- `scripts/preprocess_yolo.py`: preprocess only.
-- `scripts/build_features.py`: feature engineering only.
-- `scripts/build_dataset.py`: dataset builder only.
 - `scripts/convert_annotations.py`: CSV -> JSON conversion.
 - `scripts/visualize_overlays.py`: debugging overlays.
 

@@ -61,3 +61,20 @@ def test_overwrite_all_rebuilds_court_masks(tmp_path, monkeypatch, config, force
     with pytest.raises(_Captured) as info:
         pipeline._run_preprocess({"data_root": str(tmp_path), "yolo": {"model": "yolov8n-pose.pt"}, **config})
     assert info.value.args[0] is force
+
+
+def test_loso_folds_build_only_from_the_checked_pool(tmp_path, monkeypatch):
+    runs = []
+    monkeypatch.setattr(pipeline, "run_pipeline", lambda cfg, steps_override: runs.append((cfg, steps_override)))
+    monkeypatch.setattr(pipeline, "_resolve_sweep_datasets", lambda *a: [{"name": "d"}])
+    monkeypatch.setattr(pipeline, "_is_fold_complete", lambda **kw: False)
+    pipeline.run_sweep({
+        "data_root": str(tmp_path),
+        "dataset": {"mode": "annotated", "split": {"test_videos": ["frozen.mp4"]}},
+        "sweep": {"enabled": True, "fps_values": [5], "seq_len_seconds": [20],
+                  "loso": {"videos": ["a.mp4", "b.mp4"]}},
+    })
+
+    folds = [cfg for cfg, steps in runs if "dataset" in steps]
+    assert [f["dataset"]["split"]["test_videos"] for f in folds] == [["a.mp4"], ["b.mp4"]]
+    assert all(f["videos"] == ["a.mp4", "b.mp4"] for f in folds)
