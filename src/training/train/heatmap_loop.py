@@ -127,6 +127,9 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
         # Nothing is selected, so a best.pth here is from an earlier run.
         (run_dir / "checkpoints" / "best.pth").unlink(missing_ok=True)
 
+    if int(config.get("grad_accum_steps", 1)) != 1:
+        raise ValueError("The heatmap head has no gradient accumulation; set grad_accum_steps: 1")
+
     train_ds = Hdf5SequenceDataset(train_path)
     device = _resolve_device(config.get("device"))
     model = build_heatmap_model(config, train_ds.feature_dim).to(device)
@@ -159,10 +162,12 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
     elif lr_schedule != "none":
         raise ValueError(f"Unknown lr_schedule: {lr_schedule!r} (expected none | cosine)")
 
-    batch_size = int(config.get("batch_size", 32))
+    # Same precedence as the classic loop.
+    train_batch_size = int(config.get("train_batch_size", config.get("batch_size", 32)))
+    eval_batch_size = int(config.get("eval_batch_size", train_batch_size))
     generator = torch.Generator()
     generator.manual_seed(seed)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0, generator=generator)
+    train_loader = DataLoader(train_ds, batch_size=train_batch_size, shuffle=True, num_workers=0, generator=generator)
 
     early_stopping_patience = max(0, int(config.get("early_stopping_patience", 0)))
     early_stopping_min_delta = float(config.get("early_stopping_min_delta", 0.0))
@@ -185,7 +190,10 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
     with (run_dir / "config.json").open("w", encoding="utf-8") as handle:
         json.dump(_to_jsonable({**config, "loss": asdict(loss_cfg)}), handle, indent=2)
 
-    logger.info("Heatmap training setup: device=%s batch=%d loss=%s", device, batch_size, loss_cfg)
+    logger.info(
+        "Heatmap training setup: device=%s train_batch=%d eval_batch=%d loss=%s",
+        device, train_batch_size, eval_batch_size, loss_cfg,
+    )
 
     for epoch in range(1, total_epochs + 1):
         epoch_started = time.time()
@@ -214,7 +222,7 @@ def train_heatmap(dataset_dir: Path, run_dir: Path, config: Dict[str, Any]) -> N
             eval_model = TennisPointHeatmapTCN(**model.arch())
             eval_model.load_state_dict({k: v.detach().cpu().clone() for k, v in model.state_dict().items()})
             val_metrics, val_loss = evaluate_heatmap_model(
-                eval_model, val_path, torch.device("cpu"), criterion_cpu, decode_cfg, six_bin_cfg, batch_size=batch_size
+                eval_model, val_path, torch.device("cpu"), criterion_cpu, decode_cfg, six_bin_cfg, batch_size=eval_batch_size
             )
             del eval_model
             val_row = {"val_loss": val_loss, **val_metrics}

@@ -123,3 +123,23 @@ def test_heatmap_trains_without_a_val_split(tmp_path):
     manifest = json.loads((run_dir / "manifest.json").read_text())
     assert manifest["training"]["selection_metric"] == "none"
     assert manifest["source_run"]["checkpoint_path"].endswith("last.pth")
+
+
+def test_heatmap_honors_train_batch_size_and_refuses_grad_accum(tmp_path, monkeypatch):
+    from training.train import heatmap_loop
+
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+    _write_split(dataset_dir / "train.h5")
+    cfg = {
+        "device": "cpu", "epochs": 1, "batch_size": 8, "train_batch_size": 2, "pos_weight": 3.0, "seed": 0,
+        "fps": 5.0, "hidden_size": 16, "heatmap_tcn_levels": 2,
+    }
+    with pytest.raises(ValueError, match="grad_accum_steps"):
+        train_heatmap(dataset_dir, tmp_path / "run", {**cfg, "grad_accum_steps": 4})
+
+    sizes = []
+    real_loader = heatmap_loop.DataLoader
+    monkeypatch.setattr(heatmap_loop, "DataLoader", lambda ds, batch_size, **kw: sizes.append(batch_size) or real_loader(ds, batch_size=batch_size, **kw))
+    train_heatmap(dataset_dir, tmp_path / "run", cfg)
+    assert sizes == [2]
