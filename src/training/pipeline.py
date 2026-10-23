@@ -906,18 +906,7 @@ def _evaluate_postprocess_run(
     seq_len_seconds = float(dataset_cfg.get("seq_len_seconds", 10.0))
     overlap_seconds = float(dataset_cfg.get("overlap_seconds", seq_len_seconds / 2.0))
     feature_set = feature_set_from_config(run_cfg)
-    try:
-        feature_root = feature_root_from_run_config(data_root, run_cfg)
-    except Exception:
-        # Backward-compat for older runs that only encoded imgsz in the run_id.
-        imgsz = _parse_imgsz_from_run_id(run_dir.name)
-        feature_root = (
-            pose_features_dir(data_root)
-            / "yolo=yolov8n-pose.pt"
-            / "conf=0p25"
-            / f"imgsz={imgsz}"
-            / f"fps={fps}"
-        )
+    feature_root = _run_feature_root(data_root, run_dir, run_cfg, fps)
     feature_path = feature_root / features_filename(Path(held_out_video).stem, feature_set)
     if not feature_path.exists():
         logger.warning("Skipping %s; feature file missing: %s", run_dir.name, feature_path)
@@ -1056,7 +1045,7 @@ def _resolve_sweep_datasets(
     if mode != "auto":
         raise ValueError(f"Unknown sweep.datasets.mode: {mode}")
 
-    specs = _discover_raw_datasets(data_root, required_stems=required_stems, require_all=require_all)
+    specs = _discover_raw_datasets(data_root, required_stems=required_stems, require_all=require_all, config=config)
     if entries:
         manual = [_normalize_manual_dataset_entry(e, config) for e in entries]
         manual_names = {m["name"] for m in manual}
@@ -1083,16 +1072,27 @@ def _normalize_manual_dataset_entry(entry: Any, config: Dict[str, Any]) -> Dict[
     return spec
 
 
-def _discover_raw_datasets(data_root: Path, required_stems: set[str], require_all: bool) -> List[Dict[str, Any]]:
+def _discover_raw_datasets(
+    data_root: Path, required_stems: set[str], require_all: bool, config: Optional[Dict[str, Any]] = None
+) -> List[Dict[str, Any]]:
     raw_root = pose_raw_dir(data_root)
     specs: List[Dict[str, Any]] = []
     if not raw_root.exists():
         return specs
+    # A manifest-backed cache dir is named by its tag (name@sha8), which is not
+    # loadable; map it back to the configured manifest when the tags agree.
+    config_model = str((config or {}).get("yolo", {}).get("model", ""))
+    config_tag = yolo_conf_imgsz_tags(config)[0] if config_model else ""
 
     for yolo_dir in sorted(raw_root.glob("yolo=*")):
         if not yolo_dir.is_dir():
             continue
-        model = yolo_dir.name.split("=", 1)[1]
+        tag = model = yolo_dir.name.split("=", 1)[1]
+        if "@" in tag:
+            if tag != config_tag:
+                logger.warning("Skipping %s: no configured manifest has tag %s", yolo_dir, tag)
+                continue
+            model = config_model
         for conf_dir in sorted(yolo_dir.glob("conf=*")):
             if not conf_dir.is_dir():
                 continue
@@ -1111,7 +1111,7 @@ def _discover_raw_datasets(data_root: Path, required_stems: set[str], require_al
                 stems = {p.name.split("__start", 1)[0] for p in h5_files}
                 if require_all and not required_stems.issubset(stems):
                     continue
-                name = f"{_slug(Path(model).stem, 20)}_conf{_fmt_num(conf)}_img{imgsz}"
+                name = f"{_slug(Path(tag).stem, 20)}_conf{_fmt_num(conf)}_img{imgsz}"
                 specs.append(
                     {
                         "name": _slug(name, 48),
@@ -1228,6 +1228,15 @@ def _parse_sweep_run_id(run_id: str, run_prefix: str) -> Optional[Dict[str, Any]
 
 def _parse_fmt_num(text: str) -> float:
     return float(text.replace("p", "."))
+
+
+def _run_feature_root(data_root: Path, run_dir: Path, run_cfg: Dict[str, Any], fps: float) -> Path:
+    if isinstance(run_cfg.get("yolo"), dict):
+        return feature_root_from_run_config(data_root, run_cfg)
+    # Older runs saved no yolo settings and encoded imgsz only in the run_id;
+    # feature_root_from_run_config would silently default them.
+    imgsz = _parse_imgsz_from_run_id(run_dir.name)
+    return pose_features_dir(data_root) / "yolo=yolov8n-pose.pt" / "conf=0p25" / f"imgsz={imgsz}" / f"fps={fps}"
 
 
 def _parse_imgsz_from_run_id(run_id: str) -> int:
