@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 from training.normalize.normalize import NormalizeConfig, is_canonical, normalize_video, probe_video
+
+# Normalize shells out to ffmpeg/ffprobe, which the CI runners do not install.
+pytestmark = pytest.mark.skipif(
+    not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="ffmpeg/ffprobe not on PATH"
+)
 
 
 def _write_color_switch_clip(path: Path, *, width=1920, height=1080, fps=60.0, duration_s=2.0) -> None:
