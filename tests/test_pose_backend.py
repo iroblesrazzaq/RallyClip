@@ -20,12 +20,21 @@ from extraction.yolo_onnx_runner import (
 
 ROOT = Path(__file__).resolve().parents[1]
 V8_DIR = ROOT / "models" / "pose" / "yolov8n"
-# The ONNX weights are not in git (gitignored; same files as the release
-# artifact). Tests that load them skip on a checkout without them.
+# The ONNX weights are not in git: the manifest points into the release bundle
+# that scripts/fetch_artifact.py fills. Tests that load them skip without it.
+_V8_MANIFEST = json.loads((V8_DIR / "manifest.json").read_text())
 needs_weights = pytest.mark.skipif(
-    not (V8_DIR / "yolov8n-pose-960-dynamic.onnx").exists(),
-    reason="YOLOv8n pose ONNX not present under models/pose/yolov8n",
+    not (V8_DIR / _V8_MANIFEST["model_file"]).exists(),
+    reason="YOLOv8n pose ONNX not fetched (python scripts/fetch_artifact.py)",
 )
+
+
+def _bundle_manifest() -> dict:
+    """The v8 manifest with model files renamed to sit inside a tmp bundle."""
+    manifest = dict(_V8_MANIFEST)
+    for key in ("model_file", "static_model_file"):
+        manifest[key] = Path(manifest[key]).name
+    return manifest
 
 
 def _coreml_available() -> bool:
@@ -99,7 +108,7 @@ def test_load_manifest_real_bundle():
 def test_load_manifest_sha_mismatch_raises(tmp_path):
     bundle = tmp_path / "bundle"
     bundle.mkdir()
-    manifest = json.loads((V8_DIR / "manifest.json").read_text())
+    manifest = _bundle_manifest()
     (bundle / "manifest.json").write_text(json.dumps(manifest))
     (bundle / manifest["model_file"]).write_bytes(b"tampered")
     (bundle / manifest["static_model_file"]).write_bytes(b"tampered")
@@ -112,7 +121,7 @@ def test_load_manifest_without_verify_needs_no_model_files(tmp_path):
     # Cache-path resolution only needs the manifest's identity, not the weights.
     bundle = tmp_path / "bundle"
     bundle.mkdir()
-    manifest = json.loads((V8_DIR / "manifest.json").read_text())
+    manifest = _bundle_manifest()
     (bundle / "manifest.json").write_text(json.dumps(manifest))
     meta = load_manifest(bundle, verify=False)
     assert meta.tag == f"{manifest['name']}@{manifest['model_sha256'][:8]}"
@@ -123,7 +132,7 @@ def test_load_manifest_without_verify_needs_no_model_files(tmp_path):
 def test_load_manifest_requires_static_sha(tmp_path):
     bundle = tmp_path / "bundle"
     bundle.mkdir()
-    manifest = json.loads((V8_DIR / "manifest.json").read_text())
+    manifest = _bundle_manifest()
     manifest.pop("static_model_sha256", None)
     (bundle / "manifest.json").write_text(json.dumps(manifest))
     (bundle / manifest["model_file"]).write_bytes(b"x")
@@ -134,7 +143,7 @@ def test_load_manifest_requires_static_sha(tmp_path):
 def test_load_manifest_rejects_unknown_head_family(tmp_path):
     bundle = tmp_path / "bundle"
     bundle.mkdir()
-    manifest = json.loads((V8_DIR / "manifest.json").read_text())
+    manifest = _bundle_manifest()
     manifest["head_family"] = "segment"
     (bundle / "manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="head_family"):
@@ -147,12 +156,12 @@ def test_coreml_refused_for_e2e_head(tmp_path):
     # selection is not numerically faithful) before any model file is loaded.
     bundle = tmp_path / "bundle"
     bundle.mkdir()
-    manifest = json.loads((V8_DIR / "manifest.json").read_text())
+    manifest = _bundle_manifest()
     manifest["head_family"] = "yolo26-e2e"
     (bundle / "manifest.json").write_text(json.dumps(manifest))
-    shutil.copy(V8_DIR / manifest["model_file"], bundle / manifest["model_file"])
+    shutil.copy(V8_DIR / _V8_MANIFEST["model_file"], bundle / manifest["model_file"])
     shutil.copy(
-        V8_DIR / manifest["static_model_file"], bundle / manifest["static_model_file"]
+        V8_DIR / _V8_MANIFEST["static_model_file"], bundle / manifest["static_model_file"]
     )
     with pytest.raises(ValueError, match="CoreML provider refused"):
         load_pose_backend(bundle, provider="coreml")
@@ -164,11 +173,10 @@ def test_unknown_provider_raises():
         load_pose_backend(V8_DIR, provider="cuda")
 
 
-@needs_weights
 def test_yolo_conf_imgsz_tags_manifest():
     from training.artifact_paths import yolo_conf_imgsz_tags
 
-    meta = load_manifest(V8_DIR)
+    meta = load_manifest(V8_DIR, verify=False)   # tags come from the manifest alone
     config = {"yolo": {"model": str(V8_DIR / "manifest.json"), "conf": 0.25}}
     model_tag, conf_tag, imgsz = yolo_conf_imgsz_tags(config)
     assert model_tag == meta.tag
