@@ -5,9 +5,10 @@ This repo includes a modular, step-based training pipeline driven by a YAML conf
 ## Data layout (default `data_root: data`)
 ```
 data/
-  raw_videos/            # input videos (.mp4, .mov, ...)
+  source_videos/         # input videos (.mp4, .mov, ...); older roots: raw_videos/
+  videos/norm=<WxH@fps>/ # normalized copies the pipeline works on
   annotations/           # per-video JSON labels
-  pose_data/
+  pose_data/norm=<WxH@fps>/
     raw/                 # YOLO outputs (HDF5)
     courts/              # court masks (.npz)
     preprocessed/        # downsampled + filtered detections (HDF5)
