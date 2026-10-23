@@ -12,8 +12,8 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 import joblib
 
-from training.dataset.splits import SplitConfig, split_videos, temporal_split_indices
-from training.io.videos import is_flipped_video
+from training.dataset.splits import SplitConfig, VideoSplit, split_videos, temporal_split_indices
+from training.io.videos import is_flipped_video, original_video_name
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,10 @@ class DatasetBuilder:
         keep = self._kept_columns(feature_set)
 
         for video_name in video_list:
+            if self._flip_of_held_out(video_name, split_strategy, video_split, held_out_video):
+                # A mirror of a val/test video in train is the same footage on both sides.
+                logger.info("Skipping %s: its original is held out", video_name)
+                continue
             feature_path = feature_root / f"{Path(video_name).stem}__features__{feature_set}.h5"
             if not feature_path.exists():
                 logger.warning("Missing features for %s", video_name)
@@ -156,7 +160,7 @@ class DatasetBuilder:
                             "val_start_frame_index": int(ranges["val"][0]),
                         }
                 else:
-                    # by_video / hybrid: split_videos already keeps flips out of val/test.
+                    # by_video / hybrid: only flips of train originals get here.
                     split_bucket = "train"
                     if video_name in video_split.val:
                         split_bucket = "val"
@@ -243,6 +247,21 @@ class DatasetBuilder:
         logger.info("Feature ablation: keeping %d columns (drop groups=%s slots=%s)", len(keep),
                     list(self.cfg.drop_feature_groups), list(self.cfg.drop_slots))
         return keep
+
+    @staticmethod
+    def _flip_of_held_out(video_name: str, split_strategy: str, video_split: VideoSplit, held_out_video: Optional[str]) -> bool:
+        """True for a flipped variant whose original is in val/test.
+
+        within_video is exempt: a flip keeps only its train slice, which mirrors
+        the original's own train frames.
+        """
+        if not is_flipped_video(video_name):
+            return False
+        if split_strategy == "loso_temporal_val":
+            return held_out_video is not None and Path(original_video_name(video_name)).stem == Path(held_out_video).stem
+        if split_strategy == "within_video":
+            return False
+        return video_name not in video_split.train
 
     def _validate_loso_setup(self, video_list: List[str]) -> Optional[str]:
         if self.cfg.split.strategy != "loso_temporal_val":
