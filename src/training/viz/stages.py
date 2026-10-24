@@ -9,11 +9,10 @@ import cv2
 import h5py
 import numpy as np
 
+from training.artifact_paths import pose_branch, target_fps_from_config, yolo_conf_imgsz_tags
 from training.paths import (
     datasets_dir,
     pose_courts_dir,
-    pose_preprocessed_dir,
-    pose_raw_dir,
     raw_videos_dir,
     resolve_data_root,
     visualizations_dir,
@@ -566,17 +565,14 @@ def _format_time(value: float) -> str:
 
 
 def _raw_h5_path(data_root: Path, video_path: Path, yolo_cfg: Dict[str, Any], extract_cfg: Dict[str, Any]) -> Path:
-    conf = float(yolo_cfg.get("conf", 0.25))
-    conf_tag = f"{conf:.3f}".rstrip("0").rstrip(".").replace(".", "p")
-    model_tag = Path(str(yolo_cfg.get("model", "yolov8s-pose.pt"))).name
-    imgsz = int(yolo_cfg.get("imgsz", 1920))
+    model_tag, conf_tag, imgsz = yolo_conf_imgsz_tags({"yolo": yolo_cfg})
     start_time = extract_cfg.get("start_time", 0)
     duration = extract_cfg.get("duration")
     sampling_mode = str(extract_cfg.get("sampling_mode", "full_then_downsample"))
     sample_fps = extract_cfg.get("sample_fps")
     start_tag = _format_time(float(start_time))
     dur_tag = "full" if duration in (None, "", "null") else _format_time(float(duration))
-    raw_root = pose_raw_dir(data_root) / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
+    raw_root = pose_branch(data_root, kind="raw", model_tag=model_tag, conf_tag=conf_tag, imgsz=imgsz)
     base = f"{video_path.stem}__start{start_tag}__dur{dur_tag}"
     if sampling_mode == "downsample_then_extract":
         if sample_fps in (None, "", "null"):
@@ -587,17 +583,12 @@ def _raw_h5_path(data_root: Path, video_path: Path, yolo_cfg: Dict[str, Any], ex
 
 
 def _preproc_h5_path(data_root: Path, video_path: Path, yolo_cfg: Dict[str, Any], preprocess_cfg: Dict[str, Any]) -> Path:
-    conf = float(yolo_cfg.get("conf", 0.25))
-    conf_tag = f"{conf:.3f}".rstrip("0").rstrip(".").replace(".", "p")
-    model_tag = Path(str(yolo_cfg.get("model", "yolov8s-pose.pt"))).name
-    imgsz = int(yolo_cfg.get("imgsz", 1920))
-    fps = preprocess_cfg.get("target_fps", 15)
-    preproc_root = (
-        pose_preprocessed_dir(data_root)
-        / f"yolo={model_tag}"
-        / f"conf={conf_tag}"
-        / f"imgsz={imgsz}"
-        / f"fps={fps}"
+    # Same tags and float fps as the pipeline, so a manifest-backed model resolves
+    # to the name@sha8 / manifest-imgsz branch that extraction actually wrote.
+    model_tag, conf_tag, imgsz = yolo_conf_imgsz_tags({"yolo": yolo_cfg})
+    fps = target_fps_from_config({"preprocess": preprocess_cfg})
+    preproc_root = pose_branch(
+        data_root, kind="preprocessed", model_tag=model_tag, conf_tag=conf_tag, imgsz=imgsz, fps=fps
     )
     return preproc_root / f"{video_path.stem}__fps{fps}.h5"
 

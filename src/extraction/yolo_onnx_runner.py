@@ -20,10 +20,11 @@ Ultralytics predict defaults; production pose callers pass imgsz per call
 from the model manifest. Validated bitwise (preprocessing) and to <=3.1e-4 px
 (decoded outputs) against Ultralytics — see YOLO-ONNX/scripts/parity_v8n_960.py.
 
-Only the v8-pose raw head layout ([1, 56, N]: 4 xywh + 1 conf + 17*3 kpts) is
-supported; anything else (e.g. YOLO26 end-to-end [1, 300, 57] exports, detect
-or segment heads) raises UnsupportedOnnxOutputShapeError instead of silently
-mis-decoding.
+Two pose head layouts are supported, dispatched on the model's output shape:
+the v8-pose raw head ([1, 56, N]: 4 xywh + 1 conf + 17*3 kpts, NMS done here)
+and the YOLO26 end-to-end head ([1, 300, 57]: xyxy + conf + cls + 17*3 kpts,
+NMS already in the graph). Anything else (detect or segment heads) raises
+UnsupportedOnnxOutputShapeError instead of silently mis-decoding.
 
 Dependencies: numpy, cv2 (image ops only), onnxruntime. No torch, no
 ultralytics.
@@ -44,14 +45,15 @@ STRIDE = 32
 
 
 class UnsupportedOnnxOutputShapeError(ValueError):
-    """The ONNX model's output is not a raw v8-pose head ([*, 56, N])."""
+    """The ONNX model's output is neither a v8 raw head nor a YOLO26 e2e head."""
 
     def __init__(self, shape) -> None:
         super().__init__(
             f"Unsupported ONNX pose output shape {tuple(shape)}: expected a raw "
-            "YOLOv8-pose head [1, 56, N] (4 xywh + 1 conf + 17*3 keypoints). "
-            "End-to-end exports with NMS in the graph (e.g. [1, 300, 57]) and "
-            "non-pose models are not supported by this runner."
+            "YOLOv8-pose head [1, 56, N] (4 xywh + 1 conf + 17*3 keypoints) or "
+            "a YOLO26 end-to-end pose head [1, 300, 57] (xyxy + conf + cls + "
+            "17*3 keypoints, NMS in graph). Detect/segment models are not "
+            "supported by this runner."
         )
 
 
@@ -239,6 +241,81 @@ def decode_v8_pose(
     )
 
 
+def decode_yolo26_e2e(
+    pred: np.ndarray,
+    ratio: float,
+    pad: tuple[int, int],
+    orig_hw: tuple[int, int],
+    conf_thr: float,
+    max_det: int = DEFAULT_MAX_DET,
+):
+    """Decode a YOLO26 end-to-end pose head [1, 300, 57] (or [300, 57] / [1, 57, 300]).
+
+    Row layout: x1, y1, x2, y2, conf, cls, then 17x (kpt_x, kpt_y, kpt_conf),
+    coordinates in letterboxed input pixels. Candidate selection/NMS already
+    happened in the graph, so decode is filter + unletterbox only.
+    """
+    orig_shape = pred.shape
+    if pred.ndim == 3:
+        if pred.shape[0] != 1:
+            raise UnsupportedOnnxOutputShapeError(orig_shape)
+        pred = pred[0]
+    if pred.ndim != 2:
+        raise UnsupportedOnnxOutputShapeError(orig_shape)
+    if pred.shape[1] != 57:
+        pred = pred.T
+    if pred.shape[1] != 57:
+        raise UnsupportedOnnxOutputShapeError(orig_shape)
+
+    conf = pred[:, 4]
+    pred = pred[conf > conf_thr]
+    if pred.shape[0] == 0:
+        return (
+            np.empty((0, 4), np.float32),
+            np.empty((0,), np.float32),
+            np.empty((0, 17, 2), np.float32),
+            np.empty((0, 17), np.float32),
+        )
+    order = pred[:, 4].argsort()[::-1][:max_det]
+    pred = pred[order]
+
+    xyxy = pred[:, :4].copy()
+    conf = pred[:, 4]
+    kpts = pred[:, 6:].reshape(-1, 17, 3)
+
+    h, w = orig_hw
+    pad_w, pad_h = pad
+    xyxy[:, [0, 2]] = np.clip((xyxy[:, [0, 2]] - pad_w) / ratio, 0, w)
+    xyxy[:, [1, 3]] = np.clip((xyxy[:, [1, 3]] - pad_h) / ratio, 0, h)
+    kpt_xy = kpts[:, :, :2].copy()
+    kpt_xy[:, :, 0] = np.clip((kpt_xy[:, :, 0] - pad_w) / ratio, 0, w)
+    kpt_xy[:, :, 1] = np.clip((kpt_xy[:, :, 1] - pad_h) / ratio, 0, h)
+    return (
+        xyxy.astype(np.float32),
+        conf.astype(np.float32),
+        kpt_xy.astype(np.float32),
+        kpts[:, :, 2].astype(np.float32),
+    )
+
+
+def decode_pose(
+    pred: np.ndarray,
+    ratio: float,
+    pad: tuple[int, int],
+    orig_hw: tuple[int, int],
+    conf_thr: float,
+    iou_thr: float = DEFAULT_IOU,
+    max_det: int = DEFAULT_MAX_DET,
+):
+    """Dispatch on head layout: 56 features -> v8 raw head, 57 -> YOLO26 e2e."""
+    dims = pred.shape[1:] if pred.ndim == 3 else pred.shape
+    if 56 in dims:
+        return decode_v8_pose(pred, ratio, pad, orig_hw, conf_thr, iou_thr, max_det)
+    if 57 in dims:
+        return decode_yolo26_e2e(pred, ratio, pad, orig_hw, conf_thr, max_det)
+    raise UnsupportedOnnxOutputShapeError(pred.shape)
+
+
 class YOLO:
     """Ultralytics-call-compatible ONNX pose runner (predict subset only)."""
 
@@ -290,7 +367,7 @@ class YOLO:
             else:
                 tensor, ratio, pad = letterbox(img, int(imgsz))
             pred = self._session.run(None, {self._input_name: tensor})[0]
-            boxes, bconf, kpt_xy, kpt_conf = decode_v8_pose(
+            boxes, bconf, kpt_xy, kpt_conf = decode_pose(
                 pred, ratio, pad, img.shape[:2], float(conf), float(iou), int(max_det)
             )
             results.append(Result(boxes, bconf, kpt_xy, kpt_conf))

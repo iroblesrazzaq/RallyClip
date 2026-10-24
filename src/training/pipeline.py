@@ -1,5 +1,6 @@
 from __future__ import annotations
 from copy import deepcopy
+import argparse
 import json
 import logging
 import re
@@ -14,36 +15,56 @@ import numpy as np
 import torch
 
 from infer.inference import gaussian_filter1d, hysteresis_threshold, run_windowed_inference_average
-from training.dataset.builder import DatasetBuilder, DatasetConfig
-from training.dataset.splits import SplitConfig
-from training.eval.checkpoint import evaluate_checkpoint
+from training.artifact_paths import (
+    feature_root_from_config,
+    feature_root_from_run_config,
+    features_filename,
+    feature_set_from_config,
+    format_conf,
+    target_fps_from_config,
+    yolo_conf_imgsz_tags,
+)
+from training.dataset.builder import DatasetBuilder, DatasetConfig, kept_feature_columns
+from training.dataset.hdf5_dataset import Hdf5SequenceDataset
+from training.dataset.splits import SplitConfig, assert_no_holdout_overlap
+from training.eval.checkpoint import build_model_from_checkpoint, evaluate_checkpoint
 from training.eval.evaluator import SegmentEvalConfig
 from training.features.builder import FeatureBuildConfig, FeatureBuilder
-from training.io.config import resolve_court_model_path
-from training.io.videos import resolve_videos
+from training.io.config import court_target_time, load_config, resolve_court_model_path
+from training.io.videos import is_flipped_video, resolve_videos
+from training.normalize.normalize import (
+    CANONICAL_HEIGHT,
+    CANONICAL_WIDTH,
+    NormalizeConfig,
+    is_canonical,
+    normalize_video,
+)
 from training.paths import (
     annotations_dir,
     datasets_dir,
+    pose_courts_dir,
+    pose_data_dir,
     pose_features_dir,
     pose_preprocessed_dir,
     pose_raw_dir,
     raw_videos_dir,
     resolve_data_root,
     runs_dir,
+    source_videos_dir,
 )
 from training.metrics.segment import (
     compute_time_point_classification_metrics,
     compute_time_segment_metrics,
     compute_weighted_segment_score,
 )
-from training.models.lstm import TennisPointLSTM
 from training.pose.yolo_hdf5 import YoloExtractConfig, YoloHdf5Extractor
 from training.preprocess.preprocessor import Hdf5Preprocessor, PreprocessConfig
-from training.train.loop import train as train_loop
+from training.train.heatmap_loop import _selection_score, evaluate_heatmap_run, train_heatmap
+from training.train.loop import _default_pos_weight, train as train_loop
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_STEPS = ["extract", "preprocess", "features", "dataset", "train", "eval"]
+DEFAULT_STEPS = ["normalize", "extract", "preprocess", "features", "dataset", "train", "eval"]
 
 
 def run_pipeline(config: Dict[str, Any], steps_override: Optional[Iterable[str]] = None) -> None:
@@ -58,6 +79,7 @@ def run_pipeline(config: Dict[str, Any], steps_override: Optional[Iterable[str]]
     logger.info("Steps: %s", ", ".join(steps))
 
     step_map = {
+        "normalize": _run_normalize,
         "extract": _run_extract,
         "preprocess": _run_preprocess,
         "features": _run_features,
@@ -71,6 +93,36 @@ def run_pipeline(config: Dict[str, Any], steps_override: Optional[Iterable[str]]
         if func is None:
             raise ValueError(f"Unknown step: {step}")
         func(config)
+
+
+def run_step_cli(step: str, description: str, argv: Optional[List[str]] = None) -> int:
+    """Entry point for the single-step scripts (scripts/extract_yolo.py etc.).
+
+    They run the pipeline's own step, so paths and settings always match train.py.
+    """
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("--config", required=True, help="Path to YAML config (comma-separated to overlay)")
+    parser.add_argument("--mode", choices=["annotated", "all", "list"], help="Video selection mode")
+    parser.add_argument("--video", action="append", help="Explicit video list (repeatable)")
+    if step != "dataset":
+        parser.add_argument("--overwrite", action="store_true", help="Overwrite existing outputs")
+    if step == "extract":
+        parser.add_argument("--resume", action="store_true", help="Resume incomplete outputs")
+    args = parser.parse_args(argv)
+
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+    config = load_config(args.config)
+    step_cfg = config.setdefault(step, {})
+    if args.mode:
+        step_cfg["mode"] = args.mode
+    if args.video:
+        config["videos"] = list(args.video)
+    if getattr(args, "overwrite", False):
+        step_cfg["overwrite"] = True
+    if getattr(args, "resume", False):
+        step_cfg["resume"] = True
+    run_pipeline(config, steps_override=[step])
+    return 0
 
 
 def run_sweep(config: Dict[str, Any]) -> None:
@@ -89,6 +141,13 @@ def run_sweep(config: Dict[str, Any]) -> None:
     if not videos:
         raise ValueError("No videos found for LOSO sweep")
     videos = sorted(videos)
+    holdout_videos = _holdout_videos(config)
+    assert_no_holdout_overlap(videos, holdout_videos, context="run_sweep")
+    # Flips stay in every fold's training pool, but only originals are held
+    # out: a flip can't be a LOSO subject (its original would train on it).
+    fold_subjects = [v for v in videos if not is_flipped_video(v)]
+    if not fold_subjects:
+        raise ValueError("No original (non-flipped) videos to hold out in the LOSO sweep")
     required_stems = {Path(v).stem for v in videos}
 
     dataset_specs = _resolve_sweep_datasets(config, sweep_cfg, data_root, required_stems)
@@ -97,7 +156,7 @@ def run_sweep(config: Dict[str, Any]) -> None:
 
     fps_values = _as_float_list(
         sweep_cfg.get("fps_values"),
-        [float(config.get("preprocess", {}).get("target_fps", 15))],
+        [float(config.get("preprocess", {}).get("target_fps", 5))],
     )
     seq_values = _as_float_list(
         sweep_cfg.get("seq_len_seconds"),
@@ -118,7 +177,7 @@ def run_sweep(config: Dict[str, Any]) -> None:
         len(dataset_specs),
         fps_values,
         seq_values,
-        len(videos),
+        len(fold_subjects),
     )
 
     for ds in dataset_specs:
@@ -133,7 +192,7 @@ def run_sweep(config: Dict[str, Any]) -> None:
             run_pipeline(pre_cfg, steps_override=pre_steps)
 
             for seq_len in ds_seq_values:
-                for fold_idx, held_out_video in enumerate(videos, start=1):
+                for fold_idx, held_out_video in enumerate(fold_subjects, start=1):
                     fold_cfg = deepcopy(config)
                     _apply_sweep_dataset(fold_cfg, ds)
                     fold_cfg.setdefault("preprocess", {})["target_fps"] = float(fps)
@@ -150,6 +209,9 @@ def run_sweep(config: Dict[str, Any]) -> None:
                     fold_cfg["dataset"]["split"]["val_ratio"] = val_ratio
                     fold_cfg["dataset"]["split"]["test_ratio"] = 0.0
                     fold_cfg["dataset"]["split"]["test_videos"] = [held_out_video]
+                    # Build from the checked pool only; dataset.mode alone would
+                    # also pull in the frozen holdout videos.
+                    fold_cfg["videos"] = list(videos)
 
                     fold_slug = _slug(Path(held_out_video).stem, 36)
                     run_id = (
@@ -351,6 +413,71 @@ def run_postprocess_sweep(config: Dict[str, Any]) -> None:
     logger.info("Point classification summary by combo:\n%s", "\n".join(point_summary_lines))
 
 
+def _run_normalize(config: Dict[str, Any]) -> None:
+    data_root = Path(config["data_root"])
+    normalize_cfg = config.get("normalize", {}) if isinstance(config.get("normalize"), dict) else {}
+    raw_dir = raw_videos_dir(data_root)
+    ann_dir = annotations_dir(data_root)
+    source_dir_name = str(normalize_cfg.get("source_dir", "source_videos"))
+    source_dir = Path(source_dir_name)
+    if not source_dir.is_absolute():
+        source_dir = data_root / source_dir_name
+    if not source_dir.exists():
+        source_dir = source_videos_dir(data_root)
+    if not source_dir.exists():
+        # Roots from before the videos/norm=... layout keep their inputs in raw_videos/.
+        source_dir = data_root / "raw_videos"
+    # Last resort: re-check the normalized tree itself in place.
+    input_dir = source_dir if source_dir.exists() else raw_dir
+
+    explicit = config.get("videos") or normalize_cfg.get("videos")
+    mode = str(normalize_cfg.get("mode", "annotated" if ann_dir.exists() else "all"))
+    # Resolve listing against the input dir (source or raw). For annotated mode,
+    # annotation basenames must match source filenames.
+    videos = resolve_videos(mode, input_dir, ann_dir, explicit)
+    if not videos:
+        raise ValueError("No videos to normalize")
+
+    cfg = NormalizeConfig(
+        width=int(normalize_cfg.get("width", 1280)),
+        height=int(normalize_cfg.get("height", 720)),
+        fps=float(normalize_cfg.get("fps", 5)),
+        overwrite=bool(config.get("overwrite_all") or normalize_cfg.get("overwrite", False)),
+        ffmpeg_bin=str(normalize_cfg.get("ffmpeg_bin", "ffmpeg")),
+        ffprobe_bin=str(normalize_cfg.get("ffprobe_bin", "ffprobe")),
+    )
+    raw_dir.mkdir(parents=True, exist_ok=True)
+
+    processed = 0
+    skipped = 0
+    for video in videos:
+        src = Path(video)
+        if not src.is_absolute():
+            src = input_dir / video
+        if not src.exists():
+            raise FileNotFoundError(f"Source video not found for normalize: {src}")
+        dst = raw_dir / src.name
+        before = dst.exists()
+        if before and not config.get("overwrite_all") and not is_canonical(dst, cfg):
+            # The tree's path does not encode these settings, so replacing the
+            # video (in place too, or with only normalize.overwrite) would leave
+            # its poses and features on the old frame grid.
+            raise ValueError(
+                f"{dst} does not match normalize settings {cfg.width}x{cfg.height}@{cfg.fps:g}fps; "
+                "set overwrite_all to rebuild everything derived from it, or use a fresh data_root."
+            )
+        normalize_video(src, dst, cfg)
+        if before and not cfg.overwrite:
+            skipped += 1
+        else:
+            processed += 1
+
+    if config.get("videos"):
+        # Later steps must read the normalized copies, not an absolute source path.
+        config["videos"] = [Path(video).name for video in config["videos"]]
+    logger.info("Normalize summary: processed=%d skipped_existing=%d out=%s", processed, skipped, raw_dir)
+
+
 def _run_extract(config: Dict[str, Any]) -> None:
     data_root = Path(config["data_root"])
     extract_cfg = config.get("extract", {})
@@ -387,11 +514,13 @@ def _run_extract(config: Dict[str, Any]) -> None:
             device=yolo_cfg.get("device"),
             batch_size=yolo_cfg.get("batch_size"),
             imgsz=imgsz,
+            provider=str(yolo_cfg.get("provider", "cpu")),
         )
     )
 
-    conf_tag = _format_conf(conf)
-    model_tag = Path(model_path).name
+    conf_tag = format_conf(conf)
+    model_tag = extractor.model_identity
+    imgsz = extractor.imgsz
     output_root = pose_raw_dir(data_root) / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
 
     for video in videos:
@@ -419,7 +548,6 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
     preprocess_cfg = config.get("preprocess", {})
     court_cfg = config.get("court", {})
     extract_cfg = config.get("extract", {})
-    yolo_cfg = config.get("yolo", {})
     court_model_path = resolve_court_model_path(config)
 
     raw_dir = raw_videos_dir(data_root)
@@ -434,11 +562,8 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
     if not videos:
         raise ValueError("No videos to preprocess")
 
-    conf = float(yolo_cfg.get("conf", 0.25))
-    model_tag = Path(str(yolo_cfg.get("model", "yolov8s-pose.pt"))).name
-    conf_tag = _format_conf(conf)
-    imgsz = int(yolo_cfg.get("imgsz", 1920))
-    fps = float(preprocess_cfg.get("target_fps", 15))
+    model_tag, conf_tag, imgsz = yolo_conf_imgsz_tags(config)
+    fps = target_fps_from_config(config)
 
     output_root = (
         pose_preprocessed_dir(data_root)
@@ -454,17 +579,25 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
     sample_fps = _parse_optional_float(extract_cfg.get("sample_fps"))
     raw_root = pose_raw_dir(data_root) / f"yolo={model_tag}" / f"conf={conf_tag}" / f"imgsz={imgsz}"
 
+    normalize_cfg = config.get("normalize", {}) if isinstance(config.get("normalize"), dict) else {}
     preprocessor = Hdf5Preprocessor(
         PreprocessConfig(
             target_fps=fps,
             save_court_masks=bool(preprocess_cfg.get("save_court_masks", False)),
             court_model_path=court_model_path,
-            court_target_time=int(court_cfg.get("target_time", 60)),
-            court_force=bool(court_cfg.get("force", False)),
+            court_target_time=court_target_time(court_cfg),
+            # overwrite_all rebuilds everything derived from the videos, masks included.
+            court_force=bool(config.get("overwrite_all") or court_cfg.get("force", False)),
+            court_enabled=bool(court_cfg.get("enabled", True)),
+            expect_width=int(normalize_cfg.get("width", CANONICAL_WIDTH)),
+            expect_height=int(normalize_cfg.get("height", CANONICAL_HEIGHT)),
+            slot_mode=str(preprocess_cfg.get("slot_mode", "classic")),
+            court_geometry_dir=preprocess_cfg.get("court_geometry_dir"),
         )
     )
 
     overwrite = bool(config.get("overwrite_all") or preprocess_cfg.get("overwrite", False))
+    summary = {"processed": 0, "skipped_existing": 0, "skipped_no_annotations": 0, "skipped_empty": 0}
 
     for video in videos:
         video_path = Path(video)
@@ -479,21 +612,75 @@ def _run_preprocess(config: Dict[str, Any]) -> None:
 
         annotations_path = ann_dir / f"{video_path.name}.json"
         output_path = output_root / f"{video_path.stem}__fps{fps}.h5"
-        preprocessor.preprocess(
+        existed = output_path.exists() and not overwrite
+        # Far-crop side-car, if scripts/extract_crop_poses.py has been run for
+        # this video. Absent => crop slots are simply not written, and the
+        # feature builder fills them with the sentinel.
+        crop_h5 = (
+            pose_data_dir(data_root) / "crop_raw" / f"yolo={model_tag}" / f"conf={conf_tag}"
+            / f"imgsz={imgsz}" / _raw_h5_filename(video_path.stem, start_time, duration,
+                                                  sampling_mode, sample_fps)
+        )
+        result = preprocessor.preprocess(
             data_root=data_root,
             raw_h5_path=raw_h5,
             video_path=video_path,
             annotations_path=annotations_path,
             output_path=output_path,
             overwrite=overwrite,
+            crop_h5_path=crop_h5 if crop_h5.exists() else None,
         )
+        if result is None:
+            if not annotations_path.exists():
+                summary["skipped_no_annotations"] += 1
+            else:
+                summary["skipped_empty"] += 1
+        elif existed and result == output_path:
+            summary["skipped_existing"] += 1
+        else:
+            summary["processed"] += 1
+
+    logger.info("Preprocess summary: %s", summary)
+
+    # Court-detection health check: a silent court failure means a video was
+    # preprocessed with NO court filtering (bystanders / adjacent-court people
+    # pollute features). Surface it loudly per run instead of burying it.
+    if not bool(court_cfg.get("enabled", True)):
+        logger.info("Court filtering disabled by config (court.enabled: false)")
+        if summary["processed"] == 0 and summary["skipped_existing"] == 0:
+            raise RuntimeError(f"Preprocess produced no outputs: {summary}")
+        return
+    courts_dir = pose_courts_dir(data_root)
+    court_fail = []
+    for video in videos:
+        vp = Path(video)
+        stem = vp.stem if vp.is_absolute() else (raw_dir / video).stem
+        npz = courts_dir / f"{stem}.npz"
+        ok = False
+        if npz.exists():
+            try:
+                with np.load(npz, allow_pickle=True) as _cz:
+                    ok = bool(_cz.get("success"))
+            except Exception:
+                ok = False
+        if not ok:
+            court_fail.append(stem)
+    if court_fail:
+        logger.warning(
+            "Court detection did NOT succeed for %d/%d videos (preprocessed with the "
+            "DEFAULT court mask): %s",
+            len(court_fail), len(videos), ", ".join(s[:12] for s in court_fail),
+        )
+    else:
+        logger.info("Court detection succeeded for all %d videos", len(videos))
+
+    if summary["processed"] == 0 and summary["skipped_existing"] == 0:
+        raise RuntimeError(f"Preprocess produced no outputs: {summary}")
 
 
 def _run_features(config: Dict[str, Any]) -> None:
     data_root = Path(config["data_root"])
     features_cfg = config.get("features", {})
-    preprocess_cfg = config.get("preprocess", {})
-    yolo_cfg = config.get("yolo", {})
 
     raw_dir = raw_videos_dir(data_root)
     ann_dir = annotations_dir(data_root)
@@ -507,12 +694,9 @@ def _run_features(config: Dict[str, Any]) -> None:
     if not videos:
         raise ValueError("No videos to build features")
 
-    conf = float(yolo_cfg.get("conf", 0.25))
-    model_tag = Path(str(yolo_cfg.get("model", "yolov8s-pose.pt"))).name
-    conf_tag = _format_conf(conf)
-    imgsz = int(yolo_cfg.get("imgsz", 1920))
-    fps = float(preprocess_cfg.get("target_fps", 15))
-    feature_set = features_cfg.get("feature_set", "v1")
+    model_tag, conf_tag, imgsz = yolo_conf_imgsz_tags(config)
+    fps = target_fps_from_config(config)
+    feature_set = feature_set_from_config(config)
 
     preproc_root = (
         pose_preprocessed_dir(data_root)
@@ -521,24 +705,22 @@ def _run_features(config: Dict[str, Any]) -> None:
         / f"imgsz={imgsz}"
         / f"fps={fps}"
     )
-    output_root = (
-        pose_features_dir(data_root)
-        / f"yolo={model_tag}"
-        / f"conf={conf_tag}"
-        / f"imgsz={imgsz}"
-        / f"fps={fps}"
-    )
+    output_root = feature_root_from_config(data_root, config)
 
     overwrite = bool(config.get("overwrite_all") or features_cfg.get("overwrite", False))
 
+    normalize_cfg = config.get("normalize", {}) if isinstance(config.get("normalize"), dict) else {}
     builder = FeatureBuilder(
         FeatureBuildConfig(
             feature_set=feature_set,
             target_fps=fps,
             overwrite=overwrite,
+            screen_width=int(normalize_cfg.get("width", 1280)),
+            screen_height=int(normalize_cfg.get("height", 720)),
         )
     )
 
+    summary = {"processed": 0, "skipped_existing": 0, "skipped_empty": 0}
     for video in videos:
         video_path = Path(video)
         if not video_path.is_absolute():
@@ -550,16 +732,24 @@ def _run_features(config: Dict[str, Any]) -> None:
         if not preproc_path.exists():
             raise FileNotFoundError(f"Preprocessed HDF5 not found: {preproc_path}")
 
-        output_path = output_root / f"{video_path.stem}__features__{feature_set}.h5"
-        builder.build(preproc_path, output_path, overwrite=overwrite)
+        output_path = output_root / features_filename(video_path.stem, feature_set)
+        existed = output_path.exists() and not overwrite
+        result = builder.build(preproc_path, output_path, overwrite=overwrite)
+        if result is None:
+            summary["skipped_empty"] += 1
+        elif existed:
+            summary["skipped_existing"] += 1
+        else:
+            summary["processed"] += 1
+
+    logger.info("Features summary: %s", summary)
+    if summary["processed"] == 0 and summary["skipped_existing"] == 0:
+        raise RuntimeError(f"Features produced no outputs: {summary}")
 
 
 def _run_dataset(config: Dict[str, Any]) -> None:
     data_root = Path(config["data_root"])
     dataset_cfg = config.get("dataset", {})
-    features_cfg = config.get("features", {})
-    preprocess_cfg = config.get("preprocess", {})
-    yolo_cfg = config.get("yolo", {})
 
     raw_dir = raw_videos_dir(data_root)
     ann_dir = annotations_dir(data_root)
@@ -573,20 +763,9 @@ def _run_dataset(config: Dict[str, Any]) -> None:
     if not videos:
         raise ValueError("No videos to build dataset")
 
-    conf = float(yolo_cfg.get("conf", 0.25))
-    model_tag = Path(str(yolo_cfg.get("model", "yolov8s-pose.pt"))).name
-    conf_tag = _format_conf(conf)
-    imgsz = int(yolo_cfg.get("imgsz", 1920))
-    fps = float(preprocess_cfg.get("target_fps", 15))
-    feature_set = features_cfg.get("feature_set", "v1")
-
-    feature_root = (
-        pose_features_dir(data_root)
-        / f"yolo={model_tag}"
-        / f"conf={conf_tag}"
-        / f"imgsz={imgsz}"
-        / f"fps={fps}"
-    )
+    fps = target_fps_from_config(config)
+    feature_set = feature_set_from_config(config)
+    feature_root = feature_root_from_config(data_root, config)
 
     split_cfg = SplitConfig(
         strategy=dataset_cfg.get("split", {}).get("strategy", "hybrid"),
@@ -603,18 +782,26 @@ def _run_dataset(config: Dict[str, Any]) -> None:
             overlap_seconds=float(dataset_cfg.get("overlap_seconds", 10)),
             target_fps=fps,
             split=split_cfg,
+            drop_feature_groups=tuple(dataset_cfg.get("drop_feature_groups", ())),
+            drop_slots=tuple(dataset_cfg.get("drop_slots", ())),
         )
     )
 
     output_dir = datasets_dir(data_root) / config.get("run_id", "default")
+    missing = [v for v in videos if not (feature_root / features_filename(Path(v).stem, feature_set)).exists()]
+    if missing:
+        raise FileNotFoundError(f"Dataset stage missing features for {len(missing)} videos (e.g. {missing[0]})")
+
     built_dir = builder.build(feature_root, output_dir, videos, feature_set)
-    if built_dir is not None:
-        run_dir = runs_dir(data_root) / config.get("run_id", "default")
-        run_dir.mkdir(parents=True, exist_ok=True)
-        scaler_src = built_dir / "scaler.joblib"
-        scaler_dst = run_dir / "scaler.joblib"
-        if scaler_src.exists():
-            shutil.copy2(scaler_src, scaler_dst)
+    if built_dir is None:
+        raise RuntimeError("Dataset build produced no training data")
+    run_dir = runs_dir(data_root) / config.get("run_id", "default")
+    run_dir.mkdir(parents=True, exist_ok=True)
+    scaler_src = built_dir / "scaler.joblib"
+    scaler_dst = run_dir / "scaler.joblib"
+    if scaler_src.exists():
+        shutil.copy2(scaler_src, scaler_dst)
+    logger.info("Dataset summary: videos=%d output=%s", len(videos), built_dir)
 
 
 def _run_train(config: Dict[str, Any]) -> None:
@@ -622,6 +809,8 @@ def _run_train(config: Dict[str, Any]) -> None:
     train_cfg = dict(config.get("train", {}))
     preprocess_cfg = config.get("preprocess", {})
     dataset_cfg = config.get("dataset", {})
+    yolo_cfg = config.get("yolo", {})
+    features_cfg = config.get("features", {})
     run_dir = runs_dir(data_root) / config.get("run_id", "default")
     dataset_dir = datasets_dir(data_root) / config.get("run_id", "default")
 
@@ -632,15 +821,31 @@ def _run_train(config: Dict[str, Any]) -> None:
         sigma=float(segment_cfg.get("sigma", 1.5)),
         min_dur_sec=float(segment_cfg.get("min_dur_sec", 0.5)),
     )
-    train_cfg["fps"] = float(preprocess_cfg.get("target_fps", 15))
+    # Critical: e2e offset targets scale with fps — must match preprocess.target_fps.
+    train_cfg["fps"] = float(preprocess_cfg.get("target_fps", 5))
     train_cfg["run_id"] = config.get("run_id", "default")
     train_cfg["wandb"] = dict(config.get("wandb", {}))
     train_cfg["dataset"] = {
         "seq_len_seconds": dataset_cfg.get("seq_len_seconds"),
         "overlap_seconds": dataset_cfg.get("overlap_seconds"),
         "split": dict(dataset_cfg.get("split", {})),
+        # The postprocess sweep re-applies these before the run's scaler.
+        "drop_feature_groups": list(dataset_cfg.get("drop_feature_groups", ())),
+        "drop_slots": list(dataset_cfg.get("drop_slots", ())),
     }
-    train_loop(dataset_dir, run_dir, train_cfg)
+    # Persist yolo/feature tags so postprocess can rebuild feature roots from config.json.
+    # Unset fields are left out so readers apply the same defaults extraction did.
+    train_cfg["yolo"] = {k: yolo_cfg[k] for k in ("model", "conf", "imgsz") if yolo_cfg.get(k) is not None}
+    train_cfg["preprocess"] = {"target_fps": train_cfg["fps"]}
+    train_cfg["features"] = {"feature_set": features_cfg.get("feature_set", "v1")}
+
+    head = str(train_cfg.get("head", "classic")).lower()
+    if head == "classic":
+        train_loop(dataset_dir, run_dir, train_cfg)
+    elif head in {"e2e_heatmap", "heatmap"}:
+        train_heatmap(dataset_dir, run_dir, train_cfg)
+    else:
+        raise ValueError(f"Unknown train.head: {head!r} (expected classic | e2e_heatmap)")
 
 
 def _run_eval(config: Dict[str, Any]) -> None:
@@ -653,6 +858,22 @@ def _run_eval(config: Dict[str, Any]) -> None:
     checkpoint_path = run_dir / "checkpoints" / "best.pth"
     test_path = dataset_dir / "test.h5"
 
+    if not test_path.exists():
+        logger.info("No test split at %s (test_ratio=0?); skipping eval", test_path)
+        return
+
+    head = str(train_cfg.get("head", "classic")).lower()
+    if head in {"e2e_heatmap", "heatmap"}:
+        fps = float(preprocess_cfg.get("target_fps", 5))
+        metrics, loss = evaluate_heatmap_run(run_dir, test_path, train_cfg, fps)
+        eval_path = run_dir / "eval.json"
+        with eval_path.open("w", encoding="utf-8") as handle:
+            json.dump({"loss": float(loss), "metrics": metrics, "head": "e2e_heatmap"}, handle, indent=2)
+        logger.info("Heatmap test loss: %.4f metrics: %s", loss, metrics)
+        return
+    if head != "classic":
+        raise ValueError(f"Unknown train.head: {head!r} (expected classic | e2e_heatmap)")
+
     seg_cfg = train_cfg.get("segment_eval", {})
     segment_cfg = SegmentEvalConfig(
         low=float(seg_cfg.get("low", 0.45)),
@@ -661,18 +882,22 @@ def _run_eval(config: Dict[str, Any]) -> None:
         min_dur_sec=float(seg_cfg.get("min_dur_sec", 0.5)),
     )
 
+    pos_weight = train_cfg.get("pos_weight")
+    if pos_weight is None:
+        # Same derivation the train loop used, so the test loss weights match.
+        pos_weight = _default_pos_weight(Hdf5SequenceDataset(dataset_dir / "train.h5"))
     metrics, loss = evaluate_checkpoint(
         checkpoint_path,
         test_path,
         device_str=train_cfg.get("device"),
         threshold=float(train_cfg.get("threshold", 0.5)),
         segment_cfg=segment_cfg,
-        fps=float(preprocess_cfg.get("target_fps", 15)),
-        pos_weight=float(train_cfg.get("pos_weight", 3.0)),
+        fps=float(preprocess_cfg.get("target_fps", 5)),
+        pos_weight=float(pos_weight),
     )
     eval_path = run_dir / "eval.json"
     with eval_path.open("w", encoding="utf-8") as handle:
-        json.dump({"loss": float(loss), "metrics": metrics}, handle, indent=2)
+        json.dump({"loss": float(loss), "metrics": metrics, "head": "classic"}, handle, indent=2)
     logger.info("Test loss: %.4f", loss)
     logger.info("Test metrics: %s", metrics)
 
@@ -702,6 +927,11 @@ def _evaluate_postprocess_run(
 
     with config_path.open("r", encoding="utf-8") as handle:
         run_cfg = json.load(handle)
+    if str(run_cfg.get("head", "classic")).lower() != "classic":
+        # The sweep scores classic per-frame probabilities; heatmap runs decode
+        # boundaries instead and are tuned with their own decode settings.
+        logger.info("Skipping %s: postprocess sweep only scores classic runs", run_dir.name)
+        return None
 
     dataset_cfg = run_cfg.get("dataset", {}) if isinstance(run_cfg.get("dataset"), dict) else {}
     split_cfg = dataset_cfg.get("split", {}) if isinstance(dataset_cfg.get("split"), dict) else {}
@@ -710,25 +940,24 @@ def _evaluate_postprocess_run(
         return None
 
     held_out_video = str(held_out_videos[0])
-    fps = float(run_cfg.get("fps", 15.0))
+    fps = float(run_cfg.get("fps", run_cfg.get("preprocess", {}).get("target_fps", 5.0)))
     seq_len_seconds = float(dataset_cfg.get("seq_len_seconds", 10.0))
     overlap_seconds = float(dataset_cfg.get("overlap_seconds", seq_len_seconds / 2.0))
-    imgsz = _parse_imgsz_from_run_id(run_dir.name)
-    feature_root = (
-        pose_features_dir(data_root)
-        / "yolo=yolov8n-pose.pt"
-        / "conf=0p25"
-        / f"imgsz={imgsz}"
-        / f"fps={fps}"
-    )
-    feature_path = feature_root / f"{Path(held_out_video).stem}__features__v1.h5"
+    feature_set = feature_set_from_config(run_cfg)
+    feature_root = _run_feature_root(data_root, run_dir, run_cfg, fps)
+    feature_path = feature_root / features_filename(Path(held_out_video).stem, feature_set)
     if not feature_path.exists():
         logger.warning("Skipping %s; feature file missing: %s", run_dir.name, feature_path)
         return None
 
+    keep = kept_feature_columns(
+        feature_set, dataset_cfg.get("drop_feature_groups", ()), dataset_cfg.get("drop_slots", ())
+    )
     scaler = joblib.load(scaler_path)
     with h5py.File(feature_path, "r") as h5f:
         features = np.asarray(h5f["features"][:], dtype=np.float32)
+        if keep is not None:
+            features = features[:, keep]   # the run's scaler was fitted on the ablated columns
         targets = np.asarray(h5f["targets"][:], dtype=np.int8)
         timestamps = np.asarray(h5f["timestamps"][:], dtype=np.float64)
     scaled = scaler.transform(features.reshape(-1, features.shape[-1])).reshape(features.shape).astype(np.float32)
@@ -786,11 +1015,6 @@ def _evaluate_postprocess_run(
         "false_detected_rate": float(point_metrics.get("false_detected_rate", 0.0)),
         "unmatched_predicted_rate": float(point_metrics.get("unmatched_predicted_rate", 0.0)),
     }
-
-
-def _format_conf(conf: float) -> str:
-    text = f"{conf:.3f}".rstrip("0").rstrip(".")
-    return text.replace(".", "p")
 
 
 def _format_time(value: Optional[float]) -> str:
@@ -859,7 +1083,7 @@ def _resolve_sweep_datasets(
     if mode != "auto":
         raise ValueError(f"Unknown sweep.datasets.mode: {mode}")
 
-    specs = _discover_raw_datasets(data_root, required_stems=required_stems, require_all=require_all)
+    specs = _discover_raw_datasets(data_root, required_stems=required_stems, require_all=require_all, config=config)
     if entries:
         manual = [_normalize_manual_dataset_entry(e, config) for e in entries]
         manual_names = {m["name"] for m in manual}
@@ -886,16 +1110,27 @@ def _normalize_manual_dataset_entry(entry: Any, config: Dict[str, Any]) -> Dict[
     return spec
 
 
-def _discover_raw_datasets(data_root: Path, required_stems: set[str], require_all: bool) -> List[Dict[str, Any]]:
+def _discover_raw_datasets(
+    data_root: Path, required_stems: set[str], require_all: bool, config: Optional[Dict[str, Any]] = None
+) -> List[Dict[str, Any]]:
     raw_root = pose_raw_dir(data_root)
     specs: List[Dict[str, Any]] = []
     if not raw_root.exists():
         return specs
+    # A manifest-backed cache dir is named by its tag (name@sha8), which is not
+    # loadable; map it back to the configured manifest when the tags agree.
+    config_model = str((config or {}).get("yolo", {}).get("model", ""))
+    config_tag = yolo_conf_imgsz_tags(config)[0] if config_model else ""
 
     for yolo_dir in sorted(raw_root.glob("yolo=*")):
         if not yolo_dir.is_dir():
             continue
-        model = yolo_dir.name.split("=", 1)[1]
+        tag = model = yolo_dir.name.split("=", 1)[1]
+        if "@" in tag:
+            if tag != config_tag:
+                logger.warning("Skipping %s: no configured manifest has tag %s", yolo_dir, tag)
+                continue
+            model = config_model
         for conf_dir in sorted(yolo_dir.glob("conf=*")):
             if not conf_dir.is_dir():
                 continue
@@ -914,7 +1149,7 @@ def _discover_raw_datasets(data_root: Path, required_stems: set[str], require_al
                 stems = {p.name.split("__start", 1)[0] for p in h5_files}
                 if require_all and not required_stems.issubset(stems):
                     continue
-                name = f"{_slug(Path(model).stem, 20)}_conf{_fmt_num(conf)}_img{imgsz}"
+                name = f"{_slug(Path(tag).stem, 20)}_conf{_fmt_num(conf)}_img{imgsz}"
                 specs.append(
                     {
                         "name": _slug(name, 48),
@@ -985,35 +1220,21 @@ def _resolve_sweep_overlap_seconds(
 def _load_training_checkpoint(checkpoint_path: Path, input_size: int, device_str: str) -> tuple[torch.nn.Module, torch.device]:
     device = _resolve_requested_device(device_str)
     ckpt = torch.load(str(checkpoint_path), map_location=device)
-    state_dict = ckpt.get("model_state_dict", ckpt)
-    hidden_size = 128
-    num_layers = 2
-    bidirectional = False
-    w_ih_l0 = state_dict.get("lstm.weight_ih_l0")
-    if w_ih_l0 is not None:
-        hidden_size = int(w_ih_l0.shape[0] // 4)
-        input_size = int(w_ih_l0.shape[1])
-    layer_ids = set()
-    for key in state_dict.keys():
-        match = re.match(r"lstm\.weight_ih_l(\d+)(?:_reverse)?$", key)
-        if match:
-            layer_ids.add(int(match.group(1)))
-        if "_reverse" in key:
-            bidirectional = True
-
-    if layer_ids:
-        num_layers = max(layer_ids) + 1
-
-    model = TennisPointLSTM(
-        input_size=input_size,
-        hidden_size=hidden_size,
-        num_layers=num_layers,
-        bidirectional=bidirectional,
-        return_logits=False,
-    ).to(device)
-    model.load_state_dict(state_dict)
+    model = build_model_from_checkpoint(ckpt, feature_dim=input_size)
+    # Postprocess expects probabilities, not logits.
+    model.return_logits = False
+    model.load_state_dict(ckpt.get("model_state_dict", ckpt))
+    model.to(device)
     model.eval()
     return model, device
+
+
+def _holdout_videos(config: Dict[str, Any]) -> List[str]:
+    holdout = config.get("holdout", {}) if isinstance(config.get("holdout"), dict) else {}
+    if holdout.get("test_videos"):
+        return [str(v) for v in holdout["test_videos"]]
+    split = config.get("dataset", {}).get("split", {}) if isinstance(config.get("dataset"), dict) else {}
+    return [str(v) for v in split.get("test_videos", []) or []]
 
 
 def _resolve_requested_device(device_str: str) -> torch.device:
@@ -1045,6 +1266,15 @@ def _parse_sweep_run_id(run_id: str, run_prefix: str) -> Optional[Dict[str, Any]
 
 def _parse_fmt_num(text: str) -> float:
     return float(text.replace("p", "."))
+
+
+def _run_feature_root(data_root: Path, run_dir: Path, run_cfg: Dict[str, Any], fps: float) -> Path:
+    if isinstance(run_cfg.get("yolo"), dict):
+        return feature_root_from_run_config(data_root, run_cfg)
+    # Older runs saved no yolo settings and encoded imgsz only in the run_id;
+    # feature_root_from_run_config would silently default them.
+    imgsz = _parse_imgsz_from_run_id(run_dir.name)
+    return pose_features_dir(data_root) / "yolo=yolov8n-pose.pt" / "conf=0p25" / f"imgsz={imgsz}" / f"fps={fps}"
 
 
 def _parse_imgsz_from_run_id(run_id: str) -> int:
@@ -1095,11 +1325,17 @@ def _stopped_by_early_stopping(run_dir: Path, records: List[Dict[str, Any]]) -> 
     min_delta = float(cfg.get("early_stopping_min_delta", 0.0))
     if patience <= 0:
         return False
+    # Replay the stopping rule of the head that trained the run.
+    heatmap = str(cfg.get("head", "classic")).lower() in {"e2e_heatmap", "heatmap"}
+    selection_metric = str(cfg.get("selection_metric", "acceptable"))
 
     best_metric = float("-inf")
     epochs_without_improvement = 0
     for record in sorted(records, key=lambda item: int(item.get("epoch", 0))):
-        metric_value = float(record.get("balanced_accuracy", 0.0))
+        if heatmap:
+            metric_value = _selection_score(selection_metric, float(record.get("val_loss", 0.0)), record)
+        else:
+            metric_value = float(record.get("balanced_accuracy", 0.0))
         if metric_value > (best_metric + min_delta):
             best_metric = metric_value
             epochs_without_improvement = 0
