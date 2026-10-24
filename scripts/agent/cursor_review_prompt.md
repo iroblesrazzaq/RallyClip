@@ -29,6 +29,12 @@ Rules for findings:
 - At most 10 findings, most severe first. Zero findings is a good answer when the
   diff is fine.
 
+Findings rejected in earlier review rounds of this branch, with the reason. Do
+not report them again unless the code they cite changed since and the reason no
+longer holds:
+
+{rejected}
+
 Output format: after any reasoning, print exactly one block, and nothing after it:
 
 BEGIN_FINDINGS

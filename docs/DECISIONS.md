@@ -499,3 +499,19 @@ data/labels/metric, not optimization.** Do not re-run these:
 - **Known approximations kept for parity with the shipped model:** boundary
   markers at a window edge are still trained on; frame metrics use un-stitched
   windows; the last partial window of a video is dropped.
+
+## 2026-10-23 — Review rounds are capped in review.py, not in the skill text
+
+- **What:** `review.py` keeps a per-branch round record in the git common dir and
+  refuses a new round (exit 4) after 3 rounds, or when the last round had no
+  confirmed high/P1 finding. The caller writes `triage.json` per round. Rejected
+  findings go into the Cursor prompt, and findings near a rejected one are marked
+  `repeat_of`. `--reset` clears the count, only when the user asks.
+- **Why:** the skill said "stop after 2 rounds", and PR #68 still ran 22 rounds.
+  After round 10 the rounds found no confirmed high findings, and one rejected
+  finding (pairdp ordering) came back in 5 rounds, because each round started
+  without the earlier triage.
+- **Rejected:** prose-only limits (ignored in practice); matching repeats by claim
+  text (reviewers reword each time; file + nearby line is enough to flag it);
+  keeping state in `$TMPDIR` (no stable path between runs) or in the worktree
+  (would show in `git status`).
