@@ -901,8 +901,10 @@ def test_library_video_export_generates_cut_on_demand(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert response.data == b"cut video"
-    assert calls == [(str(source), [(1.0, 3.0), (4.0, 5.0)], str(item_dir / "export.mp4"))]
+    # Encoded to a temp name, then renamed: a failed encode leaves no export.mp4.
+    assert calls == [(str(source), [(1.0, 3.0), (4.0, 5.0)], str(item_dir / "export.partial.mp4"))]
     assert (item_dir / "export.mp4").read_bytes() == b"cut video"
+    assert not (item_dir / "export.partial.mp4").exists()
 
 
 def test_frozen_data_root_is_none_when_not_frozen():

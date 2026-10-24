@@ -16,7 +16,10 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-10-22, cancel-during-hash fix, macOS `.venv-train` py3.11):
+Last known (2026-10-23, large-video import merged with main after #68, macOS `.venv-train` py3.11):
+**569 passed, 49 deselected, ~60s** (some skip without local model artifacts). `tests/test_release_packaging.py` 21 passed;
+`tests/test_artifact_fetch.py` 6 passed.
+(2026-10-22 main, cancel-during-hash fix, macOS `.venv-train` py3.11):
 **363 passed, 11 skipped, 49 deselected, ~25s**. `tests/test_update_release.py` 15 passed;
 `tests/test_agent_review.py` 45 passed.
 (2026-09-09, Linux py3.12: 321 passed, 6 skipped, 27 deselected; `tests/test_release_packaging.py`
@@ -36,7 +39,7 @@ Last known (2026-07-03): exit 0.
 PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_cli_golden_parity.py
 ```
 
-Last known (2026-07-03): **1 passed, 14.0s**. Boundaries compared at 0.5s tolerance;
+Last known (2026-10-22): **1 passed, 8.0s**. Boundaries compared at 0.5s tolerance;
 byte-exact only holds on the machine+env the golden was generated on. ubuntu/windows
 ORT can split a TCN point across a 1-frame pointness dip; v0.5.0 ships
 `merge_gap_sec: 0.5` so those fragments become one segment.

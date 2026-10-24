@@ -1,41 +1,49 @@
 # PROGRESS — overwrite me at every session end
 
-_Last updated: 2026-10-22 (session: clean v0.6 training PR replacing #61)._
+_Last updated: 2026-10-23 (session: lean large-video import, replaces #59/#60; merged main after #68)._
 
-## State
+## Repo state
 
-- `main` has published app **v0.5.0**; `artifact-rallyclip_v0.6.0` is a
-  prerelease. The review gate (PR #65) and the README court update (PR #67)
-  are merged.
-- Active branch: `training/v060-tcn-netline` (worktree `training-v060-wt`),
-  PR against main that supersedes #61. See `docs/DECISIONS.md` 2026-10-22.
+- `main` has published app **v0.5.0**; inference artifact stays `artifact-rallyclip_v0.5.0`.
+- Review gate (#65), the cancel-during-hash fix (#66), the README court update
+  (#67) and the v0.6 training code (#68) are on main and merged into this
+  branch. `artifact-rallyclip_v0.6.0` is a prerelease.
+- Active work: `feat/large-video-import` (#64), a from-scratch rewrite of
+  #59/#60, which are closed.
 
-## What the branch does
+## What shipped this session
 
-- v0.6 training code: TCN heatmap head (`train/heatmap_loop.py`,
-  `train/heatmap_loss.py`), net-line slots + v2_nearfar features,
-  normalize, manifest-backed pose extract, court anchors/clean frame under
-  `src/training/courts/`.
-- Dead arms removed (e2e_seg, LSTM/GRU heatmap, time loss, LR finder,
-  24 configs). Shipped recipe: `configs/train/v060_netline.yaml`.
-- Training eval now decodes with the runtime decode, so numbers may differ
-  from older runs.
-- Flip leakage fixed in `dataset/builder.py`.
-- Torch-only tests skip when torch is missing.
+1. Upload has no 2GB cap (`MAX_CONTENT_LENGTH` removed, frontend check removed).
+2. Folder import: `POST /api/folder/select` (pywebview dialog in the desktop
+   shell, osascript on macOS browser mode) keeps the file list server-side behind
+   a single-use token; `POST /api/folder/start` pops it under `jobs_lock`.
+   Preflight: every clip >= 720p, same resolution and fps, total >= seq_len/fps.
+3. `src/segmentation/proxy.py`: clips -> one constant-frame-rate 720p proxy at the
+   manifest fps (the `proxy` job step). Clip spans come from decoded frames;
+   gaps hold the previous frame; clips without audio get silence.
+4. `segment.py`: one re-encode path (stream copy deleted), VideoToolbox with
+   libx264 fallback, `segment_video_sources` cuts across clip boundaries;
+   times are measured from the video stream's start_time.
+5. Library: folder items store the proxy as `source.mp4` plus `sources.json`;
+   exports are cut from the originals (404 if the drive is gone). Exports write
+   `export.partial.mp4` then rename. `POST /api/library/<id>/export` +
+   `GET .../export/status` run it in the background; the button shows progress.
+6. Review round 1 fixes: AudioTrack keeps a 250 ms unencoded reserve so each
+   cut's audio overrun is trimmed (it drifted up to ~60 ms over 15 cuts); a
+   points save bumps an export generation instead of waiting on the export lock;
+   one background export encodes at a time.
+7. Review round 2 fixes: exports re-resolve the effective CSV on each pass (a
+   save mid-encode creates segments_edited.csv); MPEG-TS export seeks are
+   checked and backed off (they landed late or at EOF and dropped cut starts);
+   folder preflight skips the length check when a clip reports no duration.
+8. Cancel race: a cancel that lands before the worker handle is recorded now
+   terminates the worker; a cancelled job dir is removed.
+9. Gates (after merging main with #68): default **569 passed, 49 deselected**; golden parity 1
+   passed; `test_gui_playwright.py` 11 passed.
 
-## Gates (2026-10-22)
+## Next steps
 
-Default suite 498 passed; torch blocked 449 / 11 skipped; golden CLI
-parity 1 passed; court flights 24 passed; compileall clean; remaining ruff
-findings on changed files are pre-existing on main.
-
-## Next
-
-- Update the external driver scripts in `../training_data_netline`
-  (`cv_netline.py`, `final_train.py`, `decode_sweep.py`): they import
-  `gt_segments_from_targets` from the deleted `eval.seg_evaluator` (now
-  `eval.heatmap_evaluator`) and call `build_heatmap_model` positionally
-  (now `build_heatmap_model(train_cfg, input_size)`).
-- Merge #64 and close #59/#60; rebase #62/#63.
-- Court-model training code and driver scripts are still outside git.
-- Try a bigger YOLO pose model (yolov8s/m) after v0.6.0 ships.
+1. #64: the user merges.
+2. Rebase the Swift branch (#63) onto this: it uses `_start_folder_analysis_job`,
+   `_natural_filename_key` and `sources.json`, all kept.
+3. Not covered by automation: clicking the folder picker in the desktop app.
