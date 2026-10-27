@@ -2945,16 +2945,26 @@ class RallyClipApp {
         };
         show(0);
         try {
-            let response = await fetch(`/api/library/${id}/export`, { method: "POST" });
-            let state = await response.json();
-            if (!response.ok) throw new Error(state.error || `HTTP ${response.status}`);
-            while (state.status === "processing") {
+            const start = async () => {
+                const response = await fetch(`/api/library/${id}/export`, { method: "POST" });
+                const started = await response.json();
+                if (!response.ok) throw new Error(started.error || `HTTP ${response.status}`);
+                return started;
+            };
+            let state = await start();
+            // Download only a ready export: GET /video on a missing one would cut it
+            // inside the download request, with no progress.
+            while (state.status !== "ready") {
+                if (state.status === "error") throw new Error(state.error);
+                if (state.status !== "processing") {
+                    // Idle: a points save cleared the finished export. Cut it again.
+                    state = await start();
+                    continue;
+                }
                 show(state.progress);
                 await new Promise((resolve) => setTimeout(resolve, 1000));
-                response = await fetch(`/api/library/${id}/export/status`);
-                state = await response.json();
+                state = await (await fetch(`/api/library/${id}/export/status`)).json();
             }
-            if (state.status === "error") throw new Error(state.error);
             this.triggerDownload(`/api/library/${id}/video`);
         } catch (error) {
             this.showToast(this.errorText(error) || "Export failed.", "error");

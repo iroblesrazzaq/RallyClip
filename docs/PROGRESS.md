@@ -47,7 +47,15 @@ _Last updated: 2026-10-27 (session: lean large-video import, replaces #59/#60; m
    export button shows the progress of the match open now.
 10. Review gate round 1 (Cursor 4 lenses + Greptile): cut-starts-in-gap fixed;
     tests added for the folder pipeline handoff and `.MTS` discovery.
-11. Gates: see docs/testing.md.
+11. Review gate round 2: a cut past the last picture stops there (no frozen
+    footage), and its audio stops with it (export audio waits until a picture
+    covers it, as in the proxy); a clip shorter than half a proxy frame adds 0 s
+    instead of aborting the import; the export button cuts again when a save
+    cleared the finished export, and downloads only a ready one. Tests added for
+    a cancelled folder picker, a failed background export and the encoder
+    fallback. Deferred: single-file import still uploads over HTTP (folder
+    import avoids it); a path-based single-file picker is a follow-up.
+12. Gates: see docs/testing.md.
 
 ## Next steps
 

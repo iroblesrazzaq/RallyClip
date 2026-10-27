@@ -17,7 +17,7 @@ PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovi
 ```
 
 Last known (2026-10-27, large-video import merged with main after #69 + review fixes, macOS `.venv-train` py3.11):
-**589 passed, 49 deselected, ~90-165s** (some skip without local model artifacts). `tests/test_release_packaging.py` 21 passed;
+**594 passed, 49 deselected, ~65-165s** (some skip without local model artifacts). `tests/test_release_packaging.py` 21 passed;
 `tests/test_artifact_fetch.py` 6 passed; `tests/test_agent_review.py` 59 passed.
 (2026-10-23, review round cap merged with main after #68: 542 passed, 16 skipped, 49 deselected.)
 (2026-10-22 main, cancel-during-hash fix: 363 passed, 11 skipped; `tests/test_update_release.py` 15 passed.)

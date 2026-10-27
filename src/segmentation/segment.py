@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import sys
+from collections import deque
 from fractions import Fraction
 from typing import Callable, List, Optional, Sequence, Tuple, TypeVar
 
@@ -13,6 +14,10 @@ import av
 # output bitrate in the neighbourhood of a typical H.264 source (vs the old mp4v blow-up).
 DEFAULT_CRF = 20
 VIDEOTOOLBOX = "h264_videotoolbox"
+# Audio decoded ahead of the video is held until the video reaches it. Demuxers
+# interleave within ~1 s; past this much, the oldest held audio is dropped
+# (heard as silence) rather than held without limit.
+MAX_AUDIO_AHEAD_S = 30.0
 ProgressCallback = Callable[[int], None]
 T = TypeVar("T")
 
@@ -288,6 +293,18 @@ def _write_cuts(pieces, output_path, encoder, crf, eps, video, audio, progress_c
                     # elapsed time (and stays in sync with continuous audio). A cut that
                     # starts inside a gap opens on the picture held there (`before`).
                     cut_base, first_t, previous, before = v_index, None, None, None
+                    # Audio waits until a picture covers it: past the last picture
+                    # (truncated video) it is dropped, as the proxy drops it, since the
+                    # track can trim only its unencoded reserve.
+                    pending: deque = deque()
+                    covered = -math.inf  # source time the encoded pictures reach
+
+                    def release(until: float) -> None:
+                        while pending and pending[0][0] < until:
+                            audio_frame = pending.popleft()[1]
+                            audio_frame.pts = None
+                            track.write(resampler.resample(audio_frame))
+
                     for frame in container.decode(*streams):
                         if v_done and a_done:
                             break
@@ -306,8 +323,10 @@ def _write_cuts(pieces, output_path, encoder, crf, eps, video, audio, progress_c
                                 a_done = True
                             continue
                         if not is_video:
-                            frame.pts = None
-                            track.write(resampler.resample(frame))
+                            pending.append((t, frame))
+                            while t - pending[0][0] > MAX_AUDIO_AHEAD_S:
+                                pending.popleft()
+                            release(math.inf if v_done else covered)
                             continue
                         if (frame.width, frame.height) != (width, height):
                             frame = frame.reformat(width=width, height=height)
@@ -323,18 +342,24 @@ def _write_cuts(pieces, output_path, encoder, crf, eps, video, audio, progress_c
                             v_index = _encode_at(out, out_v, previous, v_index, video_tb)
                         v_index = _encode_at(out, out_v, frame, v_index, video_tb)
                         previous = frame
+                        covered = t + 1 / float(rate)
+                        release(covered)
                         if progress_callback is not None:
                             percent = min(99, int(100 * (done_s + max(0.0, t - start_t)) / total_s))
                             if percent != reported:
                                 reported = percent
                                 progress_callback(percent)
-                    if first_t is None and before is not None:
+                    # Only a later picture shows a real gap; at the end of the file the
+                    # cut stops at its last picture (edits may run past the video).
+                    if v_done and first_t is None and before is not None:
                         # The whole cut lies inside a gap: show the held picture.
                         first_t, previous = start_t, _sized(before, width, height)
-                    if previous is not None:
+                    if v_done and previous is not None:
                         # A gap at the end of the cut: hold the last picture to its end.
                         while v_index < cut_base + int((end_t - first_t) * float(rate) + 0.5):
                             v_index = _encode_at(out, out_v, previous, v_index, video_tb)
+                    if pending:
+                        release(math.inf if v_done else covered)
                     if resampler is not None:
                         track.write(resampler.resample(None))
                     if track is not None:

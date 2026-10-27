@@ -157,6 +157,17 @@ def test_proxy_drops_audio_past_a_truncated_clips_last_picture(tmp_path):
     assert np.abs(samples[int(1.1 * RATE):int(2.9 * RATE)]).max() < 0.01
 
 
+def test_proxy_clip_shorter_than_half_a_frame_adds_no_time(tmp_path):
+    # 5 pictures at 60fps (83 ms) round to no 5fps proxy slot; it must not abort the import.
+    tiny, clip = tmp_path / "tiny.mp4", tmp_path / "clip.mp4"
+    _make_av(tiny, range(5), audio_s=0, fps=60)
+    _make_clip(clip, seconds=2, fps=10, with_audio=False)
+    manifest = create_analysis_proxy([tiny, clip], tmp_path / "proxy.mp4", fps=5)
+
+    assert [(m["start_s"], m["duration_s"]) for m in manifest] == [(0.0, 0.0), (0.0, 2.0)]
+    assert len(_decode(tmp_path / "proxy.mp4")[0]) == 10
+
+
 def test_timeline_pieces_split_an_interval_at_the_clip_boundary():
     sources = [
         {"path": "a.mp4", "start_s": 0.0, "duration_s": 3.0},
@@ -217,6 +228,35 @@ def test_export_cut_starting_in_a_gap_opens_on_the_held_picture(tmp_path, cut, h
     # Until the gap ends the cut shows the picture the proxy holds there (pts 9).
     assert all(abs(luma - 72) < 4 for at, luma in timed if at < held_until - cut[0] - 0.1), timed
     assert abs(len(_audio(out)) - duration * RATE) <= 2048
+
+
+def test_export_cut_past_the_last_picture_stops_there(tmp_path):
+    # Pictures stop at 1s but the audio and the manifest run to 3s; an edit to 2.5s
+    # must not add 1.5s of a frozen last picture.
+    clip = tmp_path / "short.mp4"
+    _make_av(clip, range(10), audio_s=3)
+    out = tmp_path / "export.mp4"
+    segment_video_sources([{"path": str(clip), "start_s": 0.0, "duration_s": 3.0}], [(0.5, 2.5)], str(out))
+
+    timed = _timed_lumas(out)
+    assert len(timed) == 5 and abs(timed[-1][1] - 72) < 4, timed
+    assert abs(len(_audio(out)) - 0.5 * RATE) <= 2048
+
+
+def test_encoder_fallback_retries_with_libx264_on_an_ffmpeg_error(monkeypatch):
+    import segmentation.segment as segment
+
+    monkeypatch.setattr(segment, "video_encoders", lambda: ["h264_videotoolbox", "libx264"])
+    tried = []
+
+    def write(encoder):
+        tried.append(encoder)
+        if encoder != "libx264":
+            raise av.FFmpegError(1, "encoder busy")
+        return "written"
+
+    assert segment.with_encoder_fallback(write) == "written"
+    assert tried == ["h264_videotoolbox", "libx264"]
 
 
 def test_audio_stays_locked_to_video_across_many_short_cuts(tmp_path, monkeypatch):
@@ -338,6 +378,13 @@ def test_folder_token_is_spent_by_a_failed_start(gui, tmp_path, monkeypatch):
     retry = client.post("/api/folder/start", json={"token": token})
     assert retry.status_code == 400 and retry.get_json()["error"] == "Choose the folder again."
     assert len(calls) == 1
+
+
+def test_folder_select_cancelled_keeps_no_token(gui, monkeypatch):
+    monkeypatch.setattr(gui, "_choose_match_folder", lambda: None)
+    response = gui.app.test_client().post("/api/folder/select")
+    assert response.status_code == 200 and response.get_json() == {"cancelled": True}
+    assert gui.pending_folder is None
 
 
 def _fake_probe(gui, monkeypatch, infos):
@@ -498,6 +545,22 @@ def test_background_export_reports_progress_then_ready(gui, monkeypatch):
         time.sleep(0.01)
     assert state == {"status": "ready", "progress": 100, "error": None}
     assert client.get("/api/library/m1/video").data == b"cut"
+
+
+def test_background_export_failure_reports_the_error(gui, monkeypatch):
+    _library_item(gui)
+
+    def crash(input_video, intervals, output_video, progress_callback=None):
+        raise RuntimeError("encoder died")
+
+    monkeypatch.setattr(gui, "segment_video", crash)
+    client = gui.app.test_client()
+    assert client.post("/api/library/m1/export").status_code == 202
+    deadline = time.time() + 5
+    while (state := client.get("/api/library/m1/export/status").get_json())["status"] == "processing":
+        assert time.time() < deadline
+        time.sleep(0.01)
+    assert state == {"status": "error", "progress": 0, "error": "encoder died"}
 
 
 def test_persist_writes_sources_manifest(gui, tmp_path, monkeypatch):

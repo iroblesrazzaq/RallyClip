@@ -9,13 +9,9 @@ from typing import Callable, Optional, Sequence
 
 import av
 
-from .segment import DEFAULT_CRF, AudioTrack, add_video_stream, with_encoder_fallback
+from .segment import DEFAULT_CRF, MAX_AUDIO_AHEAD_S, AudioTrack, add_video_stream, with_encoder_fallback
 
 PROXY_AUDIO_RATE = 48000
-# Audio decoded ahead of the video is held until the video reaches it. Demuxers
-# interleave within ~1 s; past this much, the oldest held audio is dropped
-# (heard as silence) rather than held without limit.
-MAX_AUDIO_AHEAD_S = 30.0
 
 
 def create_analysis_proxy(
@@ -76,6 +72,7 @@ def _write_proxy(paths, output_path, encoder, fps, max_height, progress_callback
             start_frame = frame_index
             chunk_audio_start = round(start_frame * PROXY_AUDIO_RATE / fps)
             last = -1  # last clip-local frame slot written
+            decoded = False
             end = 0  # clip length in proxy frames, from decoded frame end times
             previous = None
             with av.open(str(path)) as container:
@@ -114,6 +111,7 @@ def _write_proxy(paths, output_path, encoder, fps, max_height, progress_callback
                             pending.popleft()
                         release(end / fps)
                         continue
+                    decoded = True
                     index = int(t * fps + 0.5)
                     end = max(end, int((t + frame_s) * fps + 0.5))
                     release(end / fps)
@@ -133,8 +131,10 @@ def _write_proxy(paths, output_path, encoder, fps, max_height, progress_callback
                 release(end / fps)
                 if resampler is not None:
                     track.write(resampler.resample(None))
-            if last < 0:
+            if not decoded:
                 raise ValueError(f"No decodable video frames found in {path.name}")
+            if previous is None:
+                end = 0  # shorter than half a proxy frame: the clip adds no time
             # Show the final picture for its full duration, so the next clip starts
             # where it really begins instead of drifting a frame per boundary.
             for slot in range(last + 1, end):
