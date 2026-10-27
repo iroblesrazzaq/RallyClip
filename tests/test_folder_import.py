@@ -7,6 +7,7 @@ import io
 import json
 import threading
 import time
+from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -97,6 +98,65 @@ def test_proxy_gap_slots_repeat_the_previous_picture(tmp_path):
     assert all(abs(a - b) < 4 for a, b in zip(lumas, expected)), (lumas, expected)
 
 
+def _make_av(path, frame_pts, audio_s, fps=10, luma=lambda pts: 8 * pts):
+    """Clip with pictures at the given frame_pts (gaps allowed) and audio_s of tone."""
+    container = av.open(str(path), "w")
+    try:
+        v = container.add_stream("libx264", rate=fps)
+        v.width, v.height, v.pix_fmt = 320, 240, "yuv420p"
+        a = container.add_stream("aac", rate=RATE) if audio_s else None
+        if a is not None:
+            a.layout = "stereo"
+        for pts in frame_pts:
+            frame = av.VideoFrame.from_ndarray(np.full((240, 320, 3), luma(pts), dtype=np.uint8), format="rgb24")
+            frame.pts = pts
+            for pkt in v.encode(frame):
+                container.mux(pkt)
+        for pkt in v.encode():
+            container.mux(pkt)
+        for start in range(0, int(audio_s * RATE), 1024):
+            n = min(1024, int(audio_s * RATE) - start)
+            tone = (0.1 * np.sin(2 * np.pi * 440 * np.arange(start, start + n) / RATE)).astype("float32")
+            af = av.AudioFrame.from_ndarray(np.stack([tone, tone]), format="fltp", layout="stereo")
+            af.sample_rate, af.pts, af.time_base = RATE, start, Fraction(1, RATE)
+            for pkt in a.encode(af):
+                container.mux(pkt)
+        if a is not None:
+            for pkt in a.encode():
+                container.mux(pkt)
+    finally:
+        container.close()
+
+
+def _timed_lumas(path):
+    """(seconds, luma) of every decoded picture."""
+    with av.open(str(path)) as container:
+        return [(float(f.pts * f.time_base), float(f.to_ndarray(format="gray").mean()))
+                for f in container.decode(video=0)]
+
+
+def _audio(path):
+    """Mono float samples of a file's audio track."""
+    with av.open(str(path)) as container:
+        return np.concatenate([f.to_ndarray()[0] for f in container.decode(audio=0)])
+
+
+def test_proxy_drops_audio_past_a_truncated_clips_last_picture(tmp_path):
+    # Clip A's pictures stop at 1s but its audio runs to 3s; clip B is silent.
+    a, b = tmp_path / "a.mp4", tmp_path / "b.mp4"
+    _make_av(a, range(10), audio_s=3)
+    _make_av(b, range(20), audio_s=0)
+    out = tmp_path / "proxy.mp4"
+    manifest = create_analysis_proxy([a, b], out, fps=10)
+
+    assert [(m["start_s"], m["duration_s"]) for m in manifest] == [(0.0, 1.0), (1.0, 2.0)]
+    samples = _audio(out)
+    assert abs(len(samples) - 3 * RATE) <= 2048
+    # A's tone plays over A only; B's span is silence, not A's leftover audio.
+    assert np.sqrt(np.mean(samples[int(0.1 * RATE):int(0.9 * RATE)] ** 2)) > 0.05
+    assert np.abs(samples[int(1.1 * RATE):int(2.9 * RATE)]).max() < 0.01
+
+
 def test_timeline_pieces_split_an_interval_at_the_clip_boundary():
     sources = [
         {"path": "a.mp4", "start_s": 0.0, "duration_s": 3.0},
@@ -122,6 +182,24 @@ def test_export_cuts_across_clip_boundary_from_originals(clips, tmp_path):
     assert 20 <= len(lumas) <= 21
     assert abs(lumas[0] - 20) < 4 and abs(lumas[10] - 0) < 4
     assert abs(samples - len(lumas) * RATE / 10) <= 2048
+
+
+def test_export_holds_the_picture_across_a_timestamp_gap(tmp_path):
+    # Pictures at 0-0.9s and 2.0-2.9s (a 1s gap, as in the proxy); audio is continuous.
+    clip = tmp_path / "gap.mp4"
+    _make_av(clip, [*range(10), *range(20, 30)], audio_s=3)
+    sources = [{"path": str(clip), "start_s": 0.0, "duration_s": 3.0}]
+    out = tmp_path / "export.mp4"
+    segment_video_sources(sources, [(0.0, 2.95)], str(out))
+
+    timed = _timed_lumas(out)
+    duration = timed[-1][0] + (timed[-1][0] - timed[-2][0])
+    assert abs(duration - 3.0) <= 0.2, duration
+    # Mid-gap the export still shows the last picture before the gap (pts 9);
+    # after it, pictures play at their own time, not 1s early.
+    assert all(abs(luma - 72) < 4 for at, luma in timed if 1.1 <= at <= 1.9), timed
+    assert all(abs(luma - 8 * (20 + int(10 * (at - 2.0)))) <= 12 for at, luma in timed if 2.05 <= at <= 2.85), timed
+    assert abs(len(_audio(out)) - duration * RATE) <= 2048
 
 
 def test_audio_stays_locked_to_video_across_many_short_cuts(tmp_path, monkeypatch):
@@ -445,3 +523,29 @@ def test_points_edited_mid_export_are_not_lost(gui, monkeypatch):
     monkeypatch.setattr(gui, "segment_video", fake_segment)
     assert client.get("/api/library/m1/video").data == b"cut2"
     assert calls == [[(1.0, 2.0)], [(3.0, 4.0)]]
+
+
+def test_points_saved_after_export_publishes_are_cut_before_ready(gui, monkeypatch):
+    item_dir = _library_item(gui)
+    client = gui.app.test_client()
+    monkeypatch.setattr(gui, "segment_video",
+                        lambda source, intervals, output, **kwargs: Path(output).write_text(repr(intervals)))
+    export = gui._export_library_video
+    cuts = []
+
+    def export_then_save(item_id, progress_callback=None):
+        path = export(item_id, progress_callback=progress_callback)
+        cuts.append(path.read_text())
+        if len(cuts) == 1:
+            # The save lands after export.mp4 is published, before the job says ready.
+            body = {"segments": [{"start": 3.0, "end": 4.0}]}
+            assert client.put("/api/library/m1/segments", json=body).status_code == 200
+        return path
+
+    monkeypatch.setattr(gui, "_export_library_video", export_then_save)
+    gui.export_jobs["m1"] = {"status": "processing", "progress": 0, "error": None}
+    gui._run_export_job("m1")
+
+    assert cuts == ["[(1.0, 2.0)]", "[(3.0, 4.0)]"]
+    assert gui.export_jobs["m1"]["status"] == "ready"
+    assert (item_dir / "export.mp4").read_text() == "[(3.0, 4.0)]"

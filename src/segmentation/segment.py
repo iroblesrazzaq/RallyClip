@@ -240,6 +240,16 @@ def segment_video_sources(sources: Sequence[dict], intervals: List[Tuple[float, 
     )
 
 
+def _encode_at(out, out_v, frame, index: int, video_tb) -> int:
+    """Encode frame as output picture `index`; return the next index."""
+    frame.pts = index
+    frame.time_base = video_tb
+    frame.pict_type = av.video.frame.PictureType.NONE
+    for packet in out_v.encode(frame):
+        out.mux(packet)
+    return index + 1
+
+
 def _write_cuts(pieces, output_path, encoder, crf, eps, video, audio, progress_callback) -> None:
     rate, width, height = video
     video_tb = Fraction(1, 1) / rate
@@ -267,6 +277,10 @@ def _write_cuts(pieces, output_path, encoder, crf, eps, video, audio, progress_c
                     # rate-interpolated across the gap.
                     resampler = track.resampler() if in_a is not None else None
                     v_done, a_done = False, in_a is None
+                    # Slots count from the cut's first picture. As in the analysis proxy,
+                    # a timestamp gap repeats the previous picture so the cut keeps its
+                    # elapsed time (and stays in sync with continuous audio).
+                    cut_base, first_t, previous = v_index, None, None
                     for frame in container.decode(*streams):
                         if v_done and a_done:
                             break
@@ -286,19 +300,26 @@ def _write_cuts(pieces, output_path, encoder, crf, eps, video, audio, progress_c
                             frame.pts = None
                             track.write(resampler.resample(frame))
                             continue
+                        if first_t is None:
+                            first_t = t
+                        slot = cut_base + int((t - first_t) * float(rate) + 0.5)
+                        if slot < v_index:
+                            continue  # source is faster than the output rate
                         if (frame.width, frame.height) != (width, height):
                             frame = frame.reformat(width=width, height=height)
-                        frame.pts = v_index
-                        frame.time_base = video_tb
-                        frame.pict_type = av.video.frame.PictureType.NONE
-                        v_index += 1
-                        for packet in out_v.encode(frame):
-                            out.mux(packet)
+                        while v_index < slot:
+                            v_index = _encode_at(out, out_v, previous, v_index, video_tb)
+                        v_index = _encode_at(out, out_v, frame, v_index, video_tb)
+                        previous = frame
                         if progress_callback is not None:
                             percent = min(99, int(100 * (done_s + max(0.0, t - start_t)) / total_s))
                             if percent != reported:
                                 reported = percent
                                 progress_callback(percent)
+                    if previous is not None:
+                        # A gap at the end of the cut: hold the last picture to its end.
+                        while v_index < cut_base + int((end_t - first_t) * float(rate) + 0.5):
+                            v_index = _encode_at(out, out_v, previous, v_index, video_tb)
                     if resampler is not None:
                         track.write(resampler.resample(None))
                     if track is not None:

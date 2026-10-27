@@ -1,6 +1,6 @@
 # PROGRESS — overwrite me at every session end
 
-_Last updated: 2026-10-27 (session: lean large-video import, replaces #59/#60; merged main after #69)._
+_Last updated: 2026-10-27 (session: lean large-video import, replaces #59/#60; merged main after #69; Greptile fixes)._
 
 ## Repo state
 
@@ -39,7 +39,12 @@ _Last updated: 2026-10-27 (session: lean large-video import, replaces #59/#60; m
    folder preflight skips the length check when a clip reports no duration.
 8. Cancel race: a cancel that lands before the worker handle is recorded now
    terminates the worker; a cancelled job dir is removed.
-9. Gates: see docs/testing.md (after merging main with #69).
+9. Greptile fixes after merging main with #69: export cuts hold the previous
+   picture across timestamp gaps (as the proxy does); the proxy encodes a clip's
+   audio only up to its decoded video span; a background export reports ready
+   only while export.mp4 exists (a save in between cuts again); the viewer
+   export button shows the progress of the match open now.
+10. Gates: see docs/testing.md.
 
 ## Next steps
 

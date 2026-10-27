@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from fractions import Fraction
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -11,6 +12,10 @@ import av
 from .segment import DEFAULT_CRF, AudioTrack, add_video_stream, with_encoder_fallback
 
 PROXY_AUDIO_RATE = 48000
+# Audio decoded ahead of the video is held until the video reaches it. Demuxers
+# interleave within ~1 s; past this much, the oldest held audio is dropped
+# (heard as silence) rather than held without limit.
+MAX_AUDIO_AHEAD_S = 30.0
 
 
 def create_analysis_proxy(
@@ -83,21 +88,35 @@ def _write_proxy(paths, output_path, encoder, fps, max_height, progress_callback
                 frame_s = 1.0 / float(source_rate) if source_rate else 1.0 / fps
                 expected_s = _duration_s(container, in_v)
                 resampler = track.resampler() if in_a is not None else None
+                # Audio is encoded only up to the decoded video span: a truncated clip's
+                # audio past its last picture would otherwise play over the next clip,
+                # and the track can trim only its unencoded reserve.
+                pending: deque = deque()
+
+                def release(until_s: float) -> None:
+                    while pending and pending[0][0] < until_s:
+                        at, audio = pending.popleft()
+                        gap = chunk_audio_start + round(at * PROXY_AUDIO_RATE) - track.written
+                        if gap < -tolerance:
+                            continue  # overlaps audio already written
+                        if gap > tolerance:
+                            track.pad_to(track.written + gap)
+                        audio.pts = None
+                        track.write(resampler.resample(audio))
+
                 for frame in container.decode(*streams):
                     if frame.pts is None:
                         continue
                     t = float(frame.pts * frame.time_base) - origin
                     if isinstance(frame, av.AudioFrame):
-                        gap = chunk_audio_start + round(t * PROXY_AUDIO_RATE) - track.written
-                        if gap < -tolerance:
-                            continue  # overlaps audio already written
-                        if gap > tolerance:
-                            track.pad_to(track.written + gap)
-                        frame.pts = None
-                        track.write(resampler.resample(frame))
+                        pending.append((t, frame))
+                        while t - pending[0][0] > MAX_AUDIO_AHEAD_S:
+                            pending.popleft()
+                        release(end / fps)
                         continue
                     index = int(t * fps + 0.5)
                     end = max(end, int((t + frame_s) * fps + 0.5))
+                    release(end / fps)
                     if index <= last or index >= end:
                         continue  # source is faster than the proxy rate
                     frame = frame.reformat(width=width, height=height, format="yuv420p")
@@ -111,6 +130,7 @@ def _write_proxy(paths, output_path, encoder, fps, max_height, progress_callback
                         if percent != reported:
                             reported = percent
                             progress_callback(min(99, percent))
+                release(end / fps)
                 if resampler is not None:
                     track.write(resampler.resample(None))
             if last < 0:

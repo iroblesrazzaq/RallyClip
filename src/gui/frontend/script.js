@@ -23,7 +23,8 @@ class RallyClipApp {
     constructor() {
         this.selectedFile = null;
         this.selectedFolder = null; // {token, name, files} from /api/folder/select
-        this.exportingIds = new Set();
+        // Match id -> export percent while its background export runs.
+        this.exportProgress = new Map();
         this.isProcessing = false;
         this.currentJobId = null;
         this.progressInterval = null;
@@ -169,6 +170,7 @@ class RallyClipApp {
         this.viewerCurrentTime = document.getElementById("viewerCurrentTime");
         this.viewerDuration = document.getElementById("viewerDuration");
         this.viewerExportBtn = document.getElementById("viewerExportBtn");
+        this.viewerExportLabel = this.viewerExportBtn.textContent;
         this.viewerCsvBtn = document.getElementById("viewerCsvBtn");
         this.viewerEditBtn = document.getElementById("viewerEditBtn");
         this.viewerEditTrack = document.getElementById("viewerEditTrack");
@@ -883,6 +885,7 @@ class RallyClipApp {
     async showViewer(item) {
         if (!item || !item.id) return;
         this.viewingItemId = item.id;
+        this.renderViewerExportButton();
         this.pointIntervals = [];
         this.lastViewerTime = null;
         this.viewerSeekInProgress = false;
@@ -2929,15 +2932,24 @@ class RallyClipApp {
     // Exports can take minutes for a long match: cut in the background, show
     // progress on the button, then download the finished file.
     async exportVideo(id, button) {
-        if (this.exportingIds.has(id)) return;
-        this.exportingIds.add(id);
-        const label = button.textContent;
+        if (this.exportProgress.has(id)) return;
+        // The viewer button is shared by every match: it shows the progress of
+        // the match open now, not of the one that started this export.
+        const cardButton = button === this.viewerExportBtn ? null : button;
+        const label = cardButton ? cardButton.textContent : null;
+        const show = (progress) => {
+            if (progress === null) this.exportProgress.delete(id);
+            else this.exportProgress.set(id, progress);
+            if (cardButton) cardButton.textContent = progress === null ? label : `Exporting ${progress}%`;
+            this.renderViewerExportButton();
+        };
+        show(0);
         try {
             let response = await fetch(`/api/library/${id}/export`, { method: "POST" });
             let state = await response.json();
             if (!response.ok) throw new Error(state.error || `HTTP ${response.status}`);
             while (state.status === "processing") {
-                button.textContent = `Exporting ${state.progress}%`;
+                show(state.progress);
                 await new Promise((resolve) => setTimeout(resolve, 1000));
                 response = await fetch(`/api/library/${id}/export/status`);
                 state = await response.json();
@@ -2947,9 +2959,13 @@ class RallyClipApp {
         } catch (error) {
             this.showToast(this.errorText(error) || "Export failed.", "error");
         } finally {
-            this.exportingIds.delete(id);
-            button.textContent = label;
+            show(null);
         }
+    }
+
+    renderViewerExportButton() {
+        const progress = this.exportProgress.get(this.viewingItemId);
+        this.viewerExportBtn.textContent = progress === undefined ? this.viewerExportLabel : `Exporting ${progress}%`;
     }
 
     // A real navigation to an attachment URL: the browser downloads it, and in

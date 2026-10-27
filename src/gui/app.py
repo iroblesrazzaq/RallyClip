@@ -2630,13 +2630,27 @@ def _run_export_job(item_id: str) -> None:
 
     try:
         with _export_slot:
-            _export_library_video(item_id, progress_callback=progress)
-        state = {"status": "ready", "progress": 100, "error": None}
+            # A points save between publishing and reporting deletes the new
+            # export; cut again rather than report "ready" without a file.
+            while not _mark_export_ready(item_id, _export_library_video(item_id, progress_callback=progress)):
+                pass
+        return
     except Exception as exc:
         logging.exception("Could not export library video %s", item_id)
         state = {"status": "error", "progress": 0, "error": str(exc)}
     with jobs_lock:
         export_jobs[item_id] = state
+
+
+def _mark_export_ready(item_id: str, export_path: Path) -> bool:
+    # Under the guard _invalidate_library_export unlinks with: a save either
+    # deletes the file first (False, cut again) or sees "ready" and clears it.
+    with _export_locks_guard:
+        if not export_path.exists():
+            return False
+        with jobs_lock:
+            export_jobs[item_id] = {"status": "ready", "progress": 100, "error": None}
+        return True
 
 
 @app.route("/api/library/<item_id>/export", methods=["POST"])
