@@ -10,7 +10,7 @@
       "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
-      "evidence": "2026-10-27: 616 passed, 6 skipped, 49 deselected (~79s) on the native branch rebuilt on main (macOS, .venv-train py3.11, v0.6 weights present). Includes 10 native service tests."
+      "evidence": "2026-10-27: 622 passed, 1 skipped, 49 deselected (~77s) on the native branch rebuilt on main (macOS, .venv-train py3.11, v0.6 weights present). Includes 10 native service tests."
     },
     {
       "id": "golden-cli-parity",
@@ -101,7 +101,7 @@
       "name": "SwiftUI macOS desktop with original logo, native continuous playback, point editing, v0.6 analysis and AVFoundation exports",
       "status": "active",
       "verification": "swift test --package-path macos; $PY scripts/native/smoke.py --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend; interactive native UI QA; Release workflow desktop=native",
-      "evidence": "2026-10-27: after review fixes, 5 Swift tests (incl. the uncovered-point guard) and 10 native API tests pass; release tests lock the native tag/sign/notarize path. 2026-10-07: app builds. Packaged v0.6 import, edit/reset/delete, decoded-frame playback and exact 4s export passed. Delayed audio regression passed after rendering silence via audio mix. Interactive import, save edit and MP4 export passed. Signed CI build pending."
+      "evidence": "2026-10-27: after review rounds 1-2, 7 Swift tests (uncovered-point guard, long declared duration, re-export, MOV/M4V folder clips) and 10 native API tests pass; release tests lock the native tag/sign/notarize path. 2026-10-07: app builds. Packaged v0.6 import, edit/reset/delete, decoded-frame playback and exact 4s export passed. Delayed audio regression passed after rendering silence via audio mix. Interactive import, save edit and MP4 export passed. Signed CI build pending."
     }
   ],
   "active": "native-macos"
