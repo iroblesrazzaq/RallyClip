@@ -57,6 +57,26 @@ final class CompositionTests: XCTestCase {
             return Double(bytes[0])
         }
         XCTAssertGreaterThan(brightness(second) - brightness(first), 100, "Export must cross to the second original clip")
+        // Re-export onto the existing file: the new cut replaces it and no staging file is left.
+        try await VideoExporter().export(sources: sources, points: [points[0]], to: export) { _ in }
+        let replaced = try await AVURLAsset(url: export).load(.duration)
+        XCTAssertEqual(replaced.seconds, 1.0, accuracy: 0.05)
+        let left = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix(".rallyclip-") }
+        XCTAssertEqual(left, [])
+    }
+
+    func testDeclaredDurationLongerThanTheVideoTrackStillPlays() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let a = root.appendingPathComponent("a.mp4"), b = root.appendingPathComponent("b.mp4")
+        try await clip(at: a, color: 50); try await clip(at: b, color: 200)
+        // sources.json can round a clip a few frames past its 2 s video track.
+        let sources = [Source(path: a.path, start: 0, duration: 2.03), Source(path: b.path, start: 2.03, duration: 2)]
+        let composition = try await CompositionBuilder.build(sources: sources, points: [Point(start: 1.5, end: 2.5)])
+        XCTAssertEqual(composition.duration.seconds, 1.0, accuracy: 0.05)
+        let track = try XCTUnwrap(composition.tracks(withMediaType: .video).first)
+        XCTAssertLessThanOrEqual(CMTimeRangeGetEnd(track.timeRange).seconds, composition.duration.seconds + 0.001)
     }
 
     func testMissingFootageAndUncoveredIntervalsFail() async throws {

@@ -395,3 +395,14 @@ def test_native_workflow_keeps_signing_secrets_off_build_steps():
         for secret, steps in allowed.items():
             if f"secrets.{secret}" in text:
                 assert name in steps, f"{secret} is exposed to step {name!r}"
+
+
+def test_native_backend_worker_is_signed_with_jit_entitlements():
+    """The ONNX worker needs JIT under the hardened runtime or it is killed at analysis start."""
+    script = (SCRIPTS / "sign_macos_app.sh").read_text(encoding="utf-8")
+    branch = script.split('if [[ "${macho}" == "${APP_PATH}/Contents/Resources/Backend/RallyClipBackend" ]]; then', 1)[1]
+    assert branch.split("else", 1)[0].strip().splitlines()[-1].strip() == 'sign_with_entitlements "${macho}"'
+    assert "--entitlements \"${ENTITLEMENTS}\"" in script.split("sign_with_entitlements() {", 1)[1].split("\n}\n", 1)[0]
+    entitlements = (ROOT / "packaging" / "macos" / "RallyClip.entitlements").read_text(encoding="utf-8")
+    assert "com.apple.security.cs.allow-jit" in entitlements
+    assert "com.apple.security.cs.allow-unsigned-executable-memory" in entitlements

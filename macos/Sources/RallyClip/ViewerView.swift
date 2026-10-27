@@ -145,7 +145,9 @@ struct ViewerView: View {
                             .offset(x: min(width - 2, width * vm.sourceTime / max(1, vm.total)))
                     }.frame(width: width, height: 38)
                         .contentShape(Rectangle())
-                        .gesture(DragGesture(minimumDistance: 0).onChanged { value in vm.seek(value.location.x / width * vm.total, autoplay: false) })
+                        .gesture(DragGesture(minimumDistance: 0)
+                            .onChanged { value in vm.seek(value.location.x / width * vm.total, autoplay: false, exact: false) }
+                            .onEnded { value in vm.seek(value.location.x / width * vm.total, autoplay: false) })
                 }
             }.frame(height: 48).accessibilityLabel("Match timeline")
             HStack { Text("0:00"); Spacer(); Text(formatTime(vm.total)) }.font(.caption).foregroundStyle(.secondary)

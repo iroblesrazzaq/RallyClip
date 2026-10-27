@@ -84,3 +84,14 @@ public enum PointMath {
         return cursor
     }
 }
+
+/// Camera clips in a chosen folder, in natural name order. Skips hidden files
+/// (the ._ AppleDouble twins Finder writes on exFAT cards) and containers
+/// AVFoundation cannot play (.mkv/.avi/.mts import through the web GUI only).
+public enum FolderClips {
+    public static let extensions: Set<String> = ["mp4", "mov", "m4v"]
+    public static func select(_ urls: [URL]) -> [URL] {
+        urls.filter { extensions.contains($0.pathExtension.lowercased()) && !$0.lastPathComponent.hasPrefix(".") }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+    }
+}

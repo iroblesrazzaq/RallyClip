@@ -19,6 +19,7 @@ final class AppModel: ObservableObject {
     private var jobID: String?
     private var monitor: Task<Void, Never>?
     var busy: Bool { importing || jobID != nil }
+    private var cancelRequested = false
 
     func navigate(to id: String?) {
         guard id != selected else { return }
@@ -51,21 +52,20 @@ final class AppModel: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task {
             do {
-                let urls = folder ? try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
-                    // Skip hidden files such as the ._ AppleDouble twins Finder writes on exFAT cards.
-                    .filter { $0.pathExtension.lowercased() == "mp4" && !$0.lastPathComponent.hasPrefix(".") }
-                    .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending } : [url]
-                guard !urls.isEmpty else { throw RallyError.message("That folder contains no MP4 clips.") }
+                let urls = folder ? FolderClips.select(try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) : [url]
+                guard !urls.isEmpty else { throw RallyError.message("That folder contains no MP4, MOV or M4V clips.") }
                 try await beginImport(urls, name: url.deletingPathExtension().lastPathComponent)
             } catch { self.error = error.localizedDescription }
         }
     }
     func beginImport(_ urls: [URL], name: String) async throws {
         guard !busy, let backend else { return }
-        importing = true
+        importing = true; cancelRequested = false
         defer { importing = false }
         jobID = try await backend.importMatch(paths: urls.map(\.path), name: name)
         job = nil
+        // Cancel pressed during "Checking footage…": the job only has an id now.
+        if cancelRequested, let id = jobID { cancelRequested = false; try await backend.cancel(id) }
         monitor = Task {
             do {
                 while let id = jobID, !Task.isCancelled {
@@ -85,6 +85,7 @@ final class AppModel: ObservableObject {
         }
     }
     func cancel() {
+        if importing && jobID == nil { cancelRequested = true; return }
         guard let id = jobID, let backend else { return }
         Task { do { try await backend.cancel(id) } catch { self.error = error.localizedDescription } }
     }

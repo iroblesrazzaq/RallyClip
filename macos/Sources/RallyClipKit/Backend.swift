@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 public actor Backend {
@@ -38,7 +39,12 @@ public actor Backend {
     public func sources(_ id: String) async throws -> [Source] {
         struct Response: Decodable { let sources: [Source] }
         let response: Response = try await request("api/native/library/\(id)/sources")
-        return response.sources
+        var sources = response.sources
+        // The service reports 0 when the container has no duration metadata.
+        for i in sources.indices where sources[i].duration_s <= 0 {
+            sources[i].duration_s = try await AVURLAsset(url: URL(fileURLWithPath: sources[i].path)).load(.duration).seconds
+        }
+        return sources
     }
     public func points(_ id: String) async throws -> SegmentResponse { try await request("api/library/\(id)/segments") }
     public func save(_ points: [Point], id: String) async throws -> SegmentResponse {

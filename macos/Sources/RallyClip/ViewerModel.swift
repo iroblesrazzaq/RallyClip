@@ -95,14 +95,16 @@ final class ViewerModel: ObservableObject {
         } catch is CancellationError { }
         catch { if ticket == generation { self.error = error.localizedDescription; loading = false } }
     }
-    func seek(_ time: Double, autoplay: Bool? = nil) {
+    /// exact: false while scrubbing, so each drag step decodes from a nearby keyframe.
+    func seek(_ time: Double, autoplay: Bool? = nil, exact: Bool = true) {
         guard time.isFinite else { return }
         seekGeneration += 1; let ticket = seekGeneration
         let source = min(total, max(0, time))
         let target = pointOnly && !editing ? PointMath.playbackTime(at: source, points: playbackPoints) : source
         let resume = autoplay ?? playing
         if !resume { player.pause(); playing = false }
-        player.seek(to: CMTime(seconds: target, preferredTimescale: 60000), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+        let tolerance = exact ? CMTime.zero : CMTime(seconds: 0.5, preferredTimescale: 600)
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 60000), toleranceBefore: tolerance, toleranceAfter: tolerance) { [weak self] finished in
             Task { @MainActor [weak self] in
                 guard let self, ticket == self.seekGeneration else { return }
                 if finished && resume { self.player.play() }
