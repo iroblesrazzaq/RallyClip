@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -121,7 +122,7 @@ def test_hard_constraints_section_comes_from_agents_md():
 
 
 def test_prompt_template_formats():
-    keys = ("diff_path", "base", "merge_base", "head", "files_changed", "constraints")
+    keys = ("diff_path", "base", "merge_base", "head", "files_changed", "constraints", "rejected")
     ctx = {k: f"<<{k}>>" for k in keys}
     prompt = review.PROMPT_FILE.read_text(encoding="utf-8").format(lens="<<lens>>", lens_desc="<<desc>>", **ctx)
     for value in [*ctx.values(), "<<lens>>", "<<desc>>"]:
@@ -141,7 +142,7 @@ def test_run_cursor_tolerates_null_fields(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(cmd, 0, stdout=envelope, stderr="")
 
     monkeypatch.setattr(review, "run_capped", fake_run)
-    ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints")}
+    ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints", "rejected")}
     ctx["diff_path"] = tmp_path / "diff.patch"
     [f] = review.run_cursor(_ROOT, tmp_path, ctx, "tests", "m", 5)
     assert f == {"reviewer": "cursor:m", "lens": "tests", "file": "a.py", "line": 7,
@@ -159,7 +160,7 @@ def test_run_cursor_rejects_array_without_finding_objects(monkeypatch, tmp_path)
     result = 'BEGIN_FINDINGS\n["no issues found", 3]\nEND_FINDINGS'
     envelope = json.dumps({"type": "result", "is_error": False, "result": result})
     monkeypatch.setattr(review, "run_capped", lambda cmd, *a, **kw: subprocess.CompletedProcess(cmd, 0, envelope, ""))
-    ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints")}
+    ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints", "rejected")}
     with pytest.raises(ValueError, match="no finding objects"):
         review.run_cursor(_ROOT, tmp_path, ctx, "tests", "m", 5)
 
@@ -196,7 +197,7 @@ def test_run_cursor_retries_once_on_retriable_error(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(cmd, 0, stdout=ok, stderr="")
 
     monkeypatch.setattr(review, "run_capped", fake_run)
-    ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints")}
+    ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints", "rejected")}
     assert review.run_cursor(_ROOT, tmp_path, ctx, "tests", "m", 5) == []
     assert len(calls) == 2
 
@@ -213,7 +214,7 @@ def test_run_cursor_retry_is_bounded(monkeypatch, tmp_path, stderr, expected_cal
         return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=stderr)
 
     monkeypatch.setattr(review, "run_capped", fake_run)
-    ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints")}
+    ctx = {k: "x" for k in ("diff_path", "base", "merge_base", "head", "files_changed", "constraints", "rejected")}
     with pytest.raises(RuntimeError, match="agent exited 1"):
         review.run_cursor(_ROOT, tmp_path, ctx, "tests", "m", 5)
     assert len(calls) == expected_calls
@@ -314,6 +315,164 @@ def test_main_rejects_out_inside_repo(branch_repo, monkeypatch, capsys):
     assert review.main(argv) == 1
     assert "--out must be outside the repo" in capsys.readouterr().err
     assert not (branch_repo / "review-out").exists()
+
+
+def _commit(repo, name):
+    (repo / name).write_text("y = 2\n")
+    for args in (("add", "."), ("commit", "-qm", name)):
+        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+                       cwd=repo, check=True, capture_output=True)
+
+
+def _round(tmp_path, n, triage=None, extra=()):
+    out = tmp_path / f"out{n}"
+    code = review.main(["--base", "base", "--reviewers", "greptile", "--out", str(out), *extra])
+    if triage is not None:
+        (out / "triage.json").write_text(json.dumps(triage))
+    return code, out
+
+
+def _high(file="a.py", line=1):
+    return {**_finding(file), "line": line, "severity": "high"}
+
+
+def test_rounds_stop_at_cap(branch_repo, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [_high()])
+    for n in range(1, review.MAX_ROUNDS + 1):
+        code, _ = _round(tmp_path, n, triage={"1": "fixed in abc"})
+        assert code == 0
+        _commit(branch_repo, f"fix{n}.py")
+    assert _round(tmp_path, 9)[0] == 4
+    assert "round cap reached" in capsys.readouterr().err
+    assert _round(tmp_path, 10, extra=["--reset"])[0] == 0  # only when the user asks
+
+
+def test_reset_clears_state_even_if_the_run_fails(branch_repo, tmp_path, monkeypatch):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [])
+    _round(tmp_path, 1, triage={})
+    _commit(branch_repo, "fix.py")
+    assert _round(tmp_path, 2)[0] == 4  # no confirmed high
+    def boom(*a):
+        raise RuntimeError("timeout")
+    monkeypatch.setattr(review, "run_greptile", boom)
+    assert _round(tmp_path, 3, extra=["--reset"])[0] == 2
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [])
+    assert _round(tmp_path, 4)[0] == 0
+
+
+@pytest.mark.parametrize("found, outcome", [([_finding()], "fixed in abc"), ([_high()], "rejected: wrong"),
+                                            ([], None)])
+def test_rounds_stop_early_without_confirmed_high(branch_repo, tmp_path, monkeypatch, capsys, found, outcome):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: found)
+    assert _round(tmp_path, 1, triage={"1": outcome} if found else {})[0] == 0
+    _commit(branch_repo, "fix.py")
+    monkeypatch.setattr(review, "run_greptile", lambda *a: pytest.fail("reviewer must not run"))
+    assert _round(tmp_path, 2)[0] == 4
+    assert "no confirmed high/P1" in capsys.readouterr().err
+
+
+def test_clean_round_after_a_fixed_high_stops(branch_repo, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [_high()])
+    assert _round(tmp_path, 1, triage={"1": "fixed in abc"})[0] == 0
+    _commit(branch_repo, "fix1.py")
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [_finding()])
+    assert _round(tmp_path, 2, triage={"1": "rejected: fine"})[0] == 0
+    _commit(branch_repo, "fix2.py")
+    assert _round(tmp_path, 3)[0] == 4
+    assert "round 2 had no confirmed high/P1" in capsys.readouterr().err
+
+
+def test_next_round_needs_triage_and_a_new_head(branch_repo, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [_high()])
+    _, out1 = _round(tmp_path, 1)
+    assert _round(tmp_path, 2)[0] == 1
+    assert "triage round 1 first" in capsys.readouterr().err
+    (out1 / "triage.json").write_text(json.dumps({"1": "confirmed"}))
+    assert _round(tmp_path, 2)[0] == 1
+    assert "HEAD is unchanged" in capsys.readouterr().err
+    _commit(branch_repo, "fix.py")
+    assert _round(tmp_path, 2)[0] == 0
+
+
+def test_rejected_findings_reach_prompt_and_mark_repeats(branch_repo, tmp_path, monkeypatch):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [_high(), {**_finding("b.py"), "claim": "old claim"}])
+    _round(tmp_path, 1, triage={"1": "fixed in abc", "2": "rejected: pre-existing"})
+    _commit(branch_repo, "fix.py")
+    prompts = []
+
+    def cursor(root, out, ctx, *a):
+        prompts.append(review.PROMPT_FILE.read_text().format(lens="x", lens_desc="y", **ctx))
+        return [{**_finding("b.py"), "line": 8}, _finding("c.py")]
+
+    monkeypatch.setattr(review, "run_cursor", cursor)
+    out = tmp_path / "out2"
+    assert review.main(["--base", "base", "--lenses", "tests", "--out", str(out)]) == 0
+    assert "b.py:1 old claim -> rejected: pre-existing" in prompts[0]
+    assert "a.py:1" not in prompts[0]  # fixed findings are not sent back
+    report = json.loads((out / "findings.json").read_text())
+    assert report["round"] == 2
+    repeats = {f["file"]: f.get("repeat_of") for f in report["findings"]}
+    assert repeats["b.py"] == "round 1 #2: rejected: pre-existing" and repeats["c.py"] is None
+
+
+def test_round_where_every_reviewer_failed_does_not_count(branch_repo, tmp_path, monkeypatch):
+    def boom(*a):
+        raise RuntimeError("timeout")
+
+    monkeypatch.setattr(review, "run_greptile", boom)
+    assert _round(tmp_path, 1)[0] == 2
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [])
+    code, out = _round(tmp_path, 2)
+    assert code == 0 and json.loads((out / "findings.json").read_text())["round"] == 1
+
+
+def test_next_round_refuses_incomplete_triage_and_gone_output(branch_repo, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [_high(), _finding("b.py")])
+    _, out1 = _round(tmp_path, 1, triage={"1": "fixed in abc"})
+    _commit(branch_repo, "fix.py")
+    assert _round(tmp_path, 2)[0] == 1
+    assert "no outcome for finding(s) 2" in capsys.readouterr().err
+    (out1 / "triage.json").write_text('["fixed in abc"]')
+    assert _round(tmp_path, 2)[0] == 1
+    assert "must be a JSON object" in capsys.readouterr().err
+    shutil.rmtree(out1)
+    assert _round(tmp_path, 2)[0] == 1
+    assert "is gone" in capsys.readouterr().err
+
+
+def test_corrupt_state_and_reused_out_are_errors(branch_repo, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [_high()])
+    _, out1 = _round(tmp_path, 1, triage={"1": "fixed in abc"})
+    _commit(branch_repo, "fix.py")
+    argv = ["--base", "base", "--reviewers", "greptile", "--out", str(out1)]
+    assert review.main(argv) == 1
+    assert "earlier round's findings" in capsys.readouterr().err
+    branch = review.git(branch_repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    review.state_path(branch_repo, branch).write_text("{not json")
+    assert _round(tmp_path, 2)[0] == 1
+    assert "cannot read earlier review rounds" in capsys.readouterr().err
+
+
+def test_state_file_names_do_not_collide():
+    root = _ROOT
+    assert review.state_path(root, "feat/foo") != review.state_path(root, "feat-foo")
+
+
+def test_repeat_needs_matching_lines():
+    old = {"file": "a.py", "line": None, "claim": "c", "outcome": "rejected: x", "round": 1, "id": 1}
+    assert review.repeat_of({"file": "a.py", "line": 40}, [old]) is None
+    assert review.repeat_of({"file": "a.py", "line": None}, [old]) is old
+    assert review.repeat_of({"file": "a.py", "line": 5}, [{**old, "line": 12}]) is not None
+    assert review.repeat_of({"file": "a.py", "line": 40}, [{**old, "line": 12}]) is None
+    assert review.repeat_of({"file": "b.py", "line": 12}, [{**old, "line": 12}]) is None
+
+
+def test_round_state_lives_in_git_dir_not_worktree(branch_repo, tmp_path, monkeypatch):
+    monkeypatch.setattr(review, "run_greptile", lambda *a: [])
+    assert _round(tmp_path, 1)[0] == 0
+    assert review.state_path(branch_repo, "feat/x").parent == branch_repo / ".git" / "rallyclip-review"
+    assert subprocess.run(["git", "status", "--porcelain"], cwd=branch_repo,
+                          capture_output=True, text=True).stdout == ""
 
 
 def test_main_ctrl_c_stops_reviewers(branch_repo, tmp_path, monkeypatch):
