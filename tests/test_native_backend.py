@@ -1,3 +1,4 @@
+import json
 import re
 from types import SimpleNamespace
 
@@ -73,3 +74,30 @@ def test_missing_originals_are_reported_before_playback(service):
     result = client.get("/api/native/library/match/sources", headers={"Authorization": f"Bearer {TOKEN}"}, base_url="http://127.0.0.1")
     assert result.status_code == 409
     assert "Reconnect" in result.json["error"]
+    assert "missing-original.mp4" in result.json["error"]
+
+
+def test_folder_match_sources_come_from_the_manifest_not_the_proxy(service):
+    client, _, root = service
+    item = root / "match"
+    item.mkdir()
+    (item / "source.mp4").touch()  # the 720p analysis proxy
+    originals = [root / "GX010001.MP4", root / "GX020001.MP4"]
+    for path in originals:
+        path.touch()
+    manifest = [{"path": str(originals[0]), "name": originals[0].name, "start_s": 0.0, "duration_s": 40.0},
+                {"path": str(originals[1]), "name": originals[1].name, "start_s": 40.0, "duration_s": 12.5}]
+    (item / "sources.json").write_text(json.dumps({"version": 1, "sources": manifest}))
+    result = client.get("/api/native/library/match/sources", headers={"Authorization": f"Bearer {TOKEN}"}, base_url="http://127.0.0.1")
+    assert result.status_code == 200
+    assert result.json["sources"] == manifest
+
+
+def test_single_video_match_plays_its_source_from_zero(service):
+    client, _, root = service
+    item = root / "match"
+    item.mkdir()
+    (item / "source.mp4").touch()
+    result = client.get("/api/native/library/match/sources", headers={"Authorization": f"Bearer {TOKEN}"}, base_url="http://127.0.0.1")
+    assert result.status_code == 200
+    assert result.json["sources"] == [{"path": str(item / "source.mp4"), "start_s": 0.0, "duration_s": 30}]

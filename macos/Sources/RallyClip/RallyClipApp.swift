@@ -67,9 +67,7 @@ struct SettingsView: View {
             LabeledContent("Processing", value: "On this Mac")
             LabeledContent("Playback", value: "Native AVFoundation")
             Button("Show Saved Matches in Finder") {
-                let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                    .appendingPathComponent("RallyClip/library")
-                NSWorkspace.shared.open(root)
+                NSWorkspace.shared.open(BackendProcess.dataRoot.appendingPathComponent("library"))
             }
             Text("Keep original camera footage available. Camera-folder imports reference those files for full-quality playback and export.")
                 .font(.callout).foregroundStyle(.secondary)

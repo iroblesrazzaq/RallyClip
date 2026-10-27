@@ -52,7 +52,8 @@ final class AppModel: ObservableObject {
         Task {
             do {
                 let urls = folder ? try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
-                    .filter { $0.pathExtension.lowercased() == "mp4" }
+                    // Skip hidden files such as the ._ AppleDouble twins Finder writes on exFAT cards.
+                    .filter { $0.pathExtension.lowercased() == "mp4" && !$0.lastPathComponent.hasPrefix(".") }
                     .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending } : [url]
                 guard !urls.isEmpty else { throw RallyError.message("That folder contains no MP4 clips.") }
                 try await beginImport(urls, name: url.deletingPathExtension().lastPathComponent)

@@ -8,10 +8,15 @@ final class BackendProcess {
     private var readyDirectory: URL?
     private var logHandle: FileHandle?
 
+    /// Data root for jobs and saved matches; RALLYCLIP_NATIVE_DATA_DIR isolates it.
+    nonisolated static var dataRoot: URL {
+        ProcessInfo.processInfo.environment["RALLYCLIP_NATIVE_DATA_DIR"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("RallyClip")
+    }
+
     func start() async throws -> Backend {
         let environment = ProcessInfo.processInfo.environment
-        let root = environment["RALLYCLIP_NATIVE_DATA_DIR"].map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("RallyClip")
+        let root = Self.dataRoot
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("rallyclip-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,

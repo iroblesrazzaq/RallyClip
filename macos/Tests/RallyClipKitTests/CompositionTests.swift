@@ -64,5 +64,17 @@ final class CompositionTests: XCTestCase {
             _ = try await CompositionBuilder.build(sources: [Source(path: "/missing.mp4", start: 0, duration: 2)], points: [Point(start: 0, end: 1)])
             XCTFail("Missing sources must not produce a silent empty composition")
         } catch { XCTAssertTrue(error.localizedDescription.contains("Reconnect")) }
+
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let a = root.appendingPathComponent("a.mp4"), b = root.appendingPathComponent("b.mp4")
+        try await clip(at: a, color: 50); try await clip(at: b, color: 200)
+        // A 2 s gap between the clips: the point is 3 s long but only 1 s is on disk.
+        let gapped = [Source(path: a.path, start: 0, duration: 2), Source(path: b.path, start: 4, duration: 2)]
+        do {
+            _ = try await CompositionBuilder.build(sources: gapped, points: [Point(start: 1.5, end: 4.5)])
+            XCTFail("A point the clips do not cover must not produce a shorter composition")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("do not cover")) }
     }
 }
