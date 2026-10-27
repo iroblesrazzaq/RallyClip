@@ -6,7 +6,8 @@ import numpy as np
 import pytest
 
 from extraction.crop_pass import crop_frame, crop_pixels, crop_to_frame, merge_detections
-from preprocessing.court_lines import compute_court_geometry, decode, sample_frames
+from preprocessing import court_lines
+from preprocessing.court_lines import COURT_M, CourtLineModel, compute_court_geometry, decode, sample_frames
 from preprocessing.data_preprocessor import DataPreprocessor
 from preprocessing.netline_slots import CourtGeometry
 from rallyclip_core.contracts import UnsupportedPipelineError
@@ -176,3 +177,91 @@ def test_court_geometry_is_none_when_the_video_cannot_be_read(tmp_path):
     bad.write_bytes(b"not a video")
     # A court failure must fall back to classic slots, not abort the run.
     assert compute_court_geometry(str(bad), str(tmp_path / "missing.onnx")) is None
+
+
+def _court_px(uv):
+    return np.array([960 + 50 * uv[0], 600 - 20 * uv[1]])
+
+
+def test_court_scales_to_out_size_and_replaces_a_far_off_net_point(monkeypatch):
+    # decode() returns the six points as fractions of the line map; court() owns the rest.
+    points = np.array([_court_px(uv) / (1920, 1080) for uv in COURT_M])
+    points[4, 1] += 0.1  # net_left 108 px off the corner-implied net at 1080p
+    monkeypatch.setattr(court_lines, "decode", lambda probs: (np.ones(5, bool), points.copy(), np.ones(6, bool)))
+    model = CourtLineModel.__new__(CourtLineModel)
+    model.line_probs = lambda frames: None
+    frames_4k = [np.zeros((2160, 3840, 3), np.uint8)]
+
+    out = model.court(frames_4k, out_size=(1920, 1080))
+
+    assert (out["width"], out["height"]) == (1920, 1080)
+    np.testing.assert_allclose(out["points_px"]["near_left"], _court_px(COURT_M[0]), atol=0.1)
+    assert out["net_source"] == ["corners", "model"]
+    np.testing.assert_allclose(out["net_line_px"], [_court_px(COURT_M[4]), _court_px(COURT_M[5])], atol=0.01)
+    hm = np.array(out["homography_px_to_m"])
+    far_right = hm @ np.array([*_court_px(COURT_M[3]), 1.0])
+    np.testing.assert_allclose(far_right[:2] / far_right[2], COURT_M[3], atol=1e-3)
+    # Without out_size the points are in the frames' own pixels.
+    np.testing.assert_allclose(model.court(frames_4k)["net_line_px"][1], 2 * _court_px(COURT_M[5]), atol=0.01)
+
+
+def test_netline_manifest_wires_court_geometry_and_crop_pass(tmp_path, monkeypatch):
+    import json
+
+    (tmp_path / "court.onnx").write_bytes(b"")
+    crop_window = [0.2, 0.0, 0.8, 0.5]
+    (tmp_path / "manifest.json").write_text(json.dumps({"feature_pipeline": {
+        "slot_mode": "netline", "court_model_file": "court.onnx", "crop_window": crop_window}}))
+    hm = PX_TO_M.tolist()
+    seen = {}
+
+    def fake_geometry(video_path, model_path, out_size=None, providers=None):
+        seen["court"] = (model_path, out_size)
+        return {"net_line_px": [[686.0, 600.0], [1234.0, 600.0]], "homography_px_to_m": hm}
+
+    monkeypatch.setattr(court_lines, "compute_court_geometry", fake_geometry)
+
+    class Pre(DataPreprocessor):
+        def __init__(self, **kwargs):
+            super().__init__(screen_width=1920, screen_height=1080)
+
+        def compute_court_mask(self, video_path):
+            return np.zeros((1080, 1920), np.uint8), None
+
+        def _source_frame_shape(self, video_path):
+            return 1080, 1920, 3
+
+        def iter_slot_players(self, pose_data, court_mask, src_width, src_height, geometry=None):
+            seen["geometry"] = geometry
+            return super().iter_slot_players(pose_data, court_mask, src_width, src_height, geometry)
+
+    class Extractor:
+        def __init__(self, **kwargs):
+            pass
+
+        def iter_pose_frames(self, **kwargs):
+            seen["crop_window"] = kwargs.get("crop_window")
+            frame = detections([box_at(0, -9)])
+            if kwargs.get("crop_window"):
+                frame["crop"] = detections([box_at(1, 11, h=50)])
+            yield frame
+
+    request = SimpleNamespace(
+        feature_set="v2_nearfar", manifest_path=str(tmp_path / "manifest.json"), model_path=str(tmp_path / "m.onnx"),
+        yolo_weights=str(tmp_path / "pose.onnx"), yolo_device=None, models_dir=str(tmp_path), screen_width=1920,
+        screen_height=1080, conf=0.25, video_path=str(tmp_path / "match.mp4"), start_time=0, duration=0, fps=5,
+        imgsz=960)
+    deps = SimpleNamespace(apply_pose_device=None, DataPreprocessor=Pre, PoseExtractor=Extractor, FeatureEngineer=None)
+
+    [(vec, _)] = list(build_feature_stream(request, deps, None, None))
+
+    assert seen["court"] == (str(tmp_path / "court.onnx"), (1920, 1080))
+    assert isinstance(seen["geometry"], CourtGeometry)
+    np.testing.assert_allclose(seen["geometry"].px_to_m, PX_TO_M)
+    assert seen["crop_window"] == tuple(crop_window)
+    # The far slot comes from the crop pass, so the far half is a real player.
+    stream = _pre().iter_slot_players([detections([box_at(0, -9)])], np.zeros((1080, 1920), np.uint8), 1920, 1080, GEOM)
+    [(no_far, _)] = list(_iter_v2_features(stream, "v2_nearfar", {}, 1920, 1080, 5.0))
+    assert vec.shape == (290,)
+    np.testing.assert_array_equal(vec[:145], no_far[:145])
+    assert not np.array_equal(vec[145:], no_far[145:])
