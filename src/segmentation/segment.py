@@ -240,6 +240,12 @@ def segment_video_sources(sources: Sequence[dict], intervals: List[Tuple[float, 
     )
 
 
+def _sized(frame, width: int, height: int):
+    if (frame.width, frame.height) != (width, height):
+        return frame.reformat(width=width, height=height)
+    return frame
+
+
 def _encode_at(out, out_v, frame, index: int, video_tb) -> int:
     """Encode frame as output picture `index`; return the next index."""
     frame.pts = index
@@ -279,8 +285,9 @@ def _write_cuts(pieces, output_path, encoder, crf, eps, video, audio, progress_c
                     v_done, a_done = False, in_a is None
                     # Slots count from the cut's first picture. As in the analysis proxy,
                     # a timestamp gap repeats the previous picture so the cut keeps its
-                    # elapsed time (and stays in sync with continuous audio).
-                    cut_base, first_t, previous = v_index, None, None
+                    # elapsed time (and stays in sync with continuous audio). A cut that
+                    # starts inside a gap opens on the picture held there (`before`).
+                    cut_base, first_t, previous, before = v_index, None, None, None
                     for frame in container.decode(*streams):
                         if v_done and a_done:
                             break
@@ -289,6 +296,8 @@ def _write_cuts(pieces, output_path, encoder, crf, eps, video, audio, progress_c
                         is_video = isinstance(frame, av.VideoFrame)
                         t = float(frame.pts * frame.time_base) - origin
                         if (v_done if is_video else a_done) or t < start_t - eps:
+                            if is_video and not v_done:
+                                before = frame
                             continue
                         if t > end_t + eps:
                             if is_video:
@@ -300,13 +309,16 @@ def _write_cuts(pieces, output_path, encoder, crf, eps, video, audio, progress_c
                             frame.pts = None
                             track.write(resampler.resample(frame))
                             continue
+                        if (frame.width, frame.height) != (width, height):
+                            frame = frame.reformat(width=width, height=height)
                         if first_t is None:
-                            first_t = t
+                            # More than a frame interval after the start: a gap.
+                            gap = before is not None and t - start_t > 1.5 / float(rate)
+                            first_t = start_t if gap else t
+                            previous = _sized(before, width, height) if gap else None
                         slot = cut_base + int((t - first_t) * float(rate) + 0.5)
                         if slot < v_index:
                             continue  # source is faster than the output rate
-                        if (frame.width, frame.height) != (width, height):
-                            frame = frame.reformat(width=width, height=height)
                         while v_index < slot:
                             v_index = _encode_at(out, out_v, previous, v_index, video_tb)
                         v_index = _encode_at(out, out_v, frame, v_index, video_tb)
@@ -316,6 +328,9 @@ def _write_cuts(pieces, output_path, encoder, crf, eps, video, audio, progress_c
                             if percent != reported:
                                 reported = percent
                                 progress_callback(percent)
+                    if first_t is None and before is not None:
+                        # The whole cut lies inside a gap: show the held picture.
+                        first_t, previous = start_t, _sized(before, width, height)
                     if previous is not None:
                         # A gap at the end of the cut: hold the last picture to its end.
                         while v_index < cut_base + int((end_t - first_t) * float(rate) + 0.5):

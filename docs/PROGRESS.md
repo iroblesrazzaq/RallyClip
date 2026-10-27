@@ -40,11 +40,14 @@ _Last updated: 2026-10-27 (session: lean large-video import, replaces #59/#60; m
 8. Cancel race: a cancel that lands before the worker handle is recorded now
    terminates the worker; a cancelled job dir is removed.
 9. Greptile fixes after merging main with #69: export cuts hold the previous
-   picture across timestamp gaps (as the proxy does); the proxy encodes a clip's
+   picture across timestamp gaps, also when a cut starts inside one (as the
+   proxy does); the proxy encodes a clip's
    audio only up to its decoded video span; a background export reports ready
    only while export.mp4 exists (a save in between cuts again); the viewer
    export button shows the progress of the match open now.
-10. Gates: see docs/testing.md.
+10. Review gate round 1 (Cursor 4 lenses + Greptile): cut-starts-in-gap fixed;
+    tests added for the folder pipeline handoff and `.MTS` discovery.
+11. Gates: see docs/testing.md.
 
 ## Next steps
 

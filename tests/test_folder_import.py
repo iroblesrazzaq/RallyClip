@@ -202,6 +202,23 @@ def test_export_holds_the_picture_across_a_timestamp_gap(tmp_path):
     assert abs(len(_audio(out)) - duration * RATE) <= 2048
 
 
+@pytest.mark.parametrize("cut, held_until", [((1.2, 2.5), 2.0), ((1.2, 1.8), 1.8)], ids=["starts-in-gap", "inside-gap"])
+def test_export_cut_starting_in_a_gap_opens_on_the_held_picture(tmp_path, cut, held_until):
+    clip = tmp_path / "gap.mp4"
+    _make_av(clip, [*range(10), *range(20, 30)], audio_s=3)
+    sources = [{"path": str(clip), "start_s": 0.0, "duration_s": 3.0}]
+    out = tmp_path / "export.mp4"
+    segment_video_sources(sources, [cut], str(out))
+
+    timed = _timed_lumas(out)
+    duration = timed[-1][0] + (timed[-1][0] - timed[-2][0])
+    # Within a frame: the clip averages ~6.7fps, and a cut includes its end picture.
+    assert abs(duration - (cut[1] - cut[0])) <= 0.25, (duration, timed)
+    # Until the gap ends the cut shows the picture the proxy holds there (pts 9).
+    assert all(abs(luma - 72) < 4 for at, luma in timed if at < held_until - cut[0] - 0.1), timed
+    assert abs(len(_audio(out)) - duration * RATE) <= 2048
+
+
 def test_audio_stays_locked_to_video_across_many_short_cuts(tmp_path, monkeypatch):
     import segmentation.segment as segment
 
@@ -286,7 +303,7 @@ def gui(tmp_path, monkeypatch):
 def test_folder_select_sorts_naturally_and_token_starts_one_job(gui, tmp_path, monkeypatch):
     folder = tmp_path / "card"
     folder.mkdir()
-    for name in ("clip10.MP4", "clip2.mp4", "._clip1.mp4", "notes.txt"):
+    for name in ("clip10.MP4", "clip2.mp4", "clip3.MTS", "._clip1.mp4", "notes.txt"):
         (folder / name).write_bytes(b"x")
     monkeypatch.setattr(gui, "_choose_match_folder", lambda: folder)
     started = []
@@ -294,12 +311,12 @@ def test_folder_select_sorts_naturally_and_token_starts_one_job(gui, tmp_path, m
     client = gui.app.test_client()
 
     picked = client.post("/api/folder/select").get_json()
-    assert picked["files"] == ["clip2.mp4", "clip10.MP4"]
+    assert picked["files"] == ["clip2.mp4", "clip3.MTS", "clip10.MP4"]
 
     assert client.post("/api/folder/start", json={"token": picked["token"]}).status_code == 200
     # A double-click (or replayed token) must not start the folder twice.
     assert client.post("/api/folder/start", json={"token": picked["token"]}).status_code == 400
-    assert started == [[folder / "clip2.mp4", folder / "clip10.MP4"]]
+    assert started == [[folder / "clip2.mp4", folder / "clip3.MTS", folder / "clip10.MP4"]]
 
 
 def test_folder_token_is_spent_by_a_failed_start(gui, tmp_path, monkeypatch):
