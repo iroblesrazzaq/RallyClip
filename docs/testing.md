@@ -16,8 +16,8 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-10-27, runtime v0.6.0 rebuilt on main after #64, macOS `.venv-train` py3.11):
-**611 passed, 1 skipped, 49 deselected, ~100s** with v0.6.0 weights fetched (after the #62 review rounds 1-3 and the homography sign fix). `tests/test_release_packaging.py` 21 passed;
+Last known (2026-10-27, native macOS on runtime v0.6.0, rebuilt on main after #64, macOS `.venv-train` py3.11):
+**606 passed, 6 skipped, 49 deselected, ~78s** (#62 alone: 603 passed) (some skip without local model artifacts). `tests/test_release_packaging.py` 21 passed;
 `tests/test_artifact_fetch.py` 6 passed; `tests/test_agent_review.py` 59 passed.
 (2026-10-27, large-video import: 594 passed, 49 deselected.)
 (2026-10-23, review round cap merged with main after #68: 542 passed, 16 skipped, 49 deselected.)
@@ -35,7 +35,7 @@ Last known (2026-10-27): exit 0 with `.venv-train`.
 
 ## Native macOS
 
-`swift test --package-path macos`: **5 passed** on 2026-10-07, including a
+`swift test --package-path macos`: **5 passed** on 2026-10-27 (also 2026-10-07), including a
 synthetic camera-boundary composition/export/frame-content test. Swift requires
 normal host access to its caches and media services.
 
