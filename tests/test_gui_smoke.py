@@ -751,8 +751,12 @@ def test_preview_window_generation_latency_benchmark(tmp_path, monkeypatch):
     assert elapsed < 10.0
 
 
-def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch):
+@pytest.mark.parametrize("folder", [False, True], ids=["file", "folder"])
+def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch, folder):
+    # folder=True: a folder job builds the analysis proxy at the upload path first,
+    # and its clip manifest reaches the library item (sources.json).
     from gui import app as gui_app
+    import segmentation.proxy as proxy
 
     calls: list[str] = []
     progress_snapshots = []
@@ -764,12 +768,28 @@ def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch):
     scaler_path.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(gui_app, "JOBS_DIR", tmp_path / "jobs")
     monkeypatch.setattr(gui_app, "LIBRARY_DIR", tmp_path / "library")
-    monkeypatch.setattr(gui_app, "_estimate_duration_seconds", lambda _path: 20.2)
+    # 20.2s in total: one file, or two 10.1s clips.
+    monkeypatch.setattr(gui_app, "_estimate_duration_seconds", lambda _path: 10.1 if folder else 20.2)
     monkeypatch.setattr(gui_app, "_resolve_yolo_weights", lambda _cfg: "yolov8n-pose.pt")
     monkeypatch.setattr(gui_app, "_resolve_model_paths", lambda _cfg: (model_path, scaler_path))
     monkeypatch.setattr(gui_app, "candidate_roots", lambda: [tmp_path])
     monkeypatch.setattr(gui_app, "apply_pose_device", lambda *args, **kwargs: "cpu")
-    monkeypatch.setattr(gui_app, "_persist_library_item", lambda **_kwargs: ("match-1", upload, tmp_path / "segments.csv"))
+    persisted = {}
+    monkeypatch.setattr(
+        gui_app,
+        "_persist_library_item",
+        lambda **kwargs: persisted.update(kwargs) or ("match-1", upload, tmp_path / "segments.csv"),
+    )
+    clips = [tmp_path / "GX010001.mp4", tmp_path / "GX020001.mp4"]
+    manifest = [{"path": str(c), "name": c.name, "start_s": 10.1 * i, "duration_s": 10.1} for i, c in enumerate(clips)]
+
+    def fake_proxy(paths, output_path, *, fps, progress_callback=None):
+        calls.append("proxy")
+        assert list(paths) == clips and output_path == upload and fps == 5
+        progress_callback(50)
+        return manifest
+
+    monkeypatch.setattr(proxy, "create_analysis_proxy", fake_proxy)
 
     class FakePreprocessor:
         def __init__(self, **_kwargs):
@@ -830,7 +850,8 @@ def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch):
         response = gui_app.app.test_client().get("/api/progress/job-1")
         assert response.status_code == 200
         progress_snapshots.append(response.get_json())
-        return np.zeros(len(rows), dtype=np.float32)
+        # The folder run finds one point, so its library item is persisted.
+        return np.ones(len(rows), dtype=np.float32) if folder else np.zeros(len(rows), dtype=np.float32)
 
     monkeypatch.setattr(gui_app, "DataPreprocessor", FakePreprocessor)
     monkeypatch.setattr(gui_app, "PoseExtractor", FakePoseExtractor)
@@ -848,7 +869,7 @@ def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch):
             "scaler_path": str(scaler_path),
         }
     )
-    job = gui_app._new_job_state("job-1", cfg)
+    job = gui_app._new_job_state("job-1", cfg, sources=clips if folder else None)
     job["paths"]["upload"] = str(upload)
     job["paths"]["job_dir"] = str(tmp_path / "jobs" / "job-1")
     gui_app.jobs.clear()
@@ -856,7 +877,13 @@ def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch):
 
     gui_app._run_pipeline("job-1")
 
-    assert job["status"] == "completed"
+    assert job["status"] == "completed", job["error"]
+    assert job["source_manifest"] == (manifest if folder else None)
+    if folder:
+        assert persisted["source_manifest"] == manifest
+    if folder:
+        assert calls.pop(0) == "proxy"
+        assert job["steps"]["proxy"]["status"] == "completed"
     assert calls == [
         "preprocess:init",
         "court:detect",
@@ -901,8 +928,10 @@ def test_library_video_export_generates_cut_on_demand(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     assert response.data == b"cut video"
-    assert calls == [(str(source), [(1.0, 3.0), (4.0, 5.0)], str(item_dir / "export.mp4"))]
+    # Encoded to a temp name, then renamed: a failed encode leaves no export.mp4.
+    assert calls == [(str(source), [(1.0, 3.0), (4.0, 5.0)], str(item_dir / "export.partial.mp4"))]
     assert (item_dir / "export.mp4").read_bytes() == b"cut video"
+    assert not (item_dir / "export.partial.mp4").exists()
 
 
 def test_frozen_data_root_is_none_when_not_frozen():

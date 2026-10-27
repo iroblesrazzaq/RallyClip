@@ -500,6 +500,44 @@ data/labels/metric, not optimization.** Do not re-run these:
   markers at a window edge are still trained on; frame metrics use un-stitched
   windows; the last partial window of a video is dropped.
 
+## 2026-10-22 — Large-video import rewritten lean (supersedes #59/#60)
+
+- **What:** Single-slot `pending_folder` token, popped under `jobs_lock` and
+  never restored (the page re-picks after an error/cancel). One re-encode path
+  for exports (no stream copy). Proxy spans come from decoded frames, ending at
+  the last frame's end time; folder clips must share resolution and fps.
+- **Why:** #59/#60 double-started on a replayed token, retried with a spent
+  token, broke B-frame stream copies, padded silence from container metadata,
+  and drifted a frame per clip boundary. Export re-stamps frames at one rate, so
+  mixed-fps folders would play at the wrong speed.
+- **Rejected:** Token map with TTL; restoring the token on preflight failure;
+  multi-track rejection in `video_validation` (would regress single uploads).
+
+## 2026-10-22 — Export generations instead of blocking saves; audio reserve
+
+- **What:** `_invalidate_library_export` bumps a per-item generation and unlinks
+  export.mp4 without taking the export lock; an export publishes only if the
+  generation is unchanged, else it cuts again from the new CSV. `AudioTrack.write`
+  leaves 250 ms unencoded so `pad_to` can always trim a cut's audio overrun.
+  Background exports share one slot.
+- **Why:** With minutes-long background exports, a points save would hang on the
+  lock. Encoding audio eagerly (new in this rewrite) let per-cut overruns pile up
+  to ~60 ms; main kept a whole cut in the FIFO, which is too much memory for
+  proxy clips.
+- **Rejected:** Timestamp-gap caps in the proxy (local files the user picked; the
+  gap is what the file claims); moving instead of copying large uploads (the
+  upload path is unchanged from main; folder import is the large-file route).
+
+## 2026-10-22 — Verified export seeks
+
+- **What:** `_seek_before` seeks, demuxes one packet to see where it landed, and
+  backs off (1s, 2s, 4s... to pts 0) until the first packet is a keyframe at or
+  before the cut start.
+- **Why:** MPEG-TS (.MTS, now a folder suffix) seeks by byte. A test clip with a
+  1s GOP landed 0.5s past a 1.4s target, silently dropping the cut's start; with
+  one keyframe it landed at EOF and the export had no video. MP4 seeks land
+  early, so they pass the check on the first try.
+
 ## 2026-10-23 — Review rounds are capped in review.py, not in the skill text
 
 - **What:** `review.py` keeps a per-branch round record in the git common dir and
