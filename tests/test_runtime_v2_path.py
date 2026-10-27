@@ -1,7 +1,6 @@
 """Runtime v2 path: far-court crop pass, court line decode, net-line slots, v2 features."""
 
 import numpy as np
-import pytest
 
 from extraction.crop_pass import crop_frame, crop_pixels, crop_to_frame, merge_detections
 from preprocessing.court_lines import decode
