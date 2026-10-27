@@ -1,15 +1,16 @@
 # PROGRESS — overwrite me at every session end
 
-_Last updated: 2026-10-23 (session: lean large-video import, replaces #59/#60; merged main after #68)._
+_Last updated: 2026-10-27 (session: lean large-video import, replaces #59/#60; merged main after #69)._
 
 ## Repo state
 
 - `main` has published app **v0.5.0**; inference artifact stays `artifact-rallyclip_v0.5.0`.
+  `artifact-rallyclip_v0.6.0` is a prerelease.
 - Review gate (#65), the cancel-during-hash fix (#66), the README court update
-  (#67) and the v0.6 training code (#68) are on main and merged into this
-  branch. `artifact-rallyclip_v0.6.0` is a prerelease.
-- Active work: `feat/large-video-import` (#64), a from-scratch rewrite of
-  #59/#60, which are closed.
+  (#67), the v0.6 training code (#68) and the review round cap (#69) are on main
+  and merged into this branch.
+- Open: #64 (this branch, large-video import; a from-scratch rewrite of #59/#60,
+  which are closed), #62 (runtime v0.6.0), #63 (native macOS).
 
 ## What shipped this session
 
@@ -38,12 +39,21 @@ _Last updated: 2026-10-23 (session: lean large-video import, replaces #59/#60; m
    folder preflight skips the length check when a clip reports no duration.
 8. Cancel race: a cancel that lands before the worker handle is recorded now
    terminates the worker; a cancelled job dir is removed.
-9. Gates (after merging main with #68): default **569 passed, 49 deselected**; golden parity 1
-   passed; `test_gui_playwright.py` 11 passed.
+9. Gates: see docs/testing.md (after merging main with #69).
 
 ## Next steps
 
 1. #64: the user merges.
-2. Rebase the Swift branch (#63) onto this: it uses `_start_folder_analysis_job`,
-   `_natural_filename_key` and `sources.json`, all kept.
+2. Rebase #62 onto main (it builds on #68), then the Swift branch (#63) onto
+   this: it uses `_start_folder_analysis_job`, `_natural_filename_key` and
+   `sources.json`, all kept.
 3. Not covered by automation: clicking the folder picker in the desktop app.
+4. Update the external driver scripts in `../training_data_netline`
+   (`cv_netline.py`, `final_train.py`, `decode_sweep.py`): they import
+   `gt_segments_from_targets` from the deleted `eval.seg_evaluator` (now
+   `eval.heatmap_evaluator`) and call `build_heatmap_model` positionally
+   (now `build_heatmap_model(train_cfg, input_size)`).
+5. Court-model training code and driver scripts are still outside git.
+6. Branches reviewed before the round cap have no round state; their next run
+   counts as round 1.
+7. Try a bigger YOLO pose model (yolov8s/m) after v0.6.0 ships.
