@@ -127,6 +127,13 @@ def test_v2_features_are_290_wide_and_drop_skipped_frames():
     out = list(_iter_v2_features(stream, "v2_nearfar", {}, 1920, 1080, 5.0))
     assert len(out) == 2
     assert all(vec.shape == (290,) and np.isfinite(vec).all() for vec, _ in out)
+    # The crop player fills the far half: without it only the near half matches.
+    no_far = {k: v for k, v in frame.items() if k != "crop"}
+    stream = _pre().iter_slot_players([no_far, {"annotation_status": -1}, no_far], mask, 1920, 1080, GEOM)
+    empty = list(_iter_v2_features(stream, "v2_nearfar", {}, 1920, 1080, 5.0))
+    for (vec, _), (vec_empty, _) in zip(out, empty):
+        np.testing.assert_array_equal(vec[:145], vec_empty[:145])
+        assert not np.array_equal(vec[145:], vec_empty[145:])
 
 
 def test_v2_features_honour_manifest_drops():
