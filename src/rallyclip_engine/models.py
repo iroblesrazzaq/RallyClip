@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Iterable, List, Optional
-
-import numpy as np
+from typing import List, Optional
 
 from rallyclip_core.contracts import (
     CancelCheck,
@@ -76,6 +74,13 @@ def build_feature_stream(
             raise UnsupportedPipelineError(
                 f"This model declares feature_set='{feature_set}', which the runtime "
                 f"feature pipeline does not implement (have: v1, {', '.join(sorted(FEATURE_SETS))})."
+            )
+        missing = [s for s in FEATURE_SETS[feature_set].slots if s not in RUNTIME_SLOTS]
+        if missing:
+            # The runtime fills near/far only; other slots would be all-zero rows.
+            raise UnsupportedPipelineError(
+                f"This model declares feature_set='{feature_set}' with slots {missing}, "
+                f"which the runtime does not produce (have: {', '.join(RUNTIME_SLOTS)})."
             )
     slot_mode = str(feature_cfg.get("slot_mode") or "classic")
     if slot_mode not in {"classic", "netline"} or (slot_mode == "netline" and feature_set == "v1"):
@@ -174,6 +179,10 @@ def build_feature_stream(
     return feature_stream
 
 
+# Player slots DataPreprocessor.iter_slot_players fills.
+RUNTIME_SLOTS = ("near", "far")
+
+
 def _manifest_path(request: RunRequest) -> Optional[Path]:
     # The GUI does not pass manifest_path; the manifest sits next to the model.
     if request.manifest_path is not None:
@@ -215,6 +224,8 @@ def _court_geometry(request: RunRequest, feature_cfg: dict, reference_size):
 
 def _iter_v2_features(slot_stream, feature_set: str, feature_cfg: dict, width: int, height: int, fps: float):
     """(annotation_status, {slot: player}) records -> (feature_vector, target) for kept frames."""
+    import numpy as np
+
     from features.v2 import FEATURE_SETS, V2FeatureStream, kept_columns, pack_player
 
     builder = FEATURE_SETS[feature_set](screen_width=width, screen_height=height)

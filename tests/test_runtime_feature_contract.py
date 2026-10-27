@@ -166,3 +166,19 @@ def test_runtime_reappearing_player_resets_motion_until_history_is_contiguous(tm
     assert far_frame_3[SPEED] == -1.0
     assert far_frame_3[ACCELERATION_MAGNITUDE] == -1.0
     assert far_frame_3[BOX_CONFIDENCE] == make_player("far", 2)["box_conf"]
+
+
+V060 = ROOT / "models" / "rallyclip_v0.6.0"
+
+
+@pytest.mark.skipif(not (V060 / "scaler.json").is_file(), reason="weights not fetched (run python scripts/fetch_artifact.py)")
+def test_v060_scaler_width_matches_the_runtime_v2_features():
+    from features.v2 import FEATURE_SETS, kept_columns
+
+    pipeline = json.loads((V060 / "manifest.json").read_text(encoding="utf-8"))["feature_pipeline"]
+    builder = FEATURE_SETS[pipeline["feature_set"]](screen_width=1920, screen_height=1080)
+    width = builder.feature_dim()
+    if pipeline.get("drop_feature_groups") or pipeline.get("drop_slots"):
+        width = len(kept_columns(builder.slots, pipeline["drop_feature_groups"], pipeline["drop_slots"]))
+    scaler = json.loads((V060 / "scaler.json").read_text(encoding="utf-8"))
+    assert width == pipeline["feature_dim"] == len(scaler["mean"]) == len(scaler["scale"])

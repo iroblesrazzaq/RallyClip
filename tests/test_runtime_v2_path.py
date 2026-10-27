@@ -1,12 +1,16 @@
 """Runtime v2 path: far-court crop pass, court line decode, net-line slots, v2 features."""
 
+from types import SimpleNamespace
+
 import numpy as np
+import pytest
 
 from extraction.crop_pass import crop_frame, crop_pixels, crop_to_frame, merge_detections
-from preprocessing.court_lines import decode
+from preprocessing.court_lines import compute_court_geometry, decode, sample_frames
 from preprocessing.data_preprocessor import DataPreprocessor
 from preprocessing.netline_slots import CourtGeometry
-from rallyclip_engine.models import _iter_v2_features
+from rallyclip_core.contracts import UnsupportedPipelineError
+from rallyclip_engine.models import _iter_v2_features, build_feature_stream
 
 # Straight-on synthetic court in 1920x1080 reference pixels: x = 960 + 50u,
 # y = 600 - 20v (court meters), so the net (v = 0) sits at y = 600.
@@ -131,3 +135,37 @@ def test_v2_features_honour_manifest_drops():
     stream = _pre().iter_slot_players([frame], mask, 1920, 1080, GEOM)
     [(vec, _)] = list(_iter_v2_features(stream, "v2_nearfar", {"drop_slots": ["far"]}, 1920, 1080, 5.0))
     assert vec.shape == (145,)
+
+
+def test_runtime_rejects_a_feature_set_with_slots_it_does_not_fill(tmp_path):
+    # v2 has crop0/crop1 slots; the runtime only fills near/far, so those would be zeros.
+    request = SimpleNamespace(feature_set="v2", manifest_path=None, model_path=str(tmp_path / "model.onnx"))
+    with pytest.raises(UnsupportedPipelineError, match="crop0"):
+        build_feature_stream(request, None, None, None)
+
+
+def test_sample_frames_keeps_the_first_frame_at_each_seek_target(tmp_path):
+    av = pytest.importorskip("av")
+    path = tmp_path / "court.mp4"
+    with av.open(str(path), "w") as out:
+        stream = out.add_stream("mpeg4", rate=10)
+        stream.width, stream.height, stream.pix_fmt = 64, 48, "yuv420p"
+        stream.options = {"qscale": "1", "g": "4"}
+        for i in range(20):
+            img = np.full((48, 64, 3), 10 * i, np.uint8)
+            for packet in stream.encode(av.VideoFrame.from_ndarray(img, format="bgr24")):
+                out.mux(packet)
+        for packet in stream.encode():
+            out.mux(packet)
+
+    frames = sample_frames(str(path), (0.0, 0.5, 0.75))
+
+    # 2 s at 10 fps: targets 0.0, 1.0 and 1.5 s -> frames 0, 10 and 15, not the keyframe before.
+    assert [round(float(f.mean()) / 10) for f in frames] == [0, 10, 15]
+
+
+def test_court_geometry_is_none_when_the_video_cannot_be_read(tmp_path):
+    bad = tmp_path / "not_a_video.mp4"
+    bad.write_bytes(b"not a video")
+    # A court failure must fall back to classic slots, not abort the run.
+    assert compute_court_geometry(str(bad), str(tmp_path / "missing.onnx")) is None

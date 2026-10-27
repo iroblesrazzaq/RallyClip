@@ -17,7 +17,7 @@ Marked ``e2e``+``slow``; deselected from the default run. Run explicitly:
 
     pytest -m e2e tests/test_gui_e2e.py
 
-Skips cleanly when runtime deps or the shipped v0.5.0 ONNX artifact are absent.
+Skips cleanly when runtime deps or the shipped default ONNX artifact are absent.
 """
 from __future__ import annotations
 
@@ -31,7 +31,10 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
-MODEL_ONNX = REPO_ROOT / "models" / "rallyclip_v0.5.0" / "model.onnx"
+from runtime.defaults import DEFAULT_ARTIFACT_DIR  # noqa: E402
+
+ARTIFACT_DIR = REPO_ROOT / DEFAULT_ARTIFACT_DIR
+MODEL_ONNX = ARTIFACT_DIR / "model.onnx"
 
 pytest.importorskip("requests")
 pytest.importorskip("cv2")
@@ -62,7 +65,7 @@ pytestmark = [
     pytest.mark.slow,
     pytest.mark.skipif(
         not MODEL_ONNX.exists(),
-        reason="shipped v0.5.0 ONNX artifact missing (models/rallyclip_v0.5.0/model.onnx)",
+        reason=f"shipped ONNX artifact missing ({MODEL_ONNX}); run python scripts/fetch_artifact.py",
     ),
 ]
 
@@ -176,7 +179,8 @@ def test_config_defaults_contract(backend: BackendClient):
     payload = resp.json()
     defaults = payload["defaults"]
     assert defaults["fps"] == 5.0
-    assert defaults["feature_set"] == "v1"
+    manifest = json.loads((ARTIFACT_DIR / "manifest.json").read_text(encoding="utf-8"))
+    assert defaults["feature_set"] == manifest["feature_pipeline"]["feature_set"]
     assert payload["yolo_model"] == gui_app.FIXED_YOLO_MODEL
     assert defaults["yolo_size"] == "nano"
     assert "available_devices" in payload
