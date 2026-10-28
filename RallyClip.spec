@@ -20,7 +20,7 @@ with (_SPEC_DIR / "pyproject.toml").open("rb") as _fh:
 # Keep this string in lockstep with runtime.defaults.DEFAULT_ARTIFACT_DIR
 # (tests/test_release_packaging.py enforces that). Torch-free bundle: pose
 # runs on the ONNX in this folder (extraction.yolo_onnx_runner + onnxruntime).
-_DEFAULT_ARTIFACT_DIR = "models/rallyclip_v0.5.0"
+_DEFAULT_ARTIFACT_DIR = "models/rallyclip_v0.6.0"
 _BUNDLE_IDENTIFIER = "com.iroblesrazzaq.rallyclip"
 
 datas = [

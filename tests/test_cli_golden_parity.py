@@ -35,7 +35,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "golden_cli"
 CLIP = FIXTURE_DIR / "clip.mp4"
 GOLDEN_CSV = FIXTURE_DIR / "golden_segments.csv"
-ARTIFACT_DIR = REPO_ROOT / "models" / "rallyclip_v0.5.0"
+ARTIFACT_DIR = REPO_ROOT / "models" / "rallyclip_v0.6.0"
 # Two 5 fps frames: ORT/CPU start-edge jitter on the TCN hybrid decode.
 BOUNDARY_TOLERANCE_SEC = 0.5
 

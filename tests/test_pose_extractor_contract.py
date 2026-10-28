@@ -98,3 +98,40 @@ def test_pose_extractor_preserves_confidence_ranges(tmp_path, monkeypatch):
 
     assert np.all((frame["box_conf"] >= 0.0) & (frame["box_conf"] <= 1.0))
     assert np.all((frame["conf"] >= 0.0) & (frame["conf"] <= 1.0))
+
+
+def test_pose_extractor_crop_pass_adds_far_court_detections_in_frame_pixels(tmp_path, monkeypatch):
+    from extraction.crop_pass import CROP_OUT_SIZE, CROP_WINDOW, crop_to_frame, merge_detections
+
+    pose_module = import_pose_extractor_with_stubs(monkeypatch)
+    monkeypatch.setattr(pose_module.av, "open", lambda _path: _FakeContainer())
+    extractor = pose_module.PoseExtractor.__new__(pose_module.PoseExtractor)
+    extractor.model_path = "yolov8n-pose.pt"
+    extractor.model_dir = None
+    extractor.device = "cpu"
+    extractor.batch_size = 1
+    extractor.imgsz = 960
+    extractor.model = RecordingFakeYoloModel([fake_yolo_result(0)])
+    extractor.frame_iterator_pyav = lambda _path: iter(
+        [(np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8), 0.0)]
+    )
+
+    [frame] = list(extractor.iter_pose_frames(
+        video_path=str(tmp_path / "input.mp4"),
+        confidence_threshold=0.25,
+        duration_seconds=1,
+        target_fps=5,
+        crop_window=CROP_WINDOW,
+    ))
+
+    full_call, crop_call = extractor.model.predict_calls
+    assert full_call["source"][0].shape == (FRAME_HEIGHT, FRAME_WIDTH, 3)
+    assert crop_call["source"][0].shape == (CROP_OUT_SIZE[1], CROP_OUT_SIZE[0], 3)
+    res = fake_yolo_result(0)
+    boxes, _, kps, _ = merge_detections(
+        res.boxes.xyxy.numpy(), res.boxes.conf.numpy(), res.keypoints.xy.numpy(), res.keypoints.conf.numpy()
+    )
+    want_boxes, want_kps = crop_to_frame(boxes, kps, FRAME_WIDTH, FRAME_HEIGHT, CROP_WINDOW)
+    np.testing.assert_allclose(frame["crop"]["boxes"], want_boxes, rtol=1e-6)
+    np.testing.assert_allclose(frame["crop"]["keypoints"], want_kps, rtol=1e-6)
+    np.testing.assert_allclose(frame["boxes"], res.boxes.xyxy.numpy())

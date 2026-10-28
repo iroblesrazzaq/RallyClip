@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import List, Optional
 
 from rallyclip_core.contracts import (
     CancelCheck,
@@ -65,11 +65,26 @@ def build_feature_stream(
     the model head + decode, so this lives at module scope rather than in any one
     AnalysisModel.
     """
-    if str(request.feature_set) != "v1":
-        raise UnsupportedPipelineError(
-            f"This model declares feature_set='{request.feature_set}', but only 'v1' "
-            "is implemented in the runtime feature pipeline."
-        )
+    feature_set = str(request.feature_set)
+    feature_cfg = _manifest_feature_pipeline(request)
+    if feature_set != "v1":
+        from features.v2 import FEATURE_SETS
+
+        if feature_set not in FEATURE_SETS:
+            raise UnsupportedPipelineError(
+                f"This model declares feature_set='{feature_set}', which the runtime "
+                f"feature pipeline does not implement (have: v1, {', '.join(sorted(FEATURE_SETS))})."
+            )
+        missing = [s for s in FEATURE_SETS[feature_set].slots if s not in RUNTIME_SLOTS]
+        if missing:
+            # The runtime fills near/far only; other slots would be all-zero rows.
+            raise UnsupportedPipelineError(
+                f"This model declares feature_set='{feature_set}' with slots {missing}, "
+                f"which the runtime does not produce (have: {', '.join(RUNTIME_SLOTS)})."
+            )
+    slot_mode = str(feature_cfg.get("slot_mode") or "classic")
+    if slot_mode not in {"classic", "netline"} or (slot_mode == "netline" and feature_set == "v1"):
+        raise UnsupportedPipelineError(f"Unsupported slot_mode='{slot_mode}' for feature_set='{feature_set}'.")
 
     yolo_weights = request.yolo_weights
     if not Path(yolo_weights).is_absolute():
@@ -124,6 +139,15 @@ def build_feature_stream(
         _emit(progress_callback, "pose", int(3 + max(0.0, min(1.0, frac)) * 96), metadata=meta or {})
 
     src_height, src_width, _ = pre._source_frame_shape(str(request.video_path))
+    geometry = None
+    if slot_mode == "netline":
+        geometry = _court_geometry(request, feature_cfg, (int(request.screen_width), int(request.screen_height)))
+        _emit(progress_callback, "pose", 3)
+    pose_kwargs = {}
+    if geometry is not None:
+        from extraction.crop_pass import CROP_WINDOW
+
+        pose_kwargs["crop_window"] = tuple(feature_cfg.get("crop_window") or CROP_WINDOW)
     pose_stream = extractor.iter_pose_frames(
         video_path=str(request.video_path),
         confidence_threshold=float(request.conf),
@@ -133,7 +157,16 @@ def build_feature_stream(
         imgsz=int(request.imgsz),
         annotations_csv=None,
         progress_callback=pose_progress,
+        **pose_kwargs,
     )
+    if feature_set != "v1":
+        feature_stream = _iter_v2_features(
+            pre.iter_slot_players(pose_stream, court_mask, src_width, src_height, geometry),
+            feature_set, feature_cfg, int(request.screen_width), int(request.screen_height), float(request.fps),
+        )
+        _emit(progress_callback, "preprocess", 1)
+        _emit(progress_callback, "feature", 1)
+        return feature_stream
     preprocessed_stream = pre.iter_preprocess_frames(pose_stream, court_mask, src_width, src_height)
     fe = deps.FeatureEngineer(
         screen_width=int(request.screen_width),
@@ -144,6 +177,79 @@ def build_feature_stream(
     _emit(progress_callback, "preprocess", 1)
     _emit(progress_callback, "feature", 1)
     return feature_stream
+
+
+# Player slots DataPreprocessor.iter_slot_players fills.
+RUNTIME_SLOTS = ("near", "far")
+
+
+def _manifest_path(request: RunRequest) -> Optional[Path]:
+    # The GUI does not pass manifest_path; the manifest sits next to the model.
+    if request.manifest_path is not None:
+        return Path(request.manifest_path)
+    candidate = Path(request.model_path).parent / "manifest.json"
+    return candidate if candidate.exists() else None
+
+
+def _manifest_feature_pipeline(request: RunRequest) -> dict:
+    import json
+
+    path = _manifest_path(request)
+    if path is None or not path.exists():
+        return {}
+    try:
+        return dict(json.loads(path.read_text(encoding="utf-8")).get("feature_pipeline") or {})
+    except Exception:
+        return {}
+
+
+def _court_geometry(request: RunRequest, feature_cfg: dict, reference_size):
+    """Net line + homography in reference pixels, or None (classic slots fallback)."""
+    import logging
+
+    from preprocessing.court_lines import compute_court_geometry
+    from preprocessing.netline_slots import CourtGeometry
+
+    name = feature_cfg.get("court_model_file")
+    manifest = _manifest_path(request)
+    model = (manifest.parent if manifest else Path(request.model_path).parent) / str(name) if name else None
+    if model is None or not model.exists():
+        raise UnsupportedPipelineError(f"slot_mode=netline needs the court model; not found: {model}")
+    data = compute_court_geometry(str(request.video_path), str(model), out_size=reference_size)
+    if data is None:
+        logging.warning("No court geometry; falling back to classic near/far player slots.")
+        return None
+    return CourtGeometry.from_dict(data)
+
+
+def _iter_v2_features(slot_stream, feature_set: str, feature_cfg: dict, width: int, height: int, fps: float):
+    """(annotation_status, {slot: player}) records -> (feature_vector, target) for kept frames."""
+    import numpy as np
+
+    from features.v2 import FEATURE_SETS, V2FeatureStream, kept_columns, pack_player
+
+    builder = FEATURE_SETS[feature_set](screen_width=width, screen_height=height)
+    keep = None
+    drop_groups = tuple(feature_cfg.get("drop_feature_groups") or ())
+    drop_slots = tuple(feature_cfg.get("drop_slots") or ())
+    if drop_groups or drop_slots:
+        keep = kept_columns(builder.slots, drop_groups, drop_slots)
+    stream = V2FeatureStream(builder, 1.0 / fps, keep)
+    for status, players in slot_stream:
+        if status < 0:
+            continue
+        current = {}
+        for slot in builder.slots:
+            player = players.get(slot)
+            # Same float32 arrays + existence rule the training features read back
+            # from the preprocessed h5.
+            current[slot] = None if player is None else pack_player(
+                np.asarray(player["keypoints"], dtype=np.float32),
+                np.asarray(player["conf"], dtype=np.float32),
+                np.asarray(player["box"], dtype=np.float32),
+                np.float32(player.get("box_conf", -1.0)),
+            )
+        yield stream.step(current), status
 
 
 class AnalysisModel(ABC):

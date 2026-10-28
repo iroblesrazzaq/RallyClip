@@ -10,14 +10,14 @@
       "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
-      "evidence": "2026-10-22: 498 passed, 49 deselected (~50s) on training/v060-tcn-netline (macOS, .venv-train py3.11, pose weights fetched). With torch blocked from import: 449 passed, 11 skipped, no collection errors."
+      "evidence": "2026-10-27: 611 passed, 1 skipped, 49 deselected (~100s) on runtime v0.6.0 rebuilt on main (macOS, .venv-train py3.11, v0.6.0 weights fetched)."
     },
     {
       "id": "golden-cli-parity",
       "name": "CLI end-to-end golden parity on committed fixture clip (0.25s boundary tolerance)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_cli_golden_parity.py",
-      "evidence": "2026-10-22: 1 passed on training/v060-tcn-netline (v0.5.0 artifacts sha-verified against SHA256SUMS). Training-only changes; runtime output unchanged."
+      "evidence": "2026-10-27: 1 passed (~17s) on runtime v0.6.0 rebuilt on main; the fixture clip keeps its golden segments."
     },
     {
       "id": "compileall",

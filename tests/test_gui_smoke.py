@@ -791,6 +791,9 @@ def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch, fol
 
     monkeypatch.setattr(proxy, "create_analysis_proxy", fake_proxy)
 
+    # These fakes model the v1 feature path; the shipped manifest may be v2.
+    monkeypatch.setitem(gui_app.DEFAULT_CONFIG, "feature_set", "v1")
+
     class FakePreprocessor:
         def __init__(self, **_kwargs):
             calls.append("preprocess:init")
