@@ -35,6 +35,15 @@ class CourtGeometry:
     px_to_m: np.ndarray  # 3x3 homography, pixels -> court meters
     source_sha256: str = ""
 
+    def __post_init__(self) -> None:
+        # A homography is only fixed up to scale, sign included. findHomography
+        # sets H[2,2] = 1, so w > 0 at the image origin; when the horizon crosses
+        # the frame, the origin is beyond it and w < 0 over the whole court.
+        # Flip so w > 0 at the net, which is on the court by construction.
+        mid = (self.net_a + self.net_b) / 2
+        if (self.px_to_m @ np.array([mid[0], mid[1], 1.0]))[2] < 0:
+            self.px_to_m = -self.px_to_m
+
     @classmethod
     def from_dict(cls, data: dict, source_sha256: str = "") -> "CourtGeometry":
         if not data.get("net_line_px") or not data.get("homography_px_to_m"):
@@ -73,7 +82,8 @@ class CourtGeometry:
         return float(box[3]) > self.net_y_at((float(box[0]) + float(box[2])) / 2)
 
     def feet_to_court(self, box: np.ndarray) -> Optional[tuple[float, float]]:
-        """Feet (bottom-center) in court meters, or None at or beyond the horizon."""
+        """Feet (bottom-center) in court meters, or None at or beyond the horizon
+        (w > 0 on the court side; see __post_init__)."""
         x, y = (float(box[0]) + float(box[2])) / 2, float(box[3])
         u, v, w = self.px_to_m @ np.array([x, y, 1.0])
         if w <= 1e-9:

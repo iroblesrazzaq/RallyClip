@@ -27,6 +27,28 @@ def test_feet_to_court_round_trip():
     assert u == pytest.approx(2.5) and v == pytest.approx(9.0)
 
 
+def _perspective_box(u: float, v: float) -> np.ndarray:
+    """Feet at court meters (u, v) for a camera 20 m behind the net:
+    x = 960 + 800u/z, y = 300 + 6000/z with z = v + 20, so the horizon is y = 300."""
+    z = v + 20.0
+    x, y = 960 + 800 * u / z, 300 + 6000 / z
+    return np.array([x - 10, y - 40, x + 10, y], dtype=np.float32)
+
+
+def test_horizon_inside_the_frame_keeps_court_points():
+    # findHomography output (H[2,2] = 1): w = +1 at the origin, which is above
+    # the y = 300 horizon, so w < 0 on the whole court until the sign is fixed.
+    m_to_px = np.array([[800.0, 960.0, 960.0 * 20], [0.0, 300.0, 300.0 * 20 + 6000], [0.0, 1.0, 20.0]])
+    px_to_m = np.linalg.inv(m_to_px)
+    px_to_m /= px_to_m[2, 2]
+    half = 800 * 5.485 / 20
+    geom = CourtGeometry(np.array([960 - half, 600.0]), np.array([960 + half, 600.0]), px_to_m)
+    u, v = geom.feet_to_court(_perspective_box(1.0, 10.0))
+    assert u == pytest.approx(1.0) and v == pytest.approx(10.0)
+    assert pick_far(np.stack([_perspective_box(1.0, 10.0)]), None, geom) == 0
+    assert geom.feet_to_court(np.array([950, 200, 970, 250], dtype=np.float32)) is None  # above the horizon
+
+
 def test_pick_far_prefers_center_and_gates_the_far_half():
     boxes = np.stack([
         box_at(4.0, 11.0),   # far player, off-center

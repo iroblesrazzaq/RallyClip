@@ -10,7 +10,7 @@
       "name": "Default unit/contract suite (core purity, engine, api, cli, gui smoke, court deterministic, training units)",
       "status": "passing",
       "verification": "PYTHONPATH=src:tests $PY -m pytest -q -m \"not slow and not e2e\" -p no:cacheprovider",
-      "evidence": "2026-10-27: 610 passed, 1 skipped, 49 deselected (~80s) on runtime v0.6.0 rebuilt on main (macOS, .venv-train py3.11, v0.6.0 weights fetched)."
+      "evidence": "2026-10-27: 611 passed, 1 skipped, 49 deselected (~100s) on runtime v0.6.0 rebuilt on main (macOS, .venv-train py3.11, v0.6.0 weights fetched)."
     },
     {
       "id": "golden-cli-parity",
