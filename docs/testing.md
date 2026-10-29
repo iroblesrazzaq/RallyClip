@@ -17,7 +17,7 @@ PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovi
 ```
 
 Last known (2026-10-29, court mask from the court line model, classic detector and its 11 MB
-court fixtures removed): **610 passed, 1 skipped, 38 deselected, ~82s**.
+court fixtures removed, plus the ORT dylib filter test): **611 passed, 1 skipped, 38 deselected, ~81s**.
 (2026-10-27, native macOS on runtime v0.6.0, rebuilt on main after #64, macOS `.venv-train` py3.11):
 **625 passed, 1 skipped, 49 deselected, ~110s** (#70 alone: 611 passed) (some skip without local model artifacts). `tests/test_release_packaging.py` 25 passed (26 with the ORT dylib filter test, 2026-10-29);
 `tests/test_artifact_fetch.py` 6 passed; `tests/test_agent_review.py` 59 passed.

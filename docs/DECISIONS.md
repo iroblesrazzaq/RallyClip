@@ -597,6 +597,10 @@ data/labels/metric, not optimization.** Do not re-run these:
   detected (44), median IoU of the out region was 0.98. The worst disagreements
   were classic-detector errors (service line or a pickleball line taken as the
   baseline/sideline).
+- **Effect on v0.6.0 output (4 CV-val videos, CoreML, no test videos):** segment
+  F1 (IoU>=0.5) old -> new 0.902 -> 0.902, 0.757 -> 0.747 (one extra segment),
+  0.825 -> 0.825, 0.795 -> 0.795; mean 0.820 -> 0.817. 0.00-0.31% of 0.2 s
+  frames change rally/no-rally.
 - **Train/serve:** v0.6.0 was trained on classic masks; the runtime now uses
   line-model masks. Training court caches from the classic detector are
   recomputed (`detector.kind` check), and the preprocess fingerprint changed,
