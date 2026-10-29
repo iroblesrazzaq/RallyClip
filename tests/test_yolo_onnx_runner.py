@@ -55,22 +55,12 @@ def test_v8_pose_output_decodes():
     np.testing.assert_allclose(kpt_conf[0], np.full(17, 0.8, dtype=np.float32))
 
 
-def test_boxes_iteration_matches_court_detector_consumption():
+def test_boxes_bulk_access_matches_pose_extractor_consumption():
     xyxy = np.array([[10.0, 20.0, 30.0, 40.0], [1.0, 2.0, 3.0, 4.0]], dtype=np.float32)
     conf = np.array([0.9, 0.5], dtype=np.float32)
     boxes = _Boxes(xyxy, conf)
 
     assert len(boxes) == 2
-    seen = []
-    for box in boxes:  # exact consumption pattern from CourtDetector
-        cls_id = int(box.cls.item())
-        c = float(box.conf.item())
-        flat = box.xyxy.cpu().numpy().reshape(-1)
-        seen.append((cls_id, c, [int(v) for v in flat]))
-    assert seen[0] == (0, pytest.approx(0.9), [10, 20, 30, 40])
-    assert seen[1] == (0, pytest.approx(0.5), [1, 2, 3, 4])
-
-    # Bulk access used by PoseExtractor.
     assert boxes.xyxy.detach().cpu().numpy().shape == (2, 4)
     assert boxes.conf.detach().cpu().numpy().shape == (2,)
 

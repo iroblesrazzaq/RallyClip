@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import subprocess
 import sys
 import tomllib
@@ -72,6 +73,8 @@ def test_frozen_runtime_does_not_fetch_weights():
         ROOT / "src" / "cli" / "main.py",
         ROOT / "src" / "runtime" / "assets.py",
         ROOT / "src" / "runtime" / "defaults.py",
+        ROOT / "packaging" / "macos" / "NativeBackend.spec",
+        ROOT / "src" / "gui" / "native_backend.py",
     ]
     for path in sources:
         text = path.read_text(encoding="utf-8")
@@ -114,6 +117,25 @@ def test_pyinstaller_spec_bundles_default_artifact_dir():
     assert "bundle_identifier=_BUNDLE_IDENTIFIER" in spec
     assert "CFBundleShortVersionString" in spec
     assert "_spec_path.parent if _spec_path.is_file() else _spec_path" in spec
+
+
+def test_native_backend_spec_bundles_default_artifact_dir_torch_free():
+    spec = (ROOT / "packaging" / "macos" / "NativeBackend.spec").read_text(encoding="utf-8")
+    assert f'artifact = root / "{DEFAULT_ARTIFACT_DIR}"' in spec
+    assert f'(str(artifact), "{DEFAULT_ARTIFACT_DIR}")' in spec
+    excludes = spec.split("excludes=[", 1)[1].split("]", 1)[0]
+    for name in ("torch", "torchvision", "ultralytics"):
+        assert f'"{name}"' in excludes
+
+
+def test_native_backend_spec_drops_only_the_ort_c_api_dylib():
+    """The pybind module links ORT statically, so the C API dylib is unused."""
+    spec = (ROOT / "packaging" / "macos" / "NativeBackend.spec").read_text(encoding="utf-8")
+    pattern = re.search(r're\.fullmatch\(r"([^"]+)"', spec).group(1)
+    assert re.fullmatch(pattern, "libonnxruntime.1.31.1.dylib")
+    for kept in ("onnxruntime_pybind11_state.so", "libonnxruntime_providers_shared.dylib",
+                 "libavcodec.61.19.101.dylib"):
+        assert not re.fullmatch(pattern, kept), kept
 
 
 def _exec_spec_version_block(specpath: str) -> str:
@@ -328,3 +350,70 @@ def test_notarize_script_submits_then_waits():
     assert "mktemp -d" in script
     assert "umask 077" in script
     assert "chmod 600" in script
+
+
+def _workflow_steps(workflow: str) -> dict[str, str]:
+    """Step name -> step text for a workflow with a single job."""
+    steps = workflow.split("    steps:\n", 1)[1].split("\n      - ")
+    named = {}
+    for step in steps:
+        for line in step.splitlines():
+            if line.strip().startswith("name:"):
+                named[line.split("name:", 1)[1].strip()] = step
+                break
+    return named
+
+
+def test_tagged_release_builds_the_signed_native_dmg():
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    native_job = release.split("  native:\n", 1)[1].split("\n  tests:\n", 1)[0]
+    assert "if: github.event_name != 'workflow_dispatch' || inputs.desktop != 'legacy'" in native_job
+    assert "uses: ./.github/workflows/native-macos.yml" in native_job
+    assert "sign: true" in native_job
+    assert "secrets: inherit" in native_job
+
+    workflow = (ROOT / ".github" / "workflows" / "native-macos.yml").read_text(encoding="utf-8")
+    steps = _workflow_steps(workflow)
+    names = list(steps)
+    assert "test \"$(uname -m)\" = arm64" in steps["Require Apple Silicon runner"]
+    tag = steps["Check tag matches pyproject version"]
+    assert "startsWith(github.ref, 'refs/tags/')" in tag
+    assert "release_project_version" in tag and "exit 1" in tag
+    assert names.index("Check tag matches pyproject version") < names.index("Build native application")
+    package = steps["Package native DMG"]
+    assert "RALLYCLIP_SKIP_SIGNING: ${{ github.event_name != 'pull_request' && inputs.sign && '0' || '1' }}" in package
+    assert "scripts/release/package_macos.sh" in package
+    assert "scripts/release/import_apple_cert.sh" in steps["Import existing Apple certificate"]
+    notarize = steps["Notarize and staple"]
+    assert "github.event_name != 'pull_request' && inputs.sign" in notarize
+    assert "scripts/release/notarize_macos_dmg.sh" in notarize
+    assert "startsWith(github.ref, 'refs/tags/v')" in steps["Draft release asset"]
+    assert names.index("Notarize and staple") < names.index("Draft release asset")
+
+
+def test_native_workflow_keeps_signing_secrets_off_build_steps():
+    workflow = (ROOT / ".github" / "workflows" / "native-macos.yml").read_text(encoding="utf-8")
+    assert "secrets." not in workflow.split("    steps:\n", 1)[0]
+    allowed = {
+        "MACOS_CERTIFICATE_P12_BASE64": {"Import existing Apple certificate"},
+        "MACOS_CERTIFICATE_PASSWORD": {"Import existing Apple certificate"},
+        "MACOS_SIGN_IDENTITY": {"Package native DMG"},
+        "APPSTORE_API_PRIVATE_KEY": {"Notarize and staple"},
+        "APPSTORE_API_KEY_ID": {"Notarize and staple"},
+        "APPSTORE_ISSUER_ID": {"Notarize and staple"},
+    }
+    for name, text in _workflow_steps(workflow).items():
+        for secret, steps in allowed.items():
+            if f"secrets.{secret}" in text:
+                assert name in steps, f"{secret} is exposed to step {name!r}"
+
+
+def test_native_backend_worker_is_signed_with_jit_entitlements():
+    """The ONNX worker needs JIT under the hardened runtime or it is killed at analysis start."""
+    script = (SCRIPTS / "sign_macos_app.sh").read_text(encoding="utf-8")
+    branch = script.split('if [[ "${macho}" == "${APP_PATH}/Contents/Resources/Backend/RallyClipBackend" ]]; then', 1)[1]
+    assert branch.split("else", 1)[0].strip().splitlines()[-1].strip() == 'sign_with_entitlements "${macho}"'
+    assert "--entitlements \"${ENTITLEMENTS}\"" in script.split("sign_with_entitlements() {", 1)[1].split("\n}\n", 1)[0]
+    entitlements = (ROOT / "packaging" / "macos" / "RallyClip.entitlements").read_text(encoding="utf-8")
+    assert "com.apple.security.cs.allow-jit" in entitlements
+    assert "com.apple.security.cs.allow-unsigned-executable-memory" in entitlements

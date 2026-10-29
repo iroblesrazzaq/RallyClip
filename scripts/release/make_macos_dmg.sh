@@ -37,12 +37,25 @@ ln -s /Applications "${STAGE}/Applications"
 mkdir -p "$(dirname "${DMG_PATH}")"
 rm -f "${DMG_PATH}"
 
-hdiutil create \
-  -volname "RallyClip ${VERSION}" \
-  -srcfolder "${STAGE}" \
-  -ov \
-  -format UDZO \
-  -imagekey zlib-level=9 \
-  "${DMG_PATH}"
+# hdiutil can fail with "Resource busy" while another process (on CI runners,
+# often a malware scan) still holds the staged bundle. Retry a few times.
+for attempt in 1 2 3 4 5; do
+  if hdiutil create \
+    -volname "RallyClip ${VERSION}" \
+    -srcfolder "${STAGE}" \
+    -ov \
+    -format UDZO \
+    -imagekey zlib-level=9 \
+    "${DMG_PATH}"; then
+    break
+  fi
+  if [[ ${attempt} -eq 5 ]]; then
+    echo "hdiutil create failed after ${attempt} attempts." >&2
+    exit 1
+  fi
+  echo "hdiutil create failed (attempt ${attempt}); retrying in $((attempt * 5))s." >&2
+  rm -f "${DMG_PATH}"
+  sleep $((attempt * 5))
+done
 
 echo "Created ${DMG_PATH}"

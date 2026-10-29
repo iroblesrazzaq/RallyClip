@@ -4,14 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rallyclip"
-version = "0.6.0"
+version = "0.7.0"
 description = "Local tennis match segmentation — CLI and desktop app"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
   "numpy",
-  # Court-detection golden fixtures are validated against the 4.x algorithms;
-  # bump past 5 only after re-checking tests/test_court_detection_deterministic.
   "opencv-python>=4.8,<5",
   "av",
   "tqdm",

@@ -12,7 +12,7 @@ Fresh setup (uv is the supported installer):
 
 ```bash
 uv sync --extra cpu --extra dev --extra desktop   # runtime + pytest + pywebview
-uv run python scripts/fetch_artifact.py            # ONNX into models/rallyclip_v0.5.0/
+uv run python scripts/fetch_artifact.py            # ONNX into models/rallyclip_v0.6.0/
 uv sync --extra cpu --extra e2e-ui && uv run playwright install chromium   # browser e2e only
 uv sync --extra cpu --extra pack                  # PyInstaller packaging only
 uv sync --extra cpu --extra train                 # torch / ultralytics / wandb / h5py / sklearn, training only
@@ -52,18 +52,19 @@ Local runtime config: `config.toml` (don't commit machine-specific paths).
 
 ## Model assets
 
-- Default inference dir: `models/rallyclip_v0.5.0/` (`runtime.defaults.DEFAULT_ARTIFACT_DIR`).
+- Default inference dir: `models/rallyclip_v0.6.0/` (`runtime.defaults.DEFAULT_ARTIFACT_DIR`).
   Git tracks `manifest.json` + `SHA256SUMS`. ONNX / `scaler.json` come from GitHub
-  Release `artifact-rallyclip_v0.5.0` via `python scripts/fetch_artifact.py`
+  Release `artifact-rallyclip_v0.6.0` via `python scripts/fetch_artifact.py`
   (CI and from-source). The Mac `.app` embeds that folder at PyInstaller time
   and does not fetch at launch.
 - Classic LSTM contract: `models/rallyclip_v0.4.0/manifest.json` (weights not in git).
-- YOLO pose weights used at runtime are the ONNX siblings in the v0.5.0 zip.
+- YOLO pose weights and the learned court detector used at runtime are the ONNX siblings in the v0.6.0 zip.
   `yolov8n-pose.pt` is gitignored (Ultralytics / `[train]` extra only).
 
 ## Env vars (names only)
 
-- `RALLYCLIP_COURT_VIDEO_DIR`, `RALLYCLIP_YOLO_WEIGHTS` — court-e2e source data overrides; tests self-skip when absent.
+- Native macOS: `RALLYCLIP_NATIVE_DATA_DIR` (isolated data root), `RALLYCLIP_NATIVE_REPO` / `RALLYCLIP_NATIVE_PYTHON` (source launch), `RALLYCLIP_BUILD_PYTHON`, `RALLYCLIP_REUSE_BACKEND` (packaging). Per-launch `RALLYCLIP_NATIVE_TOKEN` / `RALLYCLIP_NATIVE_READY_FILE` are set internally; never persist the token. See docs/native-macos.md for build/test commands.
+
 - `RALLYCLIP_ARTIFACT_URL`, `RALLYCLIP_ARTIFACT_ZIP` — optional fetch overrides (`scripts/fetch_artifact.py`). `GITHUB_TOKEN` / `GH_TOKEN` used if set.
 - `PYTORCH_ENABLE_MPS_FALLBACK=1` — for heavy e2e on this Mac (forces deterministic CPU-ish YOLO behavior).
 - `QTWEBENGINE_REMOTE_DEBUGGING` — planned frozen-app UI testing via Playwright CDP.

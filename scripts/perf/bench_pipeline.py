@@ -229,7 +229,7 @@ def run_stub(frames: int, fps: float, tmp_dir: Path, ref_w: int = 1280, ref_h: i
 
     pre = DataPreprocessor(screen_width=ref_w, screen_height=ref_h, save_court_masks=False)
     # Synthetic "all in-bounds" court mask (0 == kept). Passing this avoids triggering the
-    # real CourtDetector/YOLO, keeping the stub deterministic and offline. Court filtering
+    # court line model, keeping the stub deterministic and offline. Court filtering
     # itself is exercised, just with nothing culled.
     court_mask = np.zeros((ref_h, ref_w), dtype=np.uint8)
     fe = FeatureEngineer(screen_width=ref_w, screen_height=ref_h, target_fps=fps)

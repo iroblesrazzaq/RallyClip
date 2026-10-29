@@ -46,17 +46,6 @@ def import_cli_main_with_stubs(monkeypatch):
 
 def import_data_preprocessor_with_stubs(monkeypatch):
     _drop_modules("preprocessing.data_preprocessor")
-    court_detector = types.ModuleType("preprocessing.court_detector")
-
-    class StubCourtDetector:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def process_video(self, *args, **kwargs):
-            return None, None, {}
-
-    court_detector.CourtDetector = StubCourtDetector
-    monkeypatch.setitem(sys.modules, "preprocessing.court_detector", court_detector)
     return importlib.import_module("preprocessing.data_preprocessor")
 
 

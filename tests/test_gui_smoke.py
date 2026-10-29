@@ -798,7 +798,7 @@ def test_gui_pipeline_streams_features_into_inference(tmp_path, monkeypatch, fol
         def __init__(self, **_kwargs):
             calls.append("preprocess:init")
 
-        def compute_court_mask(self, video_path):
+        def compute_court_mask(self, video_path, court=None):
             calls.append("court:detect")
             assert video_path == str(upload)
             return "COURT_MASK", {}

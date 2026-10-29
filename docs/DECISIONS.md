@@ -553,3 +553,55 @@ data/labels/metric, not optimization.** Do not re-run these:
   text (reviewers reword each time; file + nearby line is enough to flag it);
   keeping state in `$TMPDIR` (no stable path between runs) or in the worktree
   (would show in `git status`).
+
+## 2026-10-07 — Native macOS playback and editing, proven ONNX analysis
+
+- **What:** SwiftUI/AppKit replace the macOS webview UI. AVPlayer uses one
+  continuous AVMutableComposition for point cuts, including points crossing
+  source-file boundaries. Native AVFoundation exports preserve original
+  resolution. The existing v0.6 Python/ONNX engine is frozen as a private helper;
+  analysis and saved-match mutations retain the HTTP API. The user explicitly
+  requested this native implementation after reporting stuttery playback.
+- **Why:** Removes browser buffering and repeated cut-boundary seeks without
+  changing the latest model, learned W32 court detector, near/far pose features,
+  manifest contract, or existing CLI/browser support. No CoreML conversion or
+  model retraining is required to ship native media playback.
+- **Details:** Keep owning AVAssets alive while copying their weakly-owned
+  tracks. Represent late-audio gaps explicitly and force an audio mix on export
+  so AAC passthrough edit lists cannot repeat sound across silence in other
+  players. Stage exports and preserve existing destinations until completion.
+  Protect all helper requests with a per-launch token, reject browsers/rebinding,
+  use a private readiness file, and stop workers when the app exits.
+- **UI:** Keep the original logo/icon, use a native sidebar, system font and
+  green accent. The user rejected cream/Georgia styling and promotional copy;
+  interface text should remain factual.
+- **Release:** Published the checksum-verified v0.6 inference artifact separately
+  from the desktop app. The existing Release workflow defaults to the native
+  build and reuses the existing Developer ID/notarization scripts and secrets;
+  legacy manual builds remain available. Desktop tags still create drafts, and
+  the user merges/publishes.
+
+## 2026-10-29 — Court mask from the court line model; classic detector removed
+
+- **What:** The court 'out' mask now comes from the court line model
+  (`court_lines.onnx`), in runtime and training. `court_lines.out_mask` takes
+  the model's doubles sidelines (near/far corners) and pads them outward with
+  the classic rule: shift = 100 x visible near-baseline width / frame width,
+  applied to each sideline's intercept; everything above a padded sideline is
+  out. One model pass per video gives both the mask and the net line.
+  `CourtDetector` (court_detector_impl.py), its YOLO-based clean-frame
+  extraction, `training/courts/{anchors,clean_frame}.py`, `court.target_time`,
+  the court regression fixtures and their scripts are deleted.
+- **Why:** User request. Over 52 source videos the line model gave a mask on
+  52; the classic detector fell back to the default mask on 8. Where both
+  detected (44), median IoU of the out region was 0.98. The worst disagreements
+  were classic-detector errors (service line or a pickleball line taken as the
+  baseline/sideline).
+- **Effect on v0.6.0 output (4 CV-val videos, CoreML, no test videos):** segment
+  F1 (IoU>=0.5) old -> new 0.902 -> 0.902, 0.757 -> 0.747 (one extra segment),
+  0.825 -> 0.825, 0.795 -> 0.795; mean 0.820 -> 0.817. 0.00-0.31% of 0.2 s
+  frames change rally/no-rally.
+- **Train/serve:** v0.6.0 was trained on classic masks; the runtime now uses
+  line-model masks. Training court caches from the classic detector are
+  recomputed (`detector.kind` check), and the preprocess fingerprint changed,
+  so the next retrain uses the new masks too.

@@ -3,8 +3,8 @@
 RallyClip turns full tennis match videos into point-only segments (condensed video +
 CSV timestamps), locally: Python 3.11, YOLOv8 pose on ONNX Runtime (torch-free
 runtime; torch/ultralytics only in the `[train]` extra) → TCN heatmap (ONNX) →
-hybrid decode; PyAV decode; CLI + Flask GUI + pywebview desktop shell (WKWebView on
-macOS, WebView2 on Windows); PyInstaller Mac packaging. This checkout is a git
+hybrid decode; PyAV analysis decode; CLI + Flask GUI + native SwiftUI/AVFoundation
+macOS desktop (legacy pywebview shell retained); bundled Python/ONNX analysis. This checkout is a git
 worktree (active topic branch — see docs/PROGRESS.md); sibling checkouts are
 described in docs/REPO_MAP.md.
 
@@ -41,8 +41,10 @@ described in docs/REPO_MAP.md.
   a route, update it in the same commit.
 - Architectural invariants: `src/rallyclip_core` stays free of heavy imports
   (test-enforced); model contract values (imgsz/fps/thresholds) come from the model
-  manifest, never hardcoded; all GUI behavior goes through `/api/*` HTTP; runtime
-  video decode is PyAV-only (cv2 is image ops only); heavy deps load lazily via
+  manifest, never hardcoded; GUI analysis and saved-match state go through `/api/*`
+  HTTP. The native macOS client uses AVFoundation for playback/export as requested
+  by the user (see docs/native-macos.md); Python runtime video decode is PyAV-only
+  (cv2 is image ops only); heavy deps load lazily via
   `RuntimeDeps`; the runtime must never import torch/ultralytics
   (`tests/test_yolo_onnx_runner.py::test_analysis_run_stays_torch_free`); golden
   parity (`tests/test_cli_golden_parity.py`) stays byte-equal on the dev machine —

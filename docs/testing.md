@@ -16,8 +16,12 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-10-27, runtime v0.6.0 rebuilt on main after #64, macOS `.venv-train` py3.11):
-**611 passed, 1 skipped, 49 deselected, ~100s** with v0.6.0 weights fetched (after the #62 review rounds 1-3 and the homography sign fix). `tests/test_release_packaging.py` 21 passed;
+Last known (2026-10-29, #71 Cursor review fixes: real court line model test with pinned court
+points, GUI defaults vs manifest, seek frame cap): **618 passed, 1 skipped, 38 deselected, ~82s**.
+(2026-10-29, court mask from the court line model, classic detector and its 11 MB court fixtures
+removed, plus the ORT dylib filter test and review fixes: 614 passed, 1 skipped, 38 deselected.)
+(2026-10-27, native macOS on runtime v0.6.0, rebuilt on main after #64, macOS `.venv-train` py3.11):
+**625 passed, 1 skipped, 49 deselected, ~110s** (#70 alone: 611 passed) (some skip without local model artifacts). `tests/test_release_packaging.py` 25 passed (26 with the ORT dylib filter test, 2026-10-29);
 `tests/test_artifact_fetch.py` 6 passed; `tests/test_agent_review.py` 59 passed.
 (2026-10-27, large-video import: 594 passed, 49 deselected.)
 (2026-10-23, review round cap merged with main after #68: 542 passed, 16 skipped, 49 deselected.)
@@ -31,7 +35,26 @@ Last known (2026-10-27, runtime v0.6.0 rebuilt on main after #64, macOS `.venv-t
 $PY -m compileall -q src tests
 ```
 
-Last known (2026-07-03): exit 0.
+Last known (2026-10-27): exit 0 with `.venv-train`.
+
+## Native macOS
+
+`swift test --package-path macos`: **12 passed** on 2026-10-29 (5 on 2026-10-27), including a
+synthetic camera-boundary composition/export/frame-content test, mixed-rotation rejection, a point end just past the footage, only touched clips opened, and the intro schedule. Swift requires
+normal host access to its caches and media services.
+
+`$PY scripts/native/smoke.py --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend`
+checks a frozen import, edit/reset/delete, decoded-frame playback through three
+cuts, exact export duration, and delayed audio across a camera boundary. Run after
+`RALLYCLIP_BUILD_PYTHON="$PY" bash scripts/native/build.sh`. See docs/native-macos.md.
+
+`bash scripts/native/launch_smoke.sh dist/native/RallyClip.app` moves the SwiftPM build dir
+away, runs `RallyClip --check-resources` (resolves the logo with RallyLogo's lookup), then
+launches the app twice (intro, then library with `-welcomeSeen '<true/>'`) and fails if it
+quits within 10 s. It sets `RALLYCLIP_NATIVE_DATA_DIR` to a temp dir, so the user's library
+and `native-backend.log` are not touched. A launch alone does not prove the logo loads: a hidden window may not
+draw the sidebar. 2026-10-29: fails on the first v0.7.0 test build (exit 133) and on a
+Bundle.module mutant; passes on the fix.
 
 ## Golden CLI parity (run when touching pipeline/engine/extraction/decode)
 
@@ -39,21 +62,20 @@ Last known (2026-07-03): exit 0.
 PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_cli_golden_parity.py
 ```
 
-Last known (2026-10-27, v0.6.0 golden): **1 passed, 16.1s**. Boundaries compared at 0.5s tolerance;
+Last known (2026-10-29, line-model court mask, v0.6.0 golden unchanged): **1 passed, 15.2s**.
+(2026-10-27, v0.6.0 golden: 1 passed, 16.1s.) Boundaries compared at 0.5s tolerance;
 byte-exact only holds on the machine+env the golden was generated on. ubuntu/windows
 ORT can split a TCN point across a 1-frame pointness dip; v0.5.0 ships
 `merge_gap_sec: 0.5` so those fragments become one segment.
 
-## Full e2e (44 tests; heavy — run before merges/releases, not per-commit)
+## Full e2e ( heavy — run before merges/releases, not per-commit)
 
 ```bash
 PYTHONPATH=src:tests $PY -m pytest -q -m e2e -p no:cacheprovider
 ```
 
 Not run 2026-07-03 (needs `uv sync --extra cpu --extra dev --extra e2e-ui` + `uv run playwright install chromium`;
-quality/court e2e need local footage — `RALLYCLIP_COURT_VIDEO_DIR`/`RALLYCLIP_YOLO_WEIGHTS`,
-self-skip if absent). CI runs unit+e2e on 3 OS; green as of 2026-07-04 snapshot.
-Court e2e wants `PYTORCH_ENABLE_MPS_FALLBACK=1`.
+quality e2e needs local footage, self-skips if absent). CI runs unit+e2e on 3 OS; green as of 2026-07-04 snapshot.
 
 ## Lint
 

@@ -65,6 +65,15 @@ def test_pick_far_tie_breaks_toward_the_net():
     assert pick_far(boxes, None, GEOM) == 0
 
 
+def test_pick_far_skips_feet_on_the_out_mask():
+    boxes = np.stack([box_at(0.2, 12.0), box_at(3.0, 11.0)])
+    mask = np.zeros((1080, 1920), np.uint8)
+    fx, fy = int((boxes[0][0] + boxes[0][2]) / 2), int(boxes[0][3])
+    mask[fy, fx] = 255  # the centered candidate stands outside the playable court
+    assert pick_far(boxes, None, GEOM) == 0
+    assert pick_far(boxes, mask, GEOM) == 1
+
+
 def test_pick_far_empty():
     assert pick_far(np.empty((0, 4), np.float32), None, GEOM) is None
 
