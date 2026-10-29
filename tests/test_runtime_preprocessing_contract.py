@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import importlib
-import inspect
 import types
 
 import numpy as np
@@ -11,14 +9,9 @@ from helpers.module_stubs import import_data_preprocessor_with_stubs
 from helpers.runtime_fixtures import fake_yolo_result, write_raw_pose_npz
 
 
-def _disable_court_detection(monkeypatch, DataPreprocessor):
-    monkeypatch.setattr(DataPreprocessor, "generate_court_mask", lambda self, video_path: None)
-
-
 def test_runtime_preprocessor_propagates_box_conf_to_assigned_players(tmp_path, monkeypatch):
     preprocessor_module = import_data_preprocessor_with_stubs(monkeypatch)
     DataPreprocessor = preprocessor_module.DataPreprocessor
-    _disable_court_detection(monkeypatch, DataPreprocessor)
     raw_path = write_raw_pose_npz(tmp_path / "raw_pose.npz", [fake_yolo_result(0)])
     output_path = tmp_path / "preprocessed.npz"
 
@@ -59,7 +52,6 @@ def test_runtime_preprocessor_assigns_near_and_far_deterministically(monkeypatch
 def test_runtime_preprocessor_closes_npz_file_handles(tmp_path, monkeypatch):
     preprocessor_module = import_data_preprocessor_with_stubs(monkeypatch)
     DataPreprocessor = preprocessor_module.DataPreprocessor
-    _disable_court_detection(monkeypatch, DataPreprocessor)
     frames = [
         {
             "boxes": fake_yolo_result(0).boxes.xyxy.numpy(),
@@ -108,42 +100,42 @@ def test_runtime_preprocessor_closes_npz_file_handles(tmp_path, monkeypatch):
     assert all(npz.closed for npz in opened)
 
 
-def test_data_preprocessor_default_yolo_model_is_nano(monkeypatch):
-    # Direct instantiation must not silently fall back to the old "small" model (train/serve skew).
-    DataPreprocessor = import_data_preprocessor_with_stubs(monkeypatch).DataPreprocessor
-    default = inspect.signature(DataPreprocessor.__init__).parameters["yolo_model_path"].default
-    assert default.endswith("yolov8n-pose.pt"), default
+class _FakeCourt:
+    def __init__(self, mask, frame_size=(1280, 720)):
+        self._mask = mask
+        self.frame_size = frame_size
+
+    def out_mask(self):
+        if isinstance(self._mask, Exception):
+            raise self._mask
+        return self._mask
 
 
-def test_court_detector_default_yolo_model_is_nano():
-    pytest.importorskip("cv2")
-    cdi = importlib.import_module("preprocessing.court_detector_impl")
-    default = inspect.signature(cdi.CourtDetector.__init__).parameters["yolo_model_path"].default
-    assert default.endswith("yolov8n-pose.pt"), default
-
-
-def test_compute_court_mask_uses_detection_when_available(tmp_path, monkeypatch):
+def test_compute_court_mask_uses_court_model_mask(tmp_path, monkeypatch):
     module = import_data_preprocessor_with_stubs(monkeypatch)
     detected = np.zeros((720, 1280), dtype=np.uint8)
     detected[:120, :] = 255  # a plausible non-empty 'out' mask
 
-    class OkDetector:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def process_video(self, video_path, target_time=60):
-            return detected, np.zeros((720, 1280, 3), dtype=np.uint8), {"court_detection_success": True}
-
-    monkeypatch.setattr(module, "CourtDetector", OkDetector)
     pre = module.DataPreprocessor(save_court_masks=False)
-    mask, meta = pre.compute_court_mask(str(tmp_path / "v.mp4"))
+    mask, meta = pre.compute_court_mask(str(tmp_path / "v.mp4"), _FakeCourt(detected))
 
     assert meta["detected"] is True and meta["source"] == "detected"
     assert np.array_equal(mask, detected)
 
 
+@pytest.mark.parametrize("court_mask", [None, RuntimeError("bad points")])
+def test_compute_court_mask_default_at_court_frame_size(tmp_path, monkeypatch, court_mask):
+    pytest.importorskip("cv2")
+    module = import_data_preprocessor_with_stubs(monkeypatch)
+    pre = module.DataPreprocessor(save_court_masks=False)
+    mask, meta = pre.compute_court_mask(str(tmp_path / "v.mp4"), _FakeCourt(court_mask, (1920, 1080)))
+
+    assert meta["detected"] is False and meta["source"] == "default"
+    assert mask.shape == (1080, 1920)
+
+
 def test_compute_court_mask_falls_back_to_default(tmp_path, monkeypatch):
-    # StubCourtDetector.process_video returns (None, None, {}) -> detection fails everywhere.
+    # No court model result -> default mask at the probed (here: fallback) frame size.
     pytest.importorskip("cv2")
     module = import_data_preprocessor_with_stubs(monkeypatch)
     pre = module.DataPreprocessor(save_court_masks=False)
@@ -159,15 +151,6 @@ def test_compute_court_mask_fallback_uses_native_video_shape(tmp_path, monkeypat
     pytest.importorskip("cv2")
     module = import_data_preprocessor_with_stubs(monkeypatch)
     monkeypatch.setattr(module, "probe_video", lambda _: types.SimpleNamespace(width=1920, height=1080))
-
-    class BrokenDetector:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def process_video(self, video_path, target_time=60):
-            raise RuntimeError("court detector failed")
-
-    monkeypatch.setattr(module, "CourtDetector", BrokenDetector)
     pre = module.DataPreprocessor(save_court_masks=False)
     mask, meta = pre.compute_court_mask(str(tmp_path / "input.mp4"))
 
@@ -178,7 +161,6 @@ def test_compute_court_mask_fallback_uses_native_video_shape(tmp_path, monkeypat
 def test_preprocess_rescales_from_native_video_shape(tmp_path, monkeypatch):
     preprocessor_module = import_data_preprocessor_with_stubs(monkeypatch)
     DataPreprocessor = preprocessor_module.DataPreprocessor
-    _disable_court_detection(monkeypatch, DataPreprocessor)
     monkeypatch.setattr(preprocessor_module, "probe_video", lambda _: types.SimpleNamespace(width=1920, height=1080))
     raw_path = write_raw_pose_npz(tmp_path / "raw_pose.npz", [fake_yolo_result(0)])
     output_path = tmp_path / "preprocessed.npz"

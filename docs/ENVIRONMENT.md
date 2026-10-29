@@ -65,7 +65,6 @@ Local runtime config: `config.toml` (don't commit machine-specific paths).
 
 - Native macOS: `RALLYCLIP_NATIVE_DATA_DIR` (isolated data root), `RALLYCLIP_NATIVE_REPO` / `RALLYCLIP_NATIVE_PYTHON` (source launch), `RALLYCLIP_BUILD_PYTHON`, `RALLYCLIP_REUSE_BACKEND` (packaging). Per-launch `RALLYCLIP_NATIVE_TOKEN` / `RALLYCLIP_NATIVE_READY_FILE` are set internally; never persist the token. See docs/native-macos.md for build/test commands.
 
-- `RALLYCLIP_COURT_VIDEO_DIR`, `RALLYCLIP_YOLO_WEIGHTS` — court-e2e source data overrides; tests self-skip when absent.
 - `RALLYCLIP_ARTIFACT_URL`, `RALLYCLIP_ARTIFACT_ZIP` — optional fetch overrides (`scripts/fetch_artifact.py`). `GITHUB_TOKEN` / `GH_TOKEN` used if set.
 - `PYTORCH_ENABLE_MPS_FALLBACK=1` — for heavy e2e on this Mac (forces deterministic CPU-ish YOLO behavior).
 - `QTWEBENGINE_REMOTE_DEBUGGING` — planned frozen-app UI testing via Playwright CDP.

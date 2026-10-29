@@ -9,8 +9,6 @@ Drop-in for the exact `ultralytics.YOLO` surface RallyClip consumes:
     results[0].boxes.conf.detach().cpu().numpy()      # float32 [N]
     results[0].keypoints.xy.detach().cpu().numpy()    # float32 [N, 17, 2]
     results[0].keypoints.conf.detach().cpu().numpy()  # float32 [N, 17]
-    for box in results[0].boxes:                       # court detector path
-        box.cls.item(); box.conf.item(); box.xyxy.cpu().numpy()
 
 Semantics mirror Ultralytics `.predict()` on a .pt model: rect letterbox
 (auto=True, stride 32, pad 114, INTER_LINEAR), confidence filter, greedy NMS
@@ -79,29 +77,14 @@ class _Tensor:
         return self._array if dtype is None else self._array.astype(dtype)
 
 
-class _Box:
-    """One detection, shaped like an element of ultralytics Results.boxes."""
-
-    def __init__(self, xyxy_row: np.ndarray, conf: np.ndarray) -> None:
-        self.xyxy = _Tensor(xyxy_row.reshape(1, 4))
-        self.conf = _Tensor(conf.reshape(()))
-        # v8-pose is single-class (person); the raw head has no class column.
-        self.cls = _Tensor(np.zeros((), dtype=np.float32))
-
-
 class _Boxes:
     def __init__(self, xyxy: np.ndarray, conf: np.ndarray) -> None:
         self.xyxy = _Tensor(xyxy)
         self.conf = _Tensor(conf)
         self._xyxy = xyxy
-        self._conf = conf
 
     def __len__(self) -> int:
         return int(self._xyxy.shape[0])
-
-    def __iter__(self):
-        for i in range(len(self)):
-            yield _Box(self._xyxy[i], self._conf[i])
 
 
 class _Keypoints:

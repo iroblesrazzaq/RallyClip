@@ -4,7 +4,6 @@ from pathlib import Path
 
 import numpy as np
 
-from preprocessing.court_detector import CourtDetector
 from runtime.video_validation import probe_video
 
 
@@ -54,17 +53,12 @@ def _scale_detections(frame_data, sx, sy):
 
 
 class DataPreprocessor:
-    def __init__(self, screen_width: int = 1280, screen_height: int = 720, merge_iou_thresh: float = 0.6, save_court_masks: bool = False, yolo_model_path: str = "yolov8n-pose.pt", conf: float = 0.25, yolo_device: str | None = None) -> None:
+    def __init__(self, screen_width: int = 1280, screen_height: int = 720, merge_iou_thresh: float = 0.6, save_court_masks: bool = False) -> None:
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.screen_center_x = screen_width / 2
         self.merge_iou_thresh = merge_iou_thresh
         self.save_court_masks = save_court_masks
-        # Court detection uses the SAME YOLO model + conf as pose extraction (the values
-        # pinned in the model manifest) so there is one model in play and one auto-download.
-        self.yolo_model_path = yolo_model_path
-        self.conf = float(conf)
-        self.yolo_device = yolo_device
         self.left_zone_x = screen_width * 0.10
         self.right_zone_x = screen_width * 0.90
         self.bottom_zone_y = screen_height * 0.80
@@ -168,26 +162,6 @@ class DataPreprocessor:
             assigned_players['far_player'] = far_player
         return assigned_players
 
-    def generate_court_mask(self, video_path: str):
-        try:
-            detector = CourtDetector(yolo_model_path=self.yolo_model_path, conf=self.conf, device=self.yolo_device)
-            mask, clean_frame, metadata = detector.process_video(video_path, target_time=60)
-            return mask
-        except Exception as e:
-            logging.warning("Court detection failed: %s", e)
-            return None
-
-    def _court_sample_times(self, video_path: str) -> list:
-        """Timestamps (seconds) to try for court detection, spread across the video."""
-        duration = 0.0
-        try:
-            duration = float(probe_video(video_path).duration_s)
-        except Exception:
-            duration = 0.0
-        if duration > 10:
-            return sorted({max(1, int(duration * f)) for f in (0.2, 0.35, 0.5, 0.65, 0.8)})
-        return [60, 90, 45, 120, 30]
-
     def _load_default_court_mask(self, frame_shape) -> np.ndarray:
         """Load the empirical default 'out' mask, resized to the given (H, W, ...) frame shape."""
         import cv2
@@ -215,30 +189,28 @@ class DataPreprocessor:
             logging.warning("Could not probe video dimensions for %s: %s", video_path, exc)
         return (self.screen_height, self.screen_width, 3)
 
-    def compute_court_mask(self, video_path: str):
-        """Front-loaded court detection with a default-mask fallback.
+    def compute_court_mask(self, video_path: str, court=None):
+        """Court 'out' mask from the court model, with a default-mask fallback.
 
-        Runs the detector at several timestamps and returns the first plausible 'out'
-        mask. If detection fails at every sample, returns the empirical default mask
-        (resized to the frame) so frames are still filtered rather than passed through
-        unmasked. Always returns (mask, metadata) with a usable mask (never None).
+        `court` is a ``court_lines.CourtDetection`` (or None). When it gives no
+        mask, returns the empirical default mask (resized to the frame) so frames
+        are still filtered rather than passed through unmasked. Always returns
+        (mask, metadata) with a usable mask (never None).
         """
-        detector = CourtDetector(yolo_model_path=self.yolo_model_path, conf=self.conf, device=self.yolo_device)
-        frame_shape = self._source_frame_shape(video_path)
-        for t in self._court_sample_times(video_path):
+        mask = None
+        if court is not None:
             try:
-                mask, clean_frame, _meta = detector.process_video(video_path, target_time=t)
+                mask = court.out_mask()
             except Exception as e:
-                logging.warning("Court detection error at t=%ss: %s", t, e)
-                continue
-            if getattr(clean_frame, "shape", None) is not None:
-                frame_shape = clean_frame.shape
-            if mask is not None and np.any(mask):
-                logging.info("Court detected at t=%ss", t)
-                return mask, {"source": "detected", "detected": True, "timestamp_s": t}
-        logging.warning("Court detection failed at all sampled timestamps; using default court mask")
-        default = self._load_default_court_mask(frame_shape)
-        return default, {"source": "default", "detected": False, "timestamp_s": None}
+                logging.warning("Court mask failed: %s", e)
+        if mask is not None:
+            return mask, {"source": "detected", "detected": True}
+        logging.warning("No court mask from the court model; using default court mask")
+        if court is not None:
+            frame_shape = (court.frame_size[1], court.frame_size[0], 3)
+        else:
+            frame_shape = self._source_frame_shape(video_path)
+        return self._load_default_court_mask(frame_shape), {"source": "default", "detected": False}
 
     def filter_frame_by_court(self, frame_data, mask):
         boxes = np.asarray(frame_data.get('boxes', np.empty((0, 4), dtype=np.float32)), dtype=np.float32)
@@ -392,11 +364,7 @@ class DataPreprocessor:
             with np.load(input_npz_path, allow_pickle=True) as data:
                 pose_data = data['frames'].copy()
             logging.info("Loaded %s frames", len(pose_data))
-            if court_mask is None:
-                logging.info("Generating court mask from: %s", video_path)
-                mask = self.generate_court_mask(video_path)
-            else:
-                mask = court_mask
+            mask = court_mask
             if mask is not None:
                 logging.info("Court mask: %s", getattr(mask, 'shape', None))
             else:

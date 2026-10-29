@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from training.io.config import court_target_time, load_config
+from training.io.config import DEFAULT_COURT_MODEL_PATH, load_config, resolve_court_model_path
 from training.paths import pose_preprocessed_dir, raw_videos_dir
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -82,13 +82,13 @@ def test_build_features_reads_and_writes_the_pipeline_paths(tmp_path, config_pat
     assert built == [(preproc, feature_root_from_config(tmp_path, config) / "m__features__v1.h5")]
 
 
-def test_cache_court_masks_keeps_the_midpoint_default(config_path, monkeypatch):
+def test_cache_court_masks_uses_the_court_model(config_path, monkeypatch):
     script = _load_script("cache_court_masks")
     seen = {}
 
     class FakeCache:
-        def __init__(self, model_path, target_time):
-            seen["target_time"] = target_time
+        def __init__(self, model_path):
+            seen["model_path"] = model_path
 
         def get_or_create(self, data_root, video_path, force=False):
             return type("R", (), {"success": True})()
@@ -97,12 +97,16 @@ def test_cache_court_masks_keeps_the_midpoint_default(config_path, monkeypatch):
     monkeypatch.setattr(script, "resolve_court_model_path", lambda config: "court.onnx")
     monkeypatch.setattr("sys.argv", ["cache_court_masks", "--config", config_path, "--video", "m.mp4"])
     assert script.main() == 0
-    assert seen["target_time"] is None
+    assert seen["model_path"] == "court.onnx"
 
 
-@pytest.mark.parametrize("value, expected", [(None, None), (60, 60), ("30", 30)])
-def test_court_target_time(value, expected):
-    assert court_target_time({"target_time": value}) == expected
+@pytest.mark.parametrize("court, expected", [
+    ({}, DEFAULT_COURT_MODEL_PATH),
+    ({"model_path": None}, DEFAULT_COURT_MODEL_PATH),
+    ({"model_path": "x/court_lines.onnx"}, "x/court_lines.onnx"),
+])
+def test_resolve_court_model_path(court, expected):
+    assert resolve_court_model_path({"court": court, "yolo": {"model": "pose.onnx"}}) == expected
 
 
 @pytest.mark.parametrize("overwrite", [False, True])

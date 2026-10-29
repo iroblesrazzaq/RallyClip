@@ -50,9 +50,7 @@ preprocess:
   overwrite: false
 
 court:
-  model_path: null       # null => reuse the pose model (manifest ok; resolved to ONNX/CPU)
-  target_time: null       # null => anchor at the MIDDLE of the video (retries fan out
-                          # around the midpoint); an int pins a single anchor time
+  model_path: null       # null => models/rallyclip_v0.6.0/court_lines.onnx (court line model)
   force: false
 
 features:

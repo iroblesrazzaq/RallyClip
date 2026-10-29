@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import yaml
 
@@ -59,15 +59,9 @@ def resolve_yolo_model_path(config: Dict[str, Any]) -> str:
     return str(Path(model_dir) / model_path.name)
 
 
+DEFAULT_COURT_MODEL_PATH = "models/rallyclip_v0.6.0/court_lines.onnx"
+
+
 def resolve_court_model_path(config: Dict[str, Any]) -> str:
-    court_cfg = config.get("court", {})
-    explicit = court_cfg.get("model_path")
-    if explicit:
-        return str(explicit)
-    return resolve_yolo_model_path(config)
-
-
-def court_target_time(court_cfg: Dict[str, Any]) -> Optional[int]:
-    """court.target_time as an int, or None (anchor at the middle of the video)."""
-    value = court_cfg.get("target_time")
-    return int(value) if value is not None else None
+    """court.model_path: the court line model (court_lines.onnx)."""
+    return str(config.get("court", {}).get("model_path") or DEFAULT_COURT_MODEL_PATH)

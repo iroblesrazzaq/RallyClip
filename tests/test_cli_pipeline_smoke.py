@@ -36,18 +36,17 @@ def test_run_pipeline_streams_runtime_stages(tmp_path, monkeypatch):
             return iter(["POSE_STREAM"])  # opaque stream handed to preprocess
 
     class FakePreprocessor:
-        def __init__(self, save_court_masks, screen_width=None, screen_height=None, yolo_model_path=None, conf=None, **_kwargs):
+        def __init__(self, save_court_masks, screen_width=None, screen_height=None, **kwargs):
             calls.append("preprocess:init")
             assert save_court_masks is False
             assert screen_width == 1280
             assert screen_height == 720
-            assert Path(yolo_model_path).name == "yolov8n-pose.pt"
-            assert conf == 0.25
+            assert not kwargs  # no pose model: the court mask comes from the court line model
 
-        def compute_court_mask(self, vp):
+        def compute_court_mask(self, vp, court=None):
             calls.append("court:detect")
             assert vp == str(video_path)
-            return "COURT_MASK", {"source": "detected", "detected": True, "timestamp_s": 60}
+            return "COURT_MASK", {"source": "detected", "detected": True}
 
         def _source_frame_shape(self, vp):
             calls.append("preprocess:srcshape")
@@ -252,8 +251,8 @@ def test_run_pipeline_writes_no_intermediate_npz(tmp_path, monkeypatch):
         def __init__(self, **_kwargs):
             pass
 
-        def compute_court_mask(self, vp):
-            return "COURT_MASK", {"source": "default", "detected": False, "timestamp_s": None}
+        def compute_court_mask(self, vp, court=None):
+            return "COURT_MASK", {"source": "default", "detected": False}
 
         def _source_frame_shape(self, vp):
             return (720, 1280, 3)

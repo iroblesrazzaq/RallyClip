@@ -31,7 +31,6 @@ class PreprocessConfig:
     target_fps: float
     save_court_masks: bool
     court_model_path: str
-    court_target_time: Optional[int]  # None => midpoint anchor (see CourtMaskCache)
     court_force: bool = False
     court_enabled: bool = True  # False => no court filtering at all (deliberate, no warning)
     expect_width: int = CANONICAL_WIDTH
@@ -52,10 +51,7 @@ class Hdf5Preprocessor:
             screen_width=cfg.expect_width,
             screen_height=cfg.expect_height,
         )
-        self.court_cache = CourtMaskCache(
-            model_path=cfg.court_model_path,
-            target_time=cfg.court_target_time,
-        )
+        self.court_cache = CourtMaskCache(model_path=cfg.court_model_path)
 
     def preprocess(
         self,
@@ -93,7 +89,6 @@ class Hdf5Preprocessor:
             raw_h5_path=raw_h5_path,
             target_fps=self.cfg.target_fps,
             court_model_path=self.cfg.court_model_path,
-            court_target_time=self.cfg.court_target_time,
             court_mask=court_mask,
             frame_size=(self.cfg.expect_width, self.cfg.expect_height),
             crop_h5_path=crop_h5_path,
