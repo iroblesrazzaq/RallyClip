@@ -49,20 +49,23 @@ final class AppModel: ObservableObject {
         panel.title = folder ? "Choose consecutive camera clips" : "Choose a tennis match"
         panel.prompt = "Analyze"
         if !folder { panel.allowedContentTypes = [.movie, .mpeg4Movie, .quickTimeMovie] }
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, let url = panel.url, !busy else { return }
+        // Busy from here, so a second choice cannot start while the folder is listed.
+        importing = true; cancelRequested = false
         Task {
+            defer { importing = false }
             do {
                 // List off the main actor: a card can hold tens of thousands of files.
                 let urls = folder ? FolderClips.select(try await Task.detached { try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) }.value) : [url]
                 guard !urls.isEmpty else { throw RallyError.message("That folder contains no MP4, MOV or M4V clips.") }
+                if cancelRequested { cancelRequested = false; return }  // Cancel pressed while listing: no job yet
                 try await beginImport(urls, name: folder ? url.lastPathComponent : url.deletingPathExtension().lastPathComponent)
             } catch { self.error = error.localizedDescription }
         }
     }
-    func beginImport(_ urls: [URL], name: String) async throws {
-        guard !busy, let backend else { return }
-        importing = true; cancelRequested = false
-        defer { importing = false }
+    /// Call with `importing` already set.
+    private func beginImport(_ urls: [URL], name: String) async throws {
+        guard let backend else { return }
         jobID = try await backend.importMatch(paths: urls.map(\.path), name: name)
         job = nil
         // Cancel pressed during "Checking footage…": the job only has an id now.
