@@ -66,6 +66,19 @@ final class CompositionTests: XCTestCase {
         XCTAssertEqual(left, [])
     }
 
+    func testOnlyClipsThePointsTouchAreOpened() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let a = root.appendingPathComponent("a.mp4")
+        try await clip(at: a, color: 50)
+        // The second clip does not exist, so opening it would throw "Reconnect the original footage".
+        let sources = [Source(path: a.path, start: 0, duration: 2),
+                       Source(path: root.appendingPathComponent("never-opened.mp4").path, start: 2, duration: 2)]
+        let composition = try await CompositionBuilder.build(sources: sources, points: [Point(start: 0.5, end: 1.5)])
+        XCTAssertEqual(composition.duration.seconds, 1, accuracy: 0.002)
+    }
+
     func testClipsWithDifferentRotationsAreRejected() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

@@ -18,7 +18,8 @@ public enum CompositionBuilder {
         var assets: [AVURLAsset] = []
         defer { withExtendedLifetime(assets) {} }
         var loaded: [(Source, AVAssetTrack, AVAssetTrack?, CMTimeRange?)] = []
-        for source in sources {
+        // Open only the clips a point touches: one point of a long folder match needs one or two.
+        for source in sources where intervals.contains(where: { min($0.end, source.end) > max($0.start, source.start_s) }) {
             try Task.checkCancellation()
             let url = URL(fileURLWithPath: source.path)
             guard FileManager.default.fileExists(atPath: url.path) else {

@@ -16,8 +16,8 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-10-29, #71 Cursor review fixes: real court line model test, GUI feature-set
-contract, seek frame cap): **618 passed, 1 skipped, 38 deselected, ~82s**.
+Last known (2026-10-29, #71 Cursor review fixes: real court line model test with pinned court
+points, GUI defaults vs manifest, seek frame cap): **618 passed, 1 skipped, 38 deselected, ~82s**.
 (2026-10-29, court mask from the court line model, classic detector and its 11 MB court fixtures
 removed, plus the ORT dylib filter test and review fixes: 614 passed, 1 skipped, 38 deselected.)
 (2026-10-27, native macOS on runtime v0.6.0, rebuilt on main after #64, macOS `.venv-train` py3.11):
@@ -39,8 +39,8 @@ Last known (2026-10-27): exit 0 with `.venv-train`.
 
 ## Native macOS
 
-`swift test --package-path macos`: **11 passed** on 2026-10-29 (5 on 2026-10-27), including a
-synthetic camera-boundary composition/export/frame-content test, mixed-rotation rejection, a point end just past the footage, and the intro schedule. Swift requires
+`swift test --package-path macos`: **12 passed** on 2026-10-29 (5 on 2026-10-27), including a
+synthetic camera-boundary composition/export/frame-content test, mixed-rotation rejection, a point end just past the footage, only touched clips opened, and the intro schedule. Swift requires
 normal host access to its caches and media services.
 
 `$PY scripts/native/smoke.py --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend`
