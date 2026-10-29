@@ -151,11 +151,15 @@ struct ViewerView: View {
                 ZStack {
                     TimelineCanvas(points: vm.points, selected: vm.selected, time: vm.sourceTime, total: total, window: vm.window)
                     TimelineInput(
+                        press: { x, clicks in
+                            vm.clickTimeline(point: vm.window.pointIndex(atX: x, width: width, points: vm.points, total: total), clicks: clicks)
+                        },
                         scrub: { x, done in vm.seek(vm.window.time(at: x / width, total: total), autoplay: false, exact: done) },
                         zoom: { factor, x in vm.window.zoom(by: factor, anchor: x / width, total: total) },
                         pan: { dx in vm.window.pan(by: -dx / width * shown.span, total: total) })
                 }
-            }.frame(height: 48).accessibilityElement().accessibilityLabel("Match timeline")
+            }.frame(height: 48).help(vm.editing ? "Click a point to select it for editing." : "Click a point to select it. Double-click to edit it.")
+                .accessibilityElement().accessibilityLabel("Match timeline")
                 .accessibilityValue("\(formatTime(vm.sourceTime)) of \(formatTime(total))")
             HStack { Text(timelineLabel(shown.start, span: shown.span)); Spacer(); Text(timelineLabel(shown.start + shown.span, span: shown.span)) }
                 .font(.caption).monospacedDigit().foregroundStyle(.secondary)
@@ -212,7 +216,7 @@ struct ViewerView: View {
                 }.font(.callout)
             }
             HStack {
-                Text("Scrub the full match, select a point, then set its start or end. Times are in source seconds.").font(.caption).foregroundStyle(.secondary)
+                Text("Click a point's bar or card to select it, scrub, then set its start or end. Times are in source seconds.").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Restore Original…") { showReset = true }.disabled(vm.saving)
             }
@@ -235,7 +239,7 @@ private struct TimelineCanvas: View {
             context.fill(Path(roundedRect: bar, cornerRadius: 6), with: .color(.secondary.opacity(0.18)))
             for (index, point) in points.enumerated() where point.end >= shown.start && point.start <= shown.start + shown.span {
                 let left = max(-4, x(point.start)), right = min(size.width + 4, x(point.end))
-                let rect = CGRect(x: left, y: 7, width: max(3, right - left), height: 24)
+                let rect = CGRect(x: left, y: 7, width: max(TimelineWindow.minimumBar, right - left), height: 24)
                 context.fill(Path(roundedRect: rect, cornerRadius: 3),
                              with: .color(index == selected ? .rallyGreen : .rallyGreen.opacity(0.4)))
             }
@@ -258,6 +262,8 @@ private struct TimelineCanvas: View {
 /// Mouse, trackpad and wheel input for the timeline. SwiftUI has no scroll-wheel
 /// or pointer-anchored pinch event on macOS 14, so an AppKit view takes them.
 private struct TimelineInput: NSViewRepresentable {
+    /// Mouse down at x, with the click count, before the scrub starts.
+    var press: (CGFloat, Int) -> Void
     /// x in points; `done` on mouse up, for an exact seek.
     var scrub: (CGFloat, Bool) -> Void
     /// factor > 1 zooms in, at x.
@@ -265,15 +271,16 @@ private struct TimelineInput: NSViewRepresentable {
     /// Content moves right by dx points.
     var pan: (CGFloat) -> Void
     func makeNSView(context: Context) -> InputView { InputView() }
-    func updateNSView(_ view: InputView, context: Context) { view.scrub = scrub; view.zoom = zoom; view.pan = pan }
+    func updateNSView(_ view: InputView, context: Context) { view.press = press; view.scrub = scrub; view.zoom = zoom; view.pan = pan }
 
     final class InputView: NSView {
+        var press: ((CGFloat, Int) -> Void)?
         var scrub: ((CGFloat, Bool) -> Void)?
         var zoom: ((Double, CGFloat) -> Void)?
         var pan: ((CGFloat) -> Void)?
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
         private func x(_ event: NSEvent) -> CGFloat { min(bounds.width, max(0, convert(event.locationInWindow, from: nil).x)) }
-        override func mouseDown(with event: NSEvent) { scrub?(x(event), false) }
+        override func mouseDown(with event: NSEvent) { press?(x(event), event.clickCount); scrub?(x(event), false) }
         override func mouseDragged(with event: NSEvent) { scrub?(x(event), false) }
         override func mouseUp(with event: NSEvent) { scrub?(x(event), true) }
         override func magnify(with event: NSEvent) { zoom?(1 + event.magnification, x(event)) }

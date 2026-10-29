@@ -55,6 +55,21 @@ public struct TimelineWindow: Equatable, Sendable {
         guard (0...1).contains(at) else { return nil }
         return min(width - 1, max(1, at * width))
     }
+    /// The point whose bar is under `x` on a bar `width` wide. Bars are drawn at least
+    /// `minimumBar` wide and take `slop` extra on each side, so a short point stays clickable.
+    public static let minimumBar = 3.0
+    public func pointIndex(atX x: Double, width: Double, points: [Point], total: Double, slop: Double = 3) -> Int? {
+        guard width > 0, x.isFinite else { return nil }
+        let now = visible(total: total), scale = width / now.span
+        var best: (index: Int, gap: Double)?
+        for (index, point) in points.enumerated() {
+            let left = (point.start - now.start) * scale
+            let right = max(left + Self.minimumBar, (point.end - now.start) * scale)
+            let gap = x < left ? left - x : (x > right ? x - right : 0)
+            if gap <= slop, gap < best?.gap ?? .infinity { best = (index, gap) }
+        }
+        return best?.index
+    }
     /// h:mm:ss.t (or m:ss.t under an hour), for a deep zoom.
     public static func fineLabel(_ seconds: Double) -> String {
         let tenths = seconds.isFinite ? Int((max(0, seconds) * 10).rounded()) : 0

@@ -72,3 +72,35 @@ final class TimelineWindowTests: XCTestCase {
         XCTAssertEqual(TimelineWindow.fineLabel(-3), "0:00.0")
     }
 }
+
+final class TimelineHitTests: XCTestCase {
+    let points = [Point(start: 10, end: 20), Point(start: 20, end: 30), Point(start: 50, end: 50.01)]
+
+    func testAClickOnABarFindsItsPoint() {
+        let window = TimelineWindow()  // 0 to 100 s on 1000 px: 10 px per second
+        XCTAssertEqual(window.pointIndex(atX: 150, width: 1000, points: points, total: 100), 0)
+        XCTAssertEqual(window.pointIndex(atX: 250, width: 1000, points: points, total: 100), 1)
+        XCTAssertNil(window.pointIndex(atX: 400, width: 1000, points: points, total: 100))  // between points
+        XCTAssertEqual(window.pointIndex(atX: 98, width: 1000, points: points, total: 100), 0)  // inside the slop
+        XCTAssertNil(window.pointIndex(atX: 96, width: 1000, points: points, total: 100))
+        XCTAssertNil(window.pointIndex(atX: .nan, width: 1000, points: points, total: 100))
+    }
+
+    func testAShortPointStaysClickableAndTheNearestBarWins() {
+        let window = TimelineWindow()
+        // 0.01 s is 0.1 px, but its bar is drawn 3 px wide.
+        XCTAssertEqual(window.pointIndex(atX: 502.5, width: 1000, points: points, total: 100), 2)
+        let close = [Point(start: 10, end: 10.4), Point(start: 10.8, end: 12)]  // 4 px apart
+        XCTAssertEqual(window.pointIndex(atX: 106.5, width: 1000, points: close, total: 100), 1)
+        XCTAssertEqual(window.pointIndex(atX: 104.5, width: 1000, points: close, total: 100), 0)
+    }
+
+    func testHitsFollowTheZoomWindow() {
+        var window = TimelineWindow()
+        window.zoom(by: 10, anchor: 0, total: 100)  // 0 to 10 s: points 0 and 1 are off screen to the right
+        XCTAssertNil(window.pointIndex(atX: 500, width: 1000, points: points, total: 100))
+        window.pan(by: 15, total: 100)  // 15 to 25 s
+        XCTAssertEqual(window.pointIndex(atX: 200, width: 1000, points: points, total: 100), 0)  // 17 s
+        XCTAssertEqual(window.pointIndex(atX: 800, width: 1000, points: points, total: 100), 1)  // 23 s
+    }
+}

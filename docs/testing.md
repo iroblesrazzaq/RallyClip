@@ -41,8 +41,8 @@ Last known (2026-10-27): exit 0 with `.venv-train`.
 
 ## Native macOS
 
-`swift test --package-path macos`: **22 passed** on 2026-10-29 (12 before the v0.7.2 UI work, 5 on 2026-10-27): timeline zoom
-window (anchor, 1 s limit, pan, reveal, off-screen playhead, hour labels) and library sort/drag order, plus a
+`swift test --package-path macos`: **25 passed** on 2026-10-29 (12 before the v0.7.2 UI work, 5 on 2026-10-27): timeline zoom
+window (anchor, 1 s limit, pan, reveal, off-screen playhead, hour labels, bar click hit test) and library sort/drag order, plus a
 synthetic camera-boundary composition/export/frame-content test, mixed-rotation rejection, a point end just past the footage, only touched clips opened, and the intro schedule. Swift requires
 normal host access to its caches and media services.
 

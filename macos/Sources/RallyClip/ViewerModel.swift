@@ -120,6 +120,13 @@ final class ViewerModel: ObservableObject {
         }
         sourceTime = source
     }
+    /// A click on a point's timeline bar selects it, the same as its card; a double-click also opens Edit Points.
+    /// A click off every bar keeps the selection, so a trim can scrub past the point.
+    func clickTimeline(point index: Int?, clicks: Int) {
+        guard let index, points.indices.contains(index), !saving else { return }
+        selected = index
+        if clicks >= 2, !editing, !loading, exportProgress == nil { enterEdit() }
+    }
     /// The +/- buttons: keep the playhead in place when it is on screen, else the middle.
     func zoomTimeline(by factor: Double) {
         let at = window.fraction(of: sourceTime, total: total)

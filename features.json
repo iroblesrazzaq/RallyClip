@@ -98,10 +98,10 @@
     },
     {
       "id": "native-ui-zoom-library-theme",
-      "name": "Native timeline zoom (pinch, cmd+scroll, +/- buttons, 1 s limit, also in Edit Points); library rename and sort (date processed, name, custom drag order); green tennis accent",
+      "name": "Native timeline zoom (pinch, cmd+scroll, +/- buttons, 1 s limit, also in Edit Points); click a point bar to select it, double-click to edit it; library rename and sort (date processed, name, custom drag order); green tennis accent",
       "status": "active",
       "verification": "swift test --package-path macos; PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_gui_smoke.py -k rename; interactive native UI QA",
-      "evidence": "2026-10-29: 22 Swift tests pass (10 new: TimelineWindow anchor/limits/pan/reveal/playhead/hour labels, LibraryOrder date/name/custom/move, Match decode without created_ts). PATCH /api/library/<id> rename test passes; default gate 601 passed, 19 skipped. build.sh compiles the AccentColor asset catalog with actool (locked by a test_release_packaging test; 26 passed). Interactive UI QA not yet done."
+      "evidence": "2026-10-29: 25 Swift tests pass (13 new: TimelineWindow anchor/limits/pan/reveal/playhead/hour labels/bar hit test with slop and zoom, LibraryOrder date/name/custom/move, Match decode without created_ts). PATCH /api/library/<id> rename test passes; default gate 601 passed, 19 skipped. build.sh compiles the AccentColor asset catalog with actool (locked by a test_release_packaging test; 26 passed). Interactive UI QA not yet done."
     },
     {
       "id": "native-macos",
