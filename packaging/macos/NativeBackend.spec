@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
+import re
 from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
 root = Path(SPECPATH).resolve().parents[1]
@@ -22,6 +23,12 @@ a = Analysis(
               "tensorflow", "keras", "matplotlib", "IPython", "notebook"],
     noarchive=False,
 )
+# The onnxruntime wheel ships its C API dylib (~33 MB) beside the Python
+# binding, but onnxruntime_pybind11_state.so links ORT statically and nothing
+# loads the dylib on macOS. Execution-provider plugins (libonnxruntime_providers_*)
+# would not match this pattern.
+a.binaries = [b for b in a.binaries
+              if not re.fullmatch(r"libonnxruntime\.[\d.]+\.dylib", Path(b[0]).name)]
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="RallyClipBackend", console=True,
           strip=False, upx=False, argv_emulation=False)
