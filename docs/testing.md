@@ -37,8 +37,8 @@ Last known (2026-10-27): exit 0 with `.venv-train`.
 
 ## Native macOS
 
-`swift test --package-path macos`: **9 passed** on 2026-10-29 (5 on 2026-10-27), including a
-synthetic camera-boundary composition/export/frame-content test and the intro schedule. Swift requires
+`swift test --package-path macos`: **10 passed** on 2026-10-29 (5 on 2026-10-27), including a
+synthetic camera-boundary composition/export/frame-content test, mixed-rotation rejection, and the intro schedule. Swift requires
 normal host access to its caches and media services.
 
 `$PY scripts/native/smoke.py --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend`
@@ -49,7 +49,8 @@ cuts, exact export duration, and delayed audio across a camera boundary. Run aft
 `bash scripts/native/launch_smoke.sh dist/native/RallyClip.app` moves the SwiftPM build dir
 away, runs `RallyClip --check-resources` (resolves the logo with RallyLogo's lookup), then
 launches the app twice (intro, then library with `-welcomeSeen '<true/>'`) and fails if it
-quits within 10 s. A launch alone does not prove the logo loads: a hidden window may not
+quits within 10 s. It sets `RALLYCLIP_NATIVE_DATA_DIR` to a temp dir, so the user's library
+and `native-backend.log` are not touched. A launch alone does not prove the logo loads: a hidden window may not
 draw the sidebar. 2026-10-29: fails on the first v0.7.0 test build (exit 133) and on a
 Bundle.module mutant; passes on the fix.
 

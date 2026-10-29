@@ -32,7 +32,16 @@ public enum CompositionBuilder {
             let soundRange = try await sound?.load(.timeRange)
             loaded.append((source, track, sound, soundRange))
         }
-        if let first = loaded.first { video.preferredTransform = try await first.1.load(.preferredTransform) }
+        // One composition track has one transform. Folder checks compare size and
+        // frame rate only, so reject clips that disagree on rotation.
+        var transforms: [CGAffineTransform] = []
+        for (_, track, _, _) in loaded { transforms.append(try await track.load(.preferredTransform)) }
+        if let first = transforms.first {
+            guard transforms.allSatisfy({ $0 == first }) else {
+                throw RallyError.message("The clips in this match have different rotations. Import clips recorded in one orientation.")
+            }
+            video.preferredTransform = first
+        }
         var cursor = CMTime.zero
         for point in intervals {
             var covered = 0.0

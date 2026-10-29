@@ -9,11 +9,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 UP_SECONDS="${RALLYCLIP_SMOKE_SECONDS:-10}"
 BUILD="$ROOT/build/native-swift"
 HIDDEN=""
+# Own data dir: the backend recreates native-backend.log, and the user's library stays untouched.
+export RALLYCLIP_NATIVE_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/rallyclip-smoke.XXXXXX")"
 pid=""
 cleanup() {
   [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
   pkill -f "$APP/Contents/Resources/Backend/" 2>/dev/null || true
   if [[ -n "$HIDDEN" ]]; then mv "$HIDDEN" "$BUILD"; fi
+  rm -rf "$RALLYCLIP_NATIVE_DATA_DIR"
 }
 trap cleanup EXIT
 if [[ -d "$BUILD" ]]; then HIDDEN="$BUILD.smoke-hidden"; mv "$BUILD" "$HIDDEN"; fi

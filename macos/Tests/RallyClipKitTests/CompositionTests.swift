@@ -4,7 +4,7 @@ import XCTest
 @testable import RallyClipKit
 
 final class CompositionTests: XCTestCase {
-    func clip(at url: URL, color: UInt8) async throws {
+    func clip(at url: URL, color: UInt8, transform: CGAffineTransform = .identity) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 48
@@ -13,6 +13,7 @@ final class CompositionTests: XCTestCase {
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 48
         ])
+        input.transform = transform
         writer.add(input); XCTAssertTrue(writer.startWriting()); writer.startSession(atSourceTime: .zero)
         for index in 0..<60 {
             while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
@@ -63,6 +64,27 @@ final class CompositionTests: XCTestCase {
         XCTAssertEqual(replaced.seconds, 1.0, accuracy: 0.05)
         let left = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix(".rallyclip-") }
         XCTAssertEqual(left, [])
+    }
+
+    func testClipsWithDifferentRotationsAreRejected() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let a = root.appendingPathComponent("a.mp4"), b = root.appendingPathComponent("b.mp4")
+        let upsideDown = CGAffineTransform(a: -1, b: 0, c: 0, d: -1, tx: 64, ty: 48)  // same frame size
+        try await clip(at: a, color: 50); try await clip(at: b, color: 200, transform: upsideDown)
+        let sources = [Source(path: a.path, start: 0, duration: 2), Source(path: b.path, start: 2, duration: 2)]
+        do {
+            _ = try await CompositionBuilder.build(sources: sources, points: [Point(start: 1.5, end: 2.5)])
+            XCTFail("Mixed rotations must not build one timeline")
+        } catch { XCTAssertTrue("\(error)".contains("different rotations"), "\(error)") }
+        // Clips that share one rotation keep it on the timeline.
+        let c = root.appendingPathComponent("c.mp4")
+        try await clip(at: c, color: 50, transform: upsideDown)
+        let same = [Source(path: c.path, start: 0, duration: 2), sources[1]]
+        let composition = try await CompositionBuilder.build(sources: same, points: [Point(start: 1.5, end: 2.5)])
+        let track = try XCTUnwrap(composition.tracks(withMediaType: .video).first)
+        XCTAssertEqual(track.preferredTransform, upsideDown)
     }
 
     func testDeclaredDurationLongerThanTheVideoTrackStillPlays() async throws {

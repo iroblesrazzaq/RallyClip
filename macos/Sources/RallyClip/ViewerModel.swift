@@ -34,6 +34,8 @@ final class ViewerModel: ObservableObject {
     private var exportTask: Task<Void, Never>?
     private let exporter = VideoExporter()
     private var generation = 0
+    /// A seek made while the new item loads; the old item is not seeked.
+    private var pendingSeek: (time: Double, autoplay: Bool?)?
     private var seekGeneration = 0
     var total: Double { sources.map(\.end).max() ?? match.duration_s }
     var pointDuration: Double { points.reduce(0) { $0 + $1.duration } }
@@ -71,7 +73,7 @@ final class ViewerModel: ObservableObject {
             let (s, p) = try await (sourceResult, pointResult)
             sources = s; points = p.segments; savedPoints = p.segments; edited = p.edited
             await rebuild(at: points.first?.start ?? 0, autoplay: false)
-        } catch { self.error = error.localizedDescription; loading = false }
+        } catch { self.error = error.localizedDescription; pendingSeek = nil; loading = false }
     }
     func rebuild(at time: Double? = nil, autoplay: Bool? = nil) async {
         generation += 1; let ticket = generation
@@ -79,7 +81,7 @@ final class ViewerModel: ObservableObject {
         player.pause(); loading = true
         do {
             let intervals = pointOnly && !editing ? points : [Point(start: 0, end: total)]
-            if intervals.isEmpty { player.replaceCurrentItem(with: nil); loading = false; return }
+            if intervals.isEmpty { player.replaceCurrentItem(with: nil); pendingSeek = nil; loading = false; return }
             let composition = try await CompositionBuilder.build(sources: sources, points: intervals)
             guard ticket == generation, !Task.isCancelled else { return }
             playbackPoints = intervals
@@ -91,15 +93,17 @@ final class ViewerModel: ObservableObject {
                 }
             }
             player.replaceCurrentItem(with: item)
-            seek(destination, autoplay: resume); loading = false
+            let pending = pendingSeek; pendingSeek = nil; loading = false
+            seek(pending?.time ?? destination, autoplay: pending?.autoplay ?? resume)
         } catch is CancellationError { }
-        catch { if ticket == generation { self.error = error.localizedDescription; loading = false } }
+        catch { if ticket == generation { self.error = error.localizedDescription; pendingSeek = nil; loading = false } }
     }
     /// exact: false while scrubbing, so each drag step decodes from a nearby keyframe.
     func seek(_ time: Double, autoplay: Bool? = nil, exact: Bool = true) {
         guard time.isFinite else { return }
         seekGeneration += 1; let ticket = seekGeneration
         let source = min(total, max(0, time))
+        if loading { pendingSeek = (source, autoplay); sourceTime = source; return }
         let target = pointOnly && !editing ? PointMath.playbackTime(at: source, points: playbackPoints) : source
         let resume = autoplay ?? playing
         if !resume { player.pause(); playing = false }
@@ -130,7 +134,7 @@ final class ViewerModel: ObservableObject {
         do {
             let valid = try PointMath.validate(points, duration: total)
             let response = try await backend.save(valid, id: match.id)
-            points = response.segments; savedPoints = points; edited = response.edited
+            points = response.segments; savedPoints = points; edited = response.edited; selectedForExport = []
             editing = false; await rebuild(); notice = "Point edits saved"
         } catch { self.error = error.localizedDescription }
     }
@@ -138,26 +142,28 @@ final class ViewerModel: ObservableObject {
         saving = true; defer { saving = false }
         do {
             let response = try await backend.reset(match.id)
-            points = response.segments; savedPoints = points; edited = false; editing = false
+            points = response.segments; savedPoints = points; edited = false; editing = false; selectedForExport = []
             selected = 0; await rebuild(); notice = "Restored model predictions"
         } catch { self.error = error.localizedDescription }
     }
     func trim(start: Bool) {
-        guard points.indices.contains(selected) else { return }
+        guard !saving, points.indices.contains(selected) else { return }
         var point = points[selected]
         if start { point.start = max(selected > 0 ? points[selected - 1].end : 0, min(sourceTime, point.end - 0.1)) }
         else { point.end = min(selected + 1 < points.count ? points[selected + 1].start : total, max(sourceTime, point.start + 0.1)) }
         points[selected] = point
     }
     func addPoint() {
+        guard !saving else { return }
         let start = max(0, min(sourceTime, total - 0.1))
         guard !points.contains(where: { start >= $0.start && start < $0.end }) else { error = "There is already a point here."; return }
         let next = points.first { $0.start > start }?.start ?? total
         points.append(Point(start: start, end: min(start + 8, next)))
         points.sort { $0.start < $1.start }; selected = points.firstIndex { $0.start == start } ?? 0
+        selectedForExport = []  // highlight picks are indices; an insert shifts them
     }
     func deletePoint() {
-        guard points.indices.contains(selected) else { return }
+        guard !saving, points.indices.contains(selected) else { return }
         points.remove(at: selected); selected = min(selected, max(0, points.count - 1)); selectedForExport = []
     }
     func exportCSV() {

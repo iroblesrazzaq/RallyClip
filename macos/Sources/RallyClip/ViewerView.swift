@@ -63,12 +63,16 @@ struct ViewerView: View {
                     if alert.runModal() != .alertFirstButtonReturn { return false }
                     vm.cancelExport()
                 }
+                if vm.saving {  // the request would still save edits the user chose to discard
+                    let alert = NSAlert(); alert.messageText = "Wait for the point edits to finish saving."
+                    alert.runModal(); return false
+                }
                 if vm.hasChanges {
                     let alert = NSAlert(); alert.messageText = "Discard unsaved point edits?"
                     alert.addButton(withTitle: "Discard Edits"); alert.addButton(withTitle: "Keep Editing")
                     return alert.runModal() == .alertFirstButtonReturn
                 }
-                return !vm.saving
+                return true
             }
             await vm.load()
         }
@@ -205,5 +209,6 @@ struct ViewerView: View {
                 Button("Restore Original…") { showReset = true }.disabled(vm.saving)
             }
         }.padding(14).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+            .disabled(vm.saving)  // the save response replaces the points
     }
 }
