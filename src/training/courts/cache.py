@@ -118,11 +118,17 @@ class CourtMaskCache:
 
     def compute(self, video_path: Path) -> CourtCacheResult:
         court = detect_court(str(video_path), self.model_path)
-        mask = court.out_mask() if court is not None else None
-        geometry = court.geometry() if court is not None else {}
+        mask, geometry, error = None, {}, "court model gave no mask"
+        if court is not None:
+            try:
+                geometry = court.geometry()
+                mask = court.out_mask()
+            except Exception as exc:  # a bad court must not abort preprocessing
+                logger.warning("Court geometry failed for %s: %s", video_path.name, exc)
+                court, mask, geometry, error = None, None, {}, f"court geometry failed: {exc}"
         metadata: Dict[str, Any] = {
             "court_detection_success": mask is not None,
-            "error": None if mask is not None else "court model gave no mask",
+            "error": None if mask is not None else error,
             "points_px": geometry.get("points_px"),
             "lines_ok": geometry.get("lines_ok"),
         }

@@ -142,8 +142,10 @@ def geometry_from_decode(decoded, size: tuple[int, int], frames_used: int) -> di
     point_ok = point_ok.copy()
     pts_px = points * np.array([w, h])
     net_source = ["model", "model"]
+    h_c = None
     if point_ok[:4].all():
         h_c, _ = cv2.findHomography(COURT_M[:4], pts_px[:4].astype(np.float64), 0)
+    if h_c is not None:  # None for degenerate corners: keep the model's net points
         implied = cv2.perspectiveTransform(COURT_M[None, 4:6], h_c)[0]
         for k in (4, 5):
             if not point_ok[k] or np.linalg.norm(implied[k - 4] - pts_px[k]) > NET_TOLERANCE_PX:
@@ -253,6 +255,8 @@ def sample_frames(video_path: str, fractions: Sequence[float] = SAMPLE_FRACTIONS
             duration = container.duration / 1e6
         elif stream.duration and stream.time_base:
             duration = float(stream.duration * stream.time_base)
+        elif stream.frames and stream.average_rate:
+            duration = float(stream.frames / stream.average_rate)
         if not duration:
             return frames
         for frac in fractions:

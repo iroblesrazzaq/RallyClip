@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from preprocessing.court_lines import BASE_HORIZONTAL_SHIFT, out_mask
+from preprocessing.court_lines import BASE_HORIZONTAL_SHIFT, CourtDetection, geometry_from_decode, out_mask
 
 W, H = 1280, 720
 # A typical broadcast-style court: near baseline low and wide, far baseline high and narrow.
@@ -60,3 +60,28 @@ def test_out_mask_is_none_when_nothing_is_out():
     court = {"near_left": (-5000.0, 10000.0), "far_left": (-4000.0, -10000.0),
              "near_right": (6000.0, 10000.0), "far_right": (5000.0, -10000.0)}
     assert out_mask(court, W, H) is None
+
+
+def _decoded(points_px, size):
+    """A decode() tuple: points normalized by the map size, all six points found."""
+    names = ("near_left", "near_right", "far_left", "far_right")
+    pts = np.array([points_px[n] for n in names] + [(0.0, 0.0), (0.0, 0.0)]) / np.array(size)
+    ok = np.array([True] * 4 + [False, False])
+    return np.ones(5, bool), pts, ok
+
+
+def test_court_detection_out_mask_scales_decoded_points_to_the_frame():
+    small = {k: (x / 2, y / 2) for k, (x, y) in COURT.items()}  # same court, half-size frame
+    court = CourtDetection(_decoded(small, (640, 360)), frame_size=(W, H), frames_used=3)
+    got = court.out_mask()
+    assert got.shape == (H, W)  # frame_size is (width, height); the mask is (height, width)
+    np.testing.assert_array_equal(got, out_mask(COURT, W, H))
+
+
+def test_geometry_keeps_the_model_net_points_when_the_corners_are_degenerate():
+    line_ok, pts, ok = _decoded({k: (0.5, 0.5) for k in COURT}, (1, 1))  # four equal corners
+    pts[4:] = [[0.3, 0.4], [0.7, 0.4]]
+    ok[4:] = True
+    geometry = geometry_from_decode((line_ok, pts, ok), (W, H), frames_used=3)
+    assert geometry["net_source"] == ["model", "model"]
+    assert geometry["points_px"]["net_left"] == [384.0, 288.0]

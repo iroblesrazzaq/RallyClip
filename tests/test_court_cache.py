@@ -69,3 +69,15 @@ def test_compute_without_a_court_is_a_failed_cache(tmp_path, monkeypatch):
     result = CourtMaskCache(model_path="m").compute(tmp_path / "clip.mp4")
     assert not result.success and result.mask is None
     assert result.metadata["metadata"]["court_detection_success"] is False
+
+
+def test_compute_with_a_court_that_raises_is_a_failed_cache(tmp_path, monkeypatch):
+    class _BadCourt(_FakeCourt):
+        def geometry(self, out_size=None):
+            raise ValueError("degenerate corners")
+
+    monkeypatch.setattr(court_cache, "_video_metadata", lambda _p: {})
+    monkeypatch.setattr(court_cache, "detect_court", lambda video, model: _BadCourt())
+    result = CourtMaskCache(model_path="m").compute(tmp_path / "clip.mp4")
+    assert not result.success and result.mask is None
+    assert "degenerate corners" in result.metadata["metadata"]["error"]
