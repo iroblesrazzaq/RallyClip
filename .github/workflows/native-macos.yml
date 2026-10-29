@@ -59,6 +59,8 @@ jobs:
         run: pytest -q -m 'not slow and not e2e' -p no:cacheprovider
       - name: Build native application
         run: bash scripts/native/build.sh
+      - name: Launch smoke (app stays up, intro and library)
+        run: bash scripts/native/launch_smoke.sh dist/native/RallyClip.app
       - name: Packaged import, edit and export smoke
         run: python scripts/native/smoke.py --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend
       - name: Import existing Apple certificate

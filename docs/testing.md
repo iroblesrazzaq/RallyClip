@@ -35,14 +35,19 @@ Last known (2026-10-27): exit 0 with `.venv-train`.
 
 ## Native macOS
 
-`swift test --package-path macos`: **5 passed** on 2026-10-27 (also 2026-10-07), including a
-synthetic camera-boundary composition/export/frame-content test. Swift requires
+`swift test --package-path macos`: **9 passed** on 2026-10-29 (5 on 2026-10-27), including a
+synthetic camera-boundary composition/export/frame-content test and the intro schedule. Swift requires
 normal host access to its caches and media services.
 
 `$PY scripts/native/smoke.py --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend`
 checks a frozen import, edit/reset/delete, decoded-frame playback through three
 cuts, exact export duration, and delayed audio across a camera boundary. Run after
 `RALLYCLIP_BUILD_PYTHON="$PY" bash scripts/native/build.sh`. See docs/native-macos.md.
+
+`bash scripts/native/launch_smoke.sh dist/native/RallyClip.app` launches the app twice
+(intro, then library with `-welcomeSeen YES`) with the SwiftPM build dir moved away, and
+fails if it quits within 10 s. It catches the Bundle.module launch trap of the first
+v0.7.0 test build. 2026-10-29: fails on that build (exit 133), passes on the fix.
 
 ## Golden CLI parity (run when touching pipeline/engine/extraction/decode)
 
