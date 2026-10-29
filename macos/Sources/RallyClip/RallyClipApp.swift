@@ -8,6 +8,14 @@ struct RallyClipApp: App {
     /// Set once the first-launch intro is dismissed; it never shows again.
     @AppStorage("welcomeSeen") private var welcomeSeen = false
 
+    init() {
+        // Packaging check for scripts/native/launch_smoke.sh: the window may not draw
+        // the logo when it is off screen, so resolve it here and exit.
+        if CommandLine.arguments.contains("--check-resources") {
+            exit(logoURL.flatMap(NSImage.init(contentsOf:)) == nil ? 1 : 0)
+        }
+    }
+
     var body: some Scene {
         Window("RallyClip", id: "main") {
             Group {

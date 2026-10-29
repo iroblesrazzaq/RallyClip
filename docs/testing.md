@@ -44,10 +44,12 @@ checks a frozen import, edit/reset/delete, decoded-frame playback through three
 cuts, exact export duration, and delayed audio across a camera boundary. Run after
 `RALLYCLIP_BUILD_PYTHON="$PY" bash scripts/native/build.sh`. See docs/native-macos.md.
 
-`bash scripts/native/launch_smoke.sh dist/native/RallyClip.app` launches the app twice
-(intro, then library with `-welcomeSeen YES`) with the SwiftPM build dir moved away, and
-fails if it quits within 10 s. It catches the Bundle.module launch trap of the first
-v0.7.0 test build. 2026-10-29: fails on that build (exit 133), passes on the fix.
+`bash scripts/native/launch_smoke.sh dist/native/RallyClip.app` moves the SwiftPM build dir
+away, runs `RallyClip --check-resources` (resolves the logo with RallyLogo's lookup), then
+launches the app twice (intro, then library with `-welcomeSeen '<true/>'`) and fails if it
+quits within 10 s. A launch alone does not prove the logo loads: a hidden window may not
+draw the sidebar. 2026-10-29: fails on the first v0.7.0 test build (exit 133) and on a
+Bundle.module mutant; passes on the fix.
 
 ## Golden CLI parity (run when touching pipeline/engine/extraction/decode)
 

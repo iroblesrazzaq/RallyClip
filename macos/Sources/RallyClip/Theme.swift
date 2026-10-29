@@ -10,13 +10,15 @@ private let resourceBundle: Bundle? = {
     return dirs.lazy.compactMap { $0.flatMap { Bundle(url: $0.appendingPathComponent(name)) } }.first
 }()
 
+/// The logo PNG; nil shows no logo. Also read by `RallyClip --check-resources`.
+let logoURL = resourceBundle?.url(forResource: "rallyclip_logo_cropped", withExtension: "png")
+
 /// Reuse the original logo in both system appearances.
 struct RallyLogo: View {
     @Environment(\.colorScheme) private var scheme
     var height: CGFloat = 32
     var body: some View {
-        if let url = resourceBundle?.url(forResource: "rallyclip_logo_cropped", withExtension: "png"),
-           let image = NSImage(contentsOf: url) {
+        if let url = logoURL, let image = NSImage(contentsOf: url) {
             Group {
                 if scheme == .dark { Image(nsImage: image).resizable().scaledToFit().colorInvert() }
                 else { Image(nsImage: image).resizable().scaledToFit() }

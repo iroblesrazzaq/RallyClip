@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Launch the built app and fail if it quits early, as a Bundle.module trap does.
-# Bundle.module falls back to an absolute path in the SwiftPM build dir, which
-# exists only on the build machine, so that dir is moved away while this runs.
+# Check the built app's resources, then launch it and fail if it quits early, as
+# a Bundle.module trap does. Bundle.module falls back to an absolute path in the
+# SwiftPM build dir, which exists only on the build machine, so that dir is moved
+# away while this runs.
 set -euo pipefail
 APP="$(cd "${1:?usage: launch_smoke.sh RallyClip.app}" && pwd)"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -16,9 +17,12 @@ cleanup() {
 }
 trap cleanup EXIT
 if [[ -d "$BUILD" ]]; then HIDDEN="$BUILD.smoke-hidden"; mv "$BUILD" "$HIDDEN"; fi
-# First launch shows the intro; -welcomeSeen YES (argument domain, not saved)
-# opens the library window, which draws the logo from the resource bundle.
-for args in "" "-welcomeSeen YES"; do
+# The logo, through the same lookup RallyLogo uses (a hidden window may not draw it).
+"$APP/Contents/MacOS/RallyClip" --check-resources || { echo "RallyClip --check-resources failed" >&2; exit 1; }
+echo "resources ok"
+# First launch shows the intro; -welcomeSeen '<true/>' (argument domain, not saved;
+# a plist bool, since @AppStorage reads "YES" as a string) opens the library.
+for args in "" "-welcomeSeen <true/>"; do
   # shellcheck disable=SC2086
   "$APP/Contents/MacOS/RallyClip" $args &
   pid=$!
