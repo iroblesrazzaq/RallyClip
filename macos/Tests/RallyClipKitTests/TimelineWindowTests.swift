@@ -52,4 +52,23 @@ final class TimelineWindowTests: XCTestCase {
         window.pan(by: .infinity, total: 1000)
         XCTAssertEqual(window.visible(total: 1000).start, 290, accuracy: 1e-9)
     }
+
+    func testPlayheadIsHiddenOffScreenAndPinnedInsideTheBar() {
+        var window = TimelineWindow()
+        XCTAssertEqual(window.playheadX(0, total: 100, width: 500), 1)  // whole match: the ends stay visible
+        XCTAssertEqual(window.playheadX(100, total: 100, width: 500), 499)
+        window.zoom(by: 10, anchor: 0, total: 100)  // 0 to 10 s
+        XCTAssertEqual(window.playheadX(5, total: 100, width: 500)!, 250, accuracy: 1e-9)
+        XCTAssertNil(window.playheadX(10.5, total: 100, width: 500))  // panned away while paused
+        window.pan(by: 50, total: 100)
+        XCTAssertNil(window.playheadX(5, total: 100, width: 500))
+        XCTAssertNil(window.playheadX(.nan, total: 100, width: 500))
+    }
+
+    func testFineLabelsShowHoursPastAnHour() {
+        XCTAssertEqual(TimelineWindow.fineLabel(65.04), "1:05.0")
+        XCTAssertEqual(TimelineWindow.fineLabel(3599.96), "1:00:00.0")
+        XCTAssertEqual(TimelineWindow.fineLabel(3725.25), "1:02:05.3")  // 3725.25 rounds to the nearest tenth
+        XCTAssertEqual(TimelineWindow.fineLabel(-3), "0:00.0")
+    }
 }

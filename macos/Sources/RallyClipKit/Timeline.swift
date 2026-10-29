@@ -48,5 +48,18 @@ public struct TimelineWindow: Equatable, Sendable {
         let now = visible(total: total)
         return (time - now.start) / now.span
     }
+    /// The playhead x on a bar `width` wide, or nil when the time is off screen.
+    public func playheadX(_ time: Double, total: Double, width: Double) -> Double? {
+        guard time.isFinite, width > 0 else { return nil }
+        let at = fraction(of: min(max(time, 0), Self.length(total)), total: total)
+        guard (0...1).contains(at) else { return nil }
+        return min(width - 1, max(1, at * width))
+    }
+    /// h:mm:ss.t (or m:ss.t under an hour), for a deep zoom.
+    public static func fineLabel(_ seconds: Double) -> String {
+        let tenths = seconds.isFinite ? Int((max(0, seconds) * 10).rounded()) : 0
+        let (h, m, s, t) = (tenths / 36000, tenths / 600 % 60, tenths / 10 % 60, tenths % 10)
+        return h > 0 ? String(format: "%d:%02d:%02d.%d", h, m, s, t) : String(format: "%d:%02d.%d", m, s, t)
+    }
     private static func length(_ total: Double) -> Double { total.isFinite ? max(total, 0.001) : 0.001 }
 }

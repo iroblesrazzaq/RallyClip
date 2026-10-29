@@ -163,9 +163,7 @@ struct ViewerView: View {
     }
     /// Tenths of a second once less than 20 s is on screen.
     func timelineLabel(_ seconds: Double, span: Double) -> String {
-        guard span < 20, seconds.isFinite else { return formatTime(seconds) }
-        let tenths = Int((max(0, seconds) * 10).rounded())
-        return String(format: "%d:%02d.%d", tenths / 600, tenths / 10 % 60, tenths % 10)
+        span < 20 && seconds.isFinite ? TimelineWindow.fineLabel(seconds) : formatTime(seconds)
     }
     var pointList: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -241,8 +239,7 @@ private struct TimelineCanvas: View {
                 context.fill(Path(roundedRect: rect, cornerRadius: 3),
                              with: .color(index == selected ? .rallyGreen : .rallyGreen.opacity(0.4)))
             }
-            let head = min(size.width - 1, max(1, x(min(max(time, 0), max(total, 0)))))
-            if head >= 0 && head <= size.width {
+            if let head = window.playheadX(time, total: total, width: size.width).map({ CGFloat($0) }) {
                 context.fill(Path(CGRect(x: head - 2, y: 0, width: 4, height: 38)), with: .color(.black.opacity(0.45)))
                 context.fill(Path(CGRect(x: head - 1, y: 0, width: 2, height: 38)), with: .color(.rallyBall))
             }
