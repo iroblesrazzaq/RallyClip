@@ -87,6 +87,19 @@ final class CompositionTests: XCTestCase {
         XCTAssertEqual(track.preferredTransform, upsideDown)
     }
 
+    func testPointEndingJustPastTheFootageStillBuilds() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let a = root.appendingPathComponent("a.mp4")
+        try await clip(at: a, color: 50)
+        // validate accepts an end up to 0.05 s past the footage; playback must accept it too.
+        // With these values the unclipped gap is 0.05000000000000004 in Double, so it fails the coverage check.
+        let composition = try await CompositionBuilder.build(sources: [Source(path: a.path, start: 0, duration: 1)],
+                                                             points: [Point(start: 0.5, end: 1.05)])
+        XCTAssertEqual(composition.duration.seconds, 0.5, accuracy: 0.002)
+    }
+
     func testDeclaredDurationLongerThanTheVideoTrackStillPlays() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

@@ -33,6 +33,7 @@ COURT_M = np.array(
 )
 NET_TOLERANCE_PX = 60.0
 SAMPLE_FRACTIONS = tuple(np.linspace(0.1, 0.9, 7))
+MAX_FRAMES_PER_SEEK = 2000  # well past any keyframe interval (33 s at 60 fps)
 
 
 # --- line fitting (pure numpy) -------------------------------------------------
@@ -262,9 +263,13 @@ def sample_frames(video_path: str, fractions: Sequence[float] = SAMPLE_FRACTIONS
         for frac in fractions:
             target = start + round(float(frac) * duration, 2)
             container.seek(int(target * 1e6), backward=True, any_frame=False)
-            for frame in container.decode(stream):
+            # The seek lands on the keyframe before target; without timestamps the
+            # target is never reached, so stop instead of decoding to the end.
+            for decoded, frame in enumerate(container.decode(stream)):
                 if frame.time is not None and frame.time + 1e-6 >= target:
                     frames.append(frame.to_ndarray(format="bgr24"))
+                    break
+                if decoded >= MAX_FRAMES_PER_SEEK:
                     break
     return frames
 

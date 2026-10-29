@@ -120,7 +120,9 @@ final class ViewerModel: ObservableObject {
         seekGeneration += 1
         if player.rate > 0 { player.pause(); playing = false }
         else {
-            if let item = player.currentItem, player.currentTime() >= item.duration { seek(points.first?.start ?? 0, autoplay: true) }
+            if let item = player.currentItem, player.currentTime() >= item.duration {
+                seek(pointOnly && !editing ? points.first?.start ?? 0 : 0, autoplay: true)  // full timeline restarts at 0:00
+            }
             else { player.play() }
             playing = true
         }

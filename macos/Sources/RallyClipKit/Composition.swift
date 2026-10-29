@@ -11,7 +11,8 @@ public enum CompositionBuilder {
             throw RallyError.message("Could not create the playback timeline.")
         }
         let total = sources.map(\.end).max() ?? 0
-        let intervals = try PointMath.validate(points, duration: total)
+        // validate allows an end up to 0.05 s past the footage; clip it so the coverage check holds.
+        let intervals = try PointMath.validate(points, duration: total).map { Point(start: $0.start, end: min($0.end, total)) }
         // AVAssetTrack holds a weak reference to its asset. Keep the owning
         // assets alive until every source range has been copied.
         var assets: [AVURLAsset] = []

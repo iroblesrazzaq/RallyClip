@@ -52,9 +52,10 @@ final class AppModel: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task {
             do {
-                let urls = folder ? FolderClips.select(try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) : [url]
+                // List off the main actor: a card can hold tens of thousands of files.
+                let urls = folder ? FolderClips.select(try await Task.detached { try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) }.value) : [url]
                 guard !urls.isEmpty else { throw RallyError.message("That folder contains no MP4, MOV or M4V clips.") }
-                try await beginImport(urls, name: url.deletingPathExtension().lastPathComponent)
+                try await beginImport(urls, name: folder ? url.lastPathComponent : url.deletingPathExtension().lastPathComponent)
             } catch { self.error = error.localizedDescription }
         }
     }

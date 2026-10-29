@@ -40,8 +40,9 @@ public actor Backend {
         struct Response: Decodable { let sources: [Source] }
         let response: Response = try await request("api/native/library/\(id)/sources")
         var sources = response.sources
-        // The service reports 0 when the container has no duration metadata.
-        for i in sources.indices where sources[i].duration_s <= 0 {
+        // A single legacy file reports 0 when its container has no duration metadata.
+        // In a folder's sources.json, 0 is real: a clip shorter than half a proxy frame.
+        for i in sources.indices where sources.count == 1 && sources[i].duration_s <= 0 {
             sources[i].duration_s = try await AVURLAsset(url: URL(fileURLWithPath: sources[i].path)).load(.duration).seconds
         }
         return sources

@@ -85,3 +85,32 @@ def test_geometry_keeps_the_model_net_points_when_the_corners_are_degenerate():
     geometry = geometry_from_decode((line_ok, pts, ok), (W, H), frames_used=3)
     assert geometry["net_source"] == ["model", "model"]
     assert geometry["points_px"]["net_left"] == [384.0, 288.0]
+
+
+def test_sample_frames_stops_when_no_frame_reaches_the_target(monkeypatch):
+    import sys
+    import types
+
+    from preprocessing import court_lines
+
+    decoded = []
+
+    class _Frame:
+        time = None  # no timestamps: the target is never reached
+
+    class _Container:
+        start_time, duration = 0, 3600 * 10**6
+        streams = types.SimpleNamespace(video=[types.SimpleNamespace(duration=None, time_base=None)])
+
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+        def seek(self, *args, **kwargs): pass
+
+        def decode(self, _stream):
+            for _ in range(10**6):
+                decoded.append(1)
+                yield _Frame()
+
+    monkeypatch.setitem(sys.modules, "av", types.SimpleNamespace(open=lambda _p: _Container()))
+    assert court_lines.sample_frames("clip.mp4", fractions=(0.5,)) == []
+    assert len(decoded) == court_lines.MAX_FRAMES_PER_SEEK + 1
