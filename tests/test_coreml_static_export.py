@@ -201,6 +201,7 @@ def test_pair_export_matches_static_export_on_fixture_clip():
             np.testing.assert_allclose(want.boxes.xyxy.numpy(), got.boxes.xyxy.numpy(), atol=TOLERANCE, rtol=1e-6)
             np.testing.assert_allclose(want.boxes.conf.numpy(), got.boxes.conf.numpy(), atol=TOLERANCE, rtol=1e-6)
             np.testing.assert_allclose(want.keypoints.xy.numpy(), got.keypoints.xy.numpy(), atol=TOLERANCE, rtol=1e-6)
+            np.testing.assert_allclose(want.keypoints.conf.numpy(), got.keypoints.conf.numpy(), atol=TOLERANCE, rtol=1e-6)
     assert detections > 0, "fixture produced no confident detections; golden proves nothing"
 
 
@@ -269,3 +270,62 @@ def test_pose_extractor_coreml_loads_the_pair_export():
     assert extractor.device == "coreml" and extractor.model.runs_pairs
     cpu = PoseExtractor(model_dir=str(ARTIFACT_DIR), model_path=DYNAMIC_ONNX.name, device="cpu")
     assert not cpu.model.runs_pairs
+    if not CLIP.is_file():
+        return
+    # The pair on CoreML gives what the static model gives on CoreML, one image at a time.
+    # Measured 2026-10-29: within 1e-4 px; 1e-2 leaves room for other Neural Engine builds.
+    from extraction.crop_pass import CROP_WINDOW, crop_frame
+
+    static_path, providers = extractor._resolve_onnx_session(str(DYNAMIC_ONNX))
+    single = OnnxYOLO(static_path, providers=providers)
+    detections = 0
+    for frame in _fixture_frames():
+        images = [frame, crop_frame(frame, CROP_WINDOW)]
+        for want, got in zip(single.predict(images, conf=0.25), extractor.model.predict(images, conf=0.25)):
+            assert want.boxes.xyxy.numpy().shape == got.boxes.xyxy.numpy().shape
+            detections += len(want.boxes)
+            np.testing.assert_allclose(want.boxes.xyxy.numpy(), got.boxes.xyxy.numpy(), atol=1e-2)
+            np.testing.assert_allclose(want.keypoints.xy.numpy(), got.keypoints.xy.numpy(), atol=1e-2)
+            np.testing.assert_allclose(want.keypoints.conf.numpy(), got.keypoints.conf.numpy(), atol=1e-3)
+    assert detections > 0
+
+
+def test_pose_extractor_loads_the_pair_only_on_coreml_and_falls_back_without_it(tmp_path, monkeypatch, caplog):
+    """Runs everywhere: a fake runner stands in for onnxruntime."""
+    import extraction.yolo_onnx_runner as runner
+    import runtime.device as device
+    from extraction.pose_extractor import PoseExtractor
+
+    for name in (DYNAMIC_ONNX.name, STATIC_ONNX.name, PAIR_ONNX.name):
+        (tmp_path / name).touch()
+    opened, pair_fails = [], []
+
+    class FakeRunner:
+        def __init__(self, path, *, providers=None, pair_model_path=None, **_):
+            opened.append((Path(path).name, providers is not None, pair_model_path and Path(pair_model_path).name))
+            if pair_model_path and pair_fails:
+                raise RuntimeError("batch-2 compile failed")
+            self.runs_pairs = pair_model_path is not None
+
+    monkeypatch.setattr(runner, "YOLO", FakeRunner)
+    monkeypatch.setattr(device, "coreml_pose_available", lambda: True)
+
+    def build(name):
+        opened.clear()
+        return PoseExtractor(model_dir=str(tmp_path), model_path=DYNAMIC_ONNX.name, device=name)
+
+    coreml = build("coreml")
+    assert (coreml.device, coreml.model.runs_pairs) == ("coreml", True)
+    assert opened == [(STATIC_ONNX.name, True, PAIR_ONNX.name)]
+
+    pair_fails.append(True)
+    with caplog.at_level("WARNING"):
+        fallback = build("coreml")
+    # Still CoreML, on the batch-1 static model: the batch-2 file is only a speed-up.
+    assert (fallback.device, fallback.model.runs_pairs) == ("coreml", False)
+    assert opened == [(STATIC_ONNX.name, True, PAIR_ONNX.name), (STATIC_ONNX.name, True, None)]
+    assert "batch-2 pose session failed" in caplog.text
+
+    cpu = build("cpu")
+    assert (cpu.device, cpu.model.runs_pairs) == ("cpu", False)
+    assert opened == [(DYNAMIC_ONNX.name, False, None)]
