@@ -16,7 +16,7 @@ from preprocessing.court_lines import detect_court, netline_geometry  # noqa: E4
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CLIP = REPO_ROOT / "tests" / "fixtures" / "golden_cli" / "clip.mp4"
-MODEL = REPO_ROOT / "models" / "rallyclip_v0.6.0" / "court_lines.onnx"
+MODEL = REPO_ROOT / "models" / "rallyclip_v0.6.1" / "court_lines.onnx"
 
 pytestmark = pytest.mark.skipif(not MODEL.is_file(), reason=f"court model absent ({MODEL})")
 

@@ -16,8 +16,9 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-10-29, #71 Cursor review fixes: real court line model test with pinned court
-points, GUI defaults vs manifest, seek frame cap): **618 passed, 1 skipped, 38 deselected, ~82s**.
+Last known (2026-10-29, batch-2 CoreML pose on artifact v0.6.1): **624 passed, 1 skipped, 38 deselected, ~78s**.
+(2026-10-29, #71 Cursor review fixes: real court line model test with pinned court
+points, GUI defaults vs manifest, seek frame cap: 618 passed, 1 skipped, 38 deselected, ~82s.)
 (2026-10-29, court mask from the court line model, classic detector and its 11 MB court fixtures
 removed, plus the ORT dylib filter test and review fixes: 614 passed, 1 skipped, 38 deselected.)
 (2026-10-27, native macOS on runtime v0.6.0, rebuilt on main after #64, macOS `.venv-train` py3.11):
@@ -62,7 +63,9 @@ Bundle.module mutant; passes on the fix.
 PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_cli_golden_parity.py
 ```
 
-Last known (2026-10-29, line-model court mask, v0.6.0 golden unchanged): **1 passed, 15.2s**.
+Last known (2026-10-29, batch-2 CoreML pose, v0.6.1 artifact, golden unchanged): with
+`tests/test_court_model.py` and `tests/test_coreml_static_export.py`, **14 passed, 22.4s**.
+(2026-10-29, line-model court mask, v0.6.0 golden unchanged: 1 passed, 15.2s.)
 (2026-10-27, v0.6.0 golden: 1 passed, 16.1s.) Boundaries compared at 0.5s tolerance;
 byte-exact only holds on the machine+env the golden was generated on. ubuntu/windows
 ORT can split a TCN point across a 1-frame pointness dip; v0.5.0 ships

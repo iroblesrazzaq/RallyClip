@@ -50,7 +50,7 @@ preprocess:
   overwrite: false
 
 court:
-  model_path: null       # null => models/rallyclip_v0.6.0/court_lines.onnx (court line model)
+  model_path: null       # null => models/rallyclip_v0.6.1/court_lines.onnx (court line model)
   force: false
 
 features:

@@ -303,28 +303,55 @@ class YOLO:
     """Ultralytics-call-compatible ONNX pose runner (predict subset only)."""
 
     def __init__(self, model_path: str, *, providers: Optional[list] = None,
-                 intra_op_threads: Optional[int] = None) -> None:
+                 intra_op_threads: Optional[int] = None,
+                 pair_model_path: Optional[str] = None) -> None:
         import onnxruntime as ort
 
         opts = ort.SessionOptions()
         if intra_op_threads is not None:
             opts.intra_op_num_threads = intra_op_threads
-        self._session = ort.InferenceSession(
-            str(model_path), sess_options=opts,
-            providers=providers or ["CPUExecutionProvider"],
-        )
-        model_input = self._session.get_inputs()[0]
-        self._input_name = model_input.name
+        providers = providers or ["CPUExecutionProvider"]
+        self._open = lambda path: ort.InferenceSession(str(path), sess_options=opts, providers=providers)
+        self._model_path = str(model_path)
+        self._session = None
+        # Optional static batch-2 export of the same weights. predict() sends
+        # images two at a time through it: on CoreML one batch-2 call costs
+        # less than two batch-1 calls (the frame + far-court crop pair). The
+        # batch-1 session then opens only when an odd image needs it, so a
+        # crop-pass run does not hold a second CoreML model in memory.
+        self._pair_session = None
+        if pair_model_path is not None:
+            pair = self._open(pair_model_path)
+            shape = pair.get_inputs()[0].shape
+            if not (len(shape) == 4 and shape[:2] == [2, 3] and all(isinstance(d, int) and d > 0 for d in shape[2:])):
+                raise ValueError(f"pair model input {shape} is not a static [2, 3, H, W]")
+            self._pair_session, self._pair_input_name = pair, pair.get_inputs()[0].name
+            self._static_hw = (int(shape[2]), int(shape[3]))
+        else:
+            self._open_single()
+
+    def _open_single(self):
+        session = self._open(self._model_path)
+        model_input = session.get_inputs()[0]
         # Static-shape exports (the CoreML-friendly ones — dynamic axes block
         # the ANE) fix their own input size; letterbox to that exact canvas
         # and ignore the caller's imgsz.
         shape = model_input.shape
         # d > 0: some legacy exporters encode dynamic dims as 0, not strings.
-        self._static_hw = (
+        static_hw = (
             (int(shape[2]), int(shape[3]))
             if len(shape) == 4 and all(isinstance(d, int) and d > 0 for d in shape[2:])
             else None
         )
+        if self._pair_session is not None and static_hw != self._static_hw:
+            raise ValueError(f"model input {shape} does not match the pair model's {self._static_hw}")
+        self._session, self._input_name, self._static_hw = session, model_input.name, static_hw
+        return session
+
+    @property
+    def runs_pairs(self) -> bool:
+        """True when predict() runs images two per session call."""
+        return self._pair_session is not None
 
     def to(self, device) -> "YOLO":  # parity with ultralytics API; providers set at init
         return self
@@ -343,13 +370,23 @@ class YOLO:
     ) -> list[Result]:
         if isinstance(source, np.ndarray) and source.ndim == 3:
             source = [source]
+        source = list(source)
+        inputs = [
+            letterbox_exact(img, self._static_hw) if self._static_hw is not None else letterbox(img, int(imgsz))
+            for img in source
+        ]
+        preds = []
+        if self._pair_session is not None:
+            # Whole pairs through the batch-2 session; an odd last image uses the batch-1 one.
+            for i in range(0, len(inputs) - 1, 2):
+                batch = np.concatenate([inputs[i][0], inputs[i + 1][0]])
+                out = self._pair_session.run(None, {self._pair_input_name: batch})[0]
+                preds.extend([out[0:1], out[1:2]])
+        for tensor, _, _ in inputs[len(preds):]:
+            session = self._session or self._open_single()
+            preds.append(session.run(None, {self._input_name: tensor})[0])
         results = []
-        for img in source:
-            if self._static_hw is not None:
-                tensor, ratio, pad = letterbox_exact(img, self._static_hw)
-            else:
-                tensor, ratio, pad = letterbox(img, int(imgsz))
-            pred = self._session.run(None, {self._input_name: tensor})[0]
+        for img, (_, ratio, pad), pred in zip(source, inputs, preds):
             boxes, bconf, kpt_xy, kpt_conf = decode_pose(
                 pred, ratio, pad, img.shape[:2], float(conf), float(iou), int(max_det)
             )

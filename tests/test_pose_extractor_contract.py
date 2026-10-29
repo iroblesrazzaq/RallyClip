@@ -135,3 +135,49 @@ def test_pose_extractor_crop_pass_adds_far_court_detections_in_frame_pixels(tmp_
     np.testing.assert_allclose(frame["crop"]["boxes"], want_boxes, rtol=1e-6)
     np.testing.assert_allclose(frame["crop"]["keypoints"], want_kps, rtol=1e-6)
     np.testing.assert_allclose(frame["boxes"], res.boxes.xyxy.numpy())
+
+
+class _PairingFakeModel:
+    """Runs frame + crop pairs: answers each image by its shape, like a batch-2 runner."""
+
+    runs_pairs = True
+
+    def __init__(self):
+        self.predict_calls: list[dict] = []
+
+    def predict(self, **kwargs):
+        self.predict_calls.append(kwargs)
+        # A full frame gets two players, a crop one, so a swapped split shows.
+        return [fake_yolo_result(0, include_far=img.shape[0] == FRAME_HEIGHT) for img in kwargs["source"]]
+
+
+def test_pose_extractor_sends_frame_and_crop_in_one_call_to_a_pair_runner(tmp_path, monkeypatch):
+    from extraction.crop_pass import CROP_OUT_SIZE, CROP_WINDOW
+
+    pose_module = import_pose_extractor_with_stubs(monkeypatch)
+    monkeypatch.setattr(pose_module.av, "open", lambda _path: _FakeContainer())
+    extractor = pose_module.PoseExtractor.__new__(pose_module.PoseExtractor)
+    extractor.model_path = "yolov8n-pose-960-dynamic.onnx"
+    extractor.model_dir = None
+    extractor.device = "coreml"
+    extractor.batch_size = 2
+    extractor.imgsz = 960
+    extractor.model = _PairingFakeModel()
+    extractor.frame_iterator_pyav = lambda _path: iter(
+        [(np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3), dtype=np.uint8), t) for t in (0.0, 0.2)]
+    )
+
+    frames = list(extractor.iter_pose_frames(
+        video_path=str(tmp_path / "input.mp4"),
+        confidence_threshold=0.25,
+        duration_seconds=1,
+        target_fps=5,
+        crop_window=CROP_WINDOW,
+    ))
+
+    [call] = extractor.model.predict_calls
+    crop_shape = (CROP_OUT_SIZE[1], CROP_OUT_SIZE[0], 3)
+    assert [img.shape for img in call["source"]] == [(FRAME_HEIGHT, FRAME_WIDTH, 3), crop_shape] * 2
+    assert len(frames) == 2
+    for frame in frames:
+        assert len(frame["boxes"]) == 2 and len(frame["crop"]["boxes"]) == 1

@@ -168,7 +168,7 @@ def test_runtime_reappearing_player_resets_motion_until_history_is_contiguous(tm
     assert far_frame_3[BOX_CONFIDENCE] == make_player("far", 2)["box_conf"]
 
 
-V060 = ROOT / "models" / "rallyclip_v0.6.0"
+V060 = ROOT / "models" / "rallyclip_v0.6.1"
 
 
 @pytest.mark.skipif(not (V060 / "scaler.json").is_file(), reason="weights not fetched (run python scripts/fetch_artifact.py)")

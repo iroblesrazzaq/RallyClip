@@ -97,6 +97,13 @@
       "evidence": "2026-10-22: tests/test_folder_import.py 23 passed (MPEG-TS export frame-exact when the seek lands late or at EOF, 720p downscale + 10->5fps proxy, preflight resolution/height/short-total/unknown-length, folder start state, audio trimmed per cut with zero residual across 15 short 60fps cuts, points edited mid-export re-export without blocking the save, proxy CFR + decoded-frame manifest, 5fps gap fill without boundary drift, cross-boundary export from originals, single-use folder token, spent token after failed start, fps/resolution preflight, cancel-before-handle terminates + cleans job dir, failed export leaves no export.mp4, missing originals -> 404, background export progress -> ready, sources.json persisted). Default gate 350 passed, 49 deselected. Golden parity 1 passed. test_gui_playwright.py 11 passed. Real-footage check: three 40s 1080p30 chunks -> 120.2s 720p proxy in 9.5s (VideoToolbox), audio within 13ms; clip-2 frame 0 aligns to proxy frame 1202; 30s cross-boundary export = 902 frames, audio 30.08s; after review fixes 3 cuts (36s) = 1085 frames, audio 36.18s. Folder picker dialog not exercised by automation."
     },
     {
+      "id": "batch2-coreml-pose",
+      "name": "CoreML pose runs the frame and the far-court crop as one batch-2 call (artifact v0.6.1); CPU keeps two calls",
+      "status": "passing",
+      "verification": "PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_coreml_static_export.py tests/test_yolo_onnx_runner.py tests/test_pose_extractor_contract.py tests/test_cli_golden_parity.py tests/test_court_model.py; $PY scripts/perf/bench_real.py --video <15 min match> --duration 900",
+      "evidence": "2026-10-29: batch-2 export matches batch-1 within 1.2e-4 px (one float32 step). Model level on CoreML: one b2 call 12.9 ms vs two b1 calls 19.7 ms; on CPU b2 is slower (220.6 vs 130.3 ms), so CPU keeps two calls. Full 900 s job on CoreML (bench_real.py, testing_app clip 1): before 158.5 / 146.9 / 136.0 s, after 118.4 / 118.0 s, segments CSV sha d59bbe4e1ac8a4f9 in all runs. Peak RSS is noisy (before 476-642 MB, after 643-691 MB); the b2 session alone adds about 25-35 MB at model level, and the b1 session opens only for an odd last image. Default gate 624 passed, 1 skipped, 38 deselected; golden + court + export tests 14 passed."
+    },
+    {
       "id": "native-macos",
       "name": "SwiftUI macOS desktop with original logo, native continuous playback, point editing, v0.6 analysis and AVFoundation exports",
       "status": "active",
