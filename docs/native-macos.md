@@ -58,11 +58,14 @@ Application data and logs live in `~/Library/Application Support/RallyClip`.
 point at the user's library during tests. `native-backend.log` captures helper
 startup and analysis errors. Camera originals must remain at their imported paths;
 missing footage produces a reconnect message.
+The first launch shows the intro (the legacy typewriter); `defaults delete
+com.iroblesrazzaq.rallyclip welcomeSeen` shows it again.
 
 ## Verification and release
 
 ```bash
 swift test --package-path macos
+bash scripts/native/launch_smoke.sh dist/native/RallyClip.app
 PYTHONPATH=src:tests uv run pytest -q tests/test_native_backend.py
 uv run python scripts/native/smoke.py \
   --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend

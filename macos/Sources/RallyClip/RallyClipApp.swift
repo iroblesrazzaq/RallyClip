@@ -5,10 +5,15 @@ import SwiftUI
 struct RallyClipApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var model = AppModel()
+    /// Set once the first-launch intro is dismissed; it never shows again.
+    @AppStorage("welcomeSeen") private var welcomeSeen = false
 
     var body: some Scene {
         Window("RallyClip", id: "main") {
-            ContentView().environmentObject(model)
+            Group {
+                if welcomeSeen { ContentView() }
+                else { WelcomeView { withAnimation(.easeInOut(duration: 0.3)) { welcomeSeen = true } } }
+            }.environmentObject(model)
                 .frame(minWidth: 1050, minHeight: 700)
                 .tint(Color(red: 0.22, green: 0.68, blue: 0.52))
                 .task {
@@ -20,8 +25,8 @@ struct RallyClipApp: App {
         .defaultSize(width: 1360, height: 900)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New Match…") { model.chooseImport(folder: false) }.keyboardShortcut("n")
-                Button("Import Consecutive Clips…") { model.chooseImport(folder: true) }
+                Button("New Match…") { welcomeSeen = true; model.chooseImport(folder: false) }.keyboardShortcut("n")
+                Button("Import Consecutive Clips…") { welcomeSeen = true; model.chooseImport(folder: true) }
             }
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
