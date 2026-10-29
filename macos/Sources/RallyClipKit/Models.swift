@@ -77,6 +77,11 @@ public enum PointMath {
         return points.last?.end ?? 0
     }
 
+    /// Where a Points Only seek to `sourceTime` lands: a time in a gap moves to the next point's start.
+    public static func landedTime(at sourceTime: Double, points: [Point]) -> Double {
+        self.sourceTime(at: playbackTime(at: sourceTime, points: points), points: points)
+    }
+
     public static func playbackTime(at sourceTime: Double, points: [Point]) -> Double {
         var cursor = 0.0
         for p in points {

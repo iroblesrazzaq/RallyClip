@@ -1163,3 +1163,15 @@ def test_library_rename_updates_meta_and_rejects_bad_names(tmp_path, monkeypatch
     assert json.loads((item_dir / "meta.json").read_text(encoding="utf-8"))["name"] == "Finals vs Lee"
     assert client.patch("/api/library/no-such", json={"name": "A"}).status_code == 404
     assert client.patch("/api/library/..", json={"name": "A"}).status_code in (400, 404)
+
+    # An unreadable meta.json is left as it is, not replaced by {"name": ...}.
+    for broken in ('{"name": "Match 1", "duration_s": 6', "[1, 2]", b"\xff\xfe"):
+        if isinstance(broken, bytes):
+            (item_dir / "meta.json").write_bytes(broken)
+        else:
+            (item_dir / "meta.json").write_text(broken, encoding="utf-8")
+        before = (item_dir / "meta.json").read_bytes()
+        response = client.patch("/api/library/match-1", json={"name": "Lost"})
+        assert response.status_code == 503, broken
+        assert "not changed" in response.get_json()["error"]
+        assert (item_dir / "meta.json").read_bytes() == before

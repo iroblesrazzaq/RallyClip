@@ -108,7 +108,8 @@ class SavedMatchStore:
     def rename(self, item_id: str, name: Any) -> Dict[str, Any]:
         """Set a saved match's display name in meta.json and return the new meta.
 
-        Raises ValueError for a bad id or name, FileNotFoundError for an unknown match.
+        Raises ValueError for a bad id or name, FileNotFoundError for an unknown match,
+        OSError when meta.json cannot be read or parsed (the file is then left as it is).
         """
         if not isinstance(name, str):
             raise ValueError("Name must be text.")
@@ -121,7 +122,13 @@ class SavedMatchStore:
         meta_path = item_dir / META_FILENAME
         if not meta_path.exists():
             raise FileNotFoundError(item_id)
-        meta = self.read_meta(item_dir)
+        # Strict, unlike read_meta: writing {"name"} over an unreadable file would erase its other fields.
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:  # JSON and Unicode decode errors are ValueErrors
+            raise OSError(f"{META_FILENAME} cannot be read, so it was not changed") from exc
+        if not isinstance(meta, dict):
+            raise OSError(f"{META_FILENAME} is not a JSON object, so it was not changed")
         meta["name"] = name
         # Write a sibling and replace, so a crash never leaves half a meta.json.
         temporary = meta_path.with_name(f".{META_FILENAME}.{uuid.uuid4().hex[:8]}.tmp")

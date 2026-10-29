@@ -106,9 +106,12 @@ final class ViewerModel: ObservableObject {
         guard time.isFinite else { return }
         seekGeneration += 1; let ticket = seekGeneration
         let source = min(total, max(0, time))
-        window.reveal(source, total: total)
-        if loading { pendingSeek = (source, autoplay); sourceTime = source; return }
+        if loading { window.reveal(source, total: total); pendingSeek = (source, autoplay); sourceTime = source; return }
         let target = pointOnly && !editing ? PointMath.playbackTime(at: source, points: playbackPoints) : source
+        // In Points Only a time in a gap lands at the next point; keep that on screen. A drag step
+        // reveals the time under the pointer, so the window does not jump while scrubbing.
+        let landed = pointOnly && !editing ? PointMath.landedTime(at: source, points: playbackPoints) : source
+        window.reveal(exact ? landed : source, total: total)
         let resume = autoplay ?? playing
         if !resume { player.pause(); playing = false }
         let tolerance = exact ? CMTime.zero : CMTime(seconds: 0.5, preferredTimescale: 600)
