@@ -4,7 +4,13 @@ import RallyClipKit
 
 struct ContentView: View {
     @EnvironmentObject var app: AppModel
-    var filtered: [Match] { app.matches.filter { app.search.isEmpty || $0.name.localizedCaseInsensitiveContains(app.search) } }
+    @AppStorage("librarySort") private var sort = LibrarySort.date
+    /// Match ids in the custom order, one per line.
+    @AppStorage("libraryOrder") private var customOrder = ""
+    var ordered: [Match] { LibraryOrder.sorted(app.matches, by: sort, custom: customOrder.split(separator: "\n").map(String.init)) }
+    var filtered: [Match] { ordered.filter { app.search.isEmpty || $0.name.localizedCaseInsensitiveContains(app.search) } }
+    /// Drag to reorder only in the custom order, with every match shown.
+    var canReorder: Bool { sort == .custom && app.search.isEmpty }
     var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 0) {
@@ -18,7 +24,17 @@ struct ContentView: View {
                 } label: { Label("New Match", systemImage: "plus").frame(maxWidth: .infinity).padding(.vertical, 6) }
                     .menuStyle(.borderlessButton).padding(10).background(.tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
                     .padding(.horizontal, 16).disabled(app.busy || app.starting).accessibilityIdentifier("newMatch")
-                TextField("Search matches", text: $app.search).textFieldStyle(.roundedBorder).padding(16)
+                HStack(spacing: 8) {
+                    TextField("Search matches", text: $app.search).textFieldStyle(.roundedBorder)
+                    Menu {
+                        Picker("Sort By", selection: $sort) {
+                            ForEach(LibrarySort.allCases, id: \.self) { Text($0.label).tag($0) }
+                        }.pickerStyle(.inline)
+                    } label: { Image(systemName: "arrow.up.arrow.down") }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                        .help(sort == .custom ? "Sort: custom order. Drag matches to reorder." : "Sort: \(sort.label.lowercased())")
+                        .accessibilityLabel("Sort matches")
+                }.padding(16)
                 List(selection: Binding(get: { app.selected }, set: { app.navigate(to: $0) })) {
                     Section("SAVED MATCHES · \(app.matches.count)") {
                         ForEach(filtered) { match in
@@ -29,8 +45,14 @@ struct ContentView: View {
                                     Text("\(match.n_segments) points · \(formatTime(match.duration_s))").font(.caption).foregroundStyle(.secondary)
                                 }
                             }.padding(.vertical, 6).tag(match.id)
-                                .contextMenu { Button("Delete Match…", role: .destructive) { app.delete(match) } }
-                        }
+                                .contextMenu {
+                                    Button("Rename…") { app.rename(match) }
+                                    Divider()
+                                    Button("Delete Match…", role: .destructive) { app.delete(match) }
+                                }
+                        }.onMove(perform: canReorder ? { source, destination in
+                            customOrder = LibraryOrder.move(ordered.map(\.id), from: source, to: destination).joined(separator: "\n")
+                        } : nil)
                     }
                 }.listStyle(.sidebar)
                 if app.busy || app.job != nil { AnalysisCard().padding(14) }

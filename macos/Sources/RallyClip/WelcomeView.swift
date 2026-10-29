@@ -33,7 +33,6 @@ struct WelcomeView: View {
 struct WelcomeHeadline: View {
     let step: WelcomeScript.Step
     var size: CGFloat = 74
-    @Environment(\.colorScheme) private var scheme
     var body: some View {
         VStack(alignment: .leading, spacing: size * 0.08) {
             ForEach(WelcomeScript.lines.indices, id: \.self) { line in
@@ -51,10 +50,7 @@ struct WelcomeHeadline: View {
     private func text(_ line: Int) -> Text {
         let text = Text(String(WelcomeScript.lines[line].prefix(step.shown[line])))
         guard line == WelcomeScript.lines.count - 1 else { return text }
-        // The legacy --free-accent green, light and dark.
-        let green = scheme == .dark ? Color(red: 0x7b / 255, green: 0xd6 / 255, blue: 0x3a / 255)
-                                    : Color(red: 0x2f / 255, green: 0x8f / 255, blue: 0x3a / 255)
-        return text.italic().foregroundColor(green)
+        return text.italic().foregroundColor(.rallyGreen)  // the legacy --free-accent green
     }
 }
 

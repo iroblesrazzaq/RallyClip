@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -22,6 +23,7 @@ EDITED_SEGMENTS_FILENAME = "segments_edited.csv"
 META_FILENAME = "meta.json"
 THUMBNAIL_FILENAME = "thumb.jpg"
 EXPORT_FILENAME = "export.mp4"
+MAX_NAME_LENGTH = 200
 
 
 def new_item_id() -> str:
@@ -102,6 +104,33 @@ class SavedMatchStore:
             logging.warning("Could not read library metadata from %s", meta_path, exc_info=True)
             return {}
         return meta if isinstance(meta, dict) else {}
+
+    def rename(self, item_id: str, name: Any) -> Dict[str, Any]:
+        """Set a saved match's display name in meta.json and return the new meta.
+
+        Raises ValueError for a bad id or name, FileNotFoundError for an unknown match.
+        """
+        if not isinstance(name, str):
+            raise ValueError("Name must be text.")
+        name = " ".join(name.split())  # one line: newlines and tabs become spaces
+        if not name:
+            raise ValueError("Name cannot be empty.")
+        if len(name) > MAX_NAME_LENGTH:
+            raise ValueError(f"Name can be at most {MAX_NAME_LENGTH} characters.")
+        item_dir = self.item_dir(item_id)
+        meta_path = item_dir / META_FILENAME
+        if not meta_path.exists():
+            raise FileNotFoundError(item_id)
+        meta = self.read_meta(item_dir)
+        meta["name"] = name
+        # Write a sibling and replace, so a crash never leaves half a meta.json.
+        temporary = meta_path.with_name(f".{META_FILENAME}.{uuid.uuid4().hex[:8]}.tmp")
+        try:
+            temporary.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+            os.replace(temporary, meta_path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return meta
 
     def list_items(self) -> List[Dict[str, Any]]:
         """List saved matches (newest first). An item needs meta.json + a source video."""

@@ -24,6 +24,8 @@ public struct Match: Codable, Identifiable, Hashable, Sendable {
     public let point_duration_s: Double
     public let n_segments: Int
     public let created: String
+    /// Seconds since 1970; older libraries may not have it.
+    public let created_ts: Double?
     public let has_edits: Bool
 }
 

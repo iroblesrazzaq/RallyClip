@@ -26,3 +26,15 @@ struct RallyLogo: View {
         }
     }
 }
+
+extension Color {
+    /// The intro screen's tennis green: dark green in light mode, light green in dark mode.
+    /// Packaged builds also set it as the app accent (packaging/macos/Assets.xcassets).
+    static let rallyGreen = Color(nsColor: NSColor(name: "rallyGreen") { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x7b / 255, green: 0xd6 / 255, blue: 0x3a / 255, alpha: 1)
+            : NSColor(srgbRed: 0x2f / 255, green: 0x8f / 255, blue: 0x3a / 255, alpha: 1)
+    })
+    /// Tennis-ball green for the playhead; it shows on the green point bars in both modes.
+    static let rallyBall = Color(red: 0xc8 / 255, green: 0xf0 / 255, blue: 0x3c / 255)
+}
