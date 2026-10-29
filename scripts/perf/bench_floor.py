@@ -71,12 +71,10 @@ def main() -> int:
     real_loader = cli._load_config_dict
     cli._load_config_dict = lambda path: ({} if path == "__none__" else real_loader(path))
 
-    # Stub YOLO at both instantiation sites so no .pt weights are ever loaded.
+    # Stub YOLO so no .pt weights are ever loaded.
     import extraction.pose_extractor as pe
-    import preprocessing.court_detector_impl as cd
 
     pe.YOLO = _FakeYOLO
-    cd.YOLO = _FakeYOLO
 
     out_dir = Path(tempfile.mkdtemp(prefix="rcfloor_"))
     duration = args.duration if args.duration > 0 else None

@@ -131,7 +131,7 @@ def test_crop_sidecar_of_another_frame_size_is_rejected(tmp_path):
     annotations.write_text(json.dumps({"video_path": "clip.mp4", "segments": [{"start_time": 0.2, "end_time": 1.0}]}))
     pre = Hdf5Preprocessor(
         PreprocessConfig(
-            target_fps=5.0, save_court_masks=False, court_model_path="", court_target_time=None,
+            target_fps=5.0, save_court_masks=False, court_model_path="",
             court_enabled=False, expect_width=1280, expect_height=720,
         )
     )
@@ -156,7 +156,7 @@ def test_a_rebuild_with_nothing_to_write_drops_the_old_preprocessed_file(tmp_pat
     old.write_bytes(b"old build")
     pre = Hdf5Preprocessor(
         PreprocessConfig(
-            target_fps=5.0, save_court_masks=False, court_model_path="", court_target_time=None,
+            target_fps=5.0, save_court_masks=False, court_model_path="",
             court_enabled=False, expect_width=1280, expect_height=720,
         )
     )

@@ -66,15 +66,13 @@ def main() -> int:
 
     if args.stub_yolo:
         import extraction.pose_extractor as pe
-        import preprocessing.court_detector_impl as cd
         pe.YOLO = _FakeYOLO
-        cd.YOLO = _FakeYOLO
 
     if args.stub_court:
         from preprocessing.data_preprocessor import DataPreprocessor
         from runtime.video_validation import probe_video
 
-        def _stub_mask(self, video_path):
+        def _stub_mask(self, video_path, court=None):
             try:
                 info = probe_video(video_path)
                 h, w = int(info.height), int(info.width)

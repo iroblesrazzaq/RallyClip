@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from training.courts.cache import CourtMaskCache  # noqa: E402
-from training.io.config import court_target_time, load_config, resolve_court_model_path  # noqa: E402
+from training.io.config import load_config, resolve_court_model_path  # noqa: E402
 from training.io.videos import resolve_videos  # noqa: E402
 from training.paths import annotations_dir, raw_videos_dir, resolve_data_root  # noqa: E402
 
@@ -41,10 +41,7 @@ def main() -> int:
 
     model_path = resolve_court_model_path(config)
     logging.info("Court detector model: %s", model_path)
-    cache = CourtMaskCache(
-        model_path=model_path,
-        target_time=court_target_time(court_cfg),
-    )
+    cache = CourtMaskCache(model_path=model_path)
     force = bool(args.force or court_cfg.get("force", False))
 
     for video in videos:

@@ -580,3 +580,28 @@ data/labels/metric, not optimization.** Do not re-run these:
   build and reuses the existing Developer ID/notarization scripts and secrets;
   legacy manual builds remain available. Desktop tags still create drafts, and
   the user merges/publishes.
+
+## 2026-10-29 — Court mask from the court line model; classic detector removed
+
+- **What:** The court 'out' mask now comes from the court line model
+  (`court_lines.onnx`), in runtime and training. `court_lines.out_mask` takes
+  the model's doubles sidelines (near/far corners) and pads them outward with
+  the classic rule: shift = 100 x visible near-baseline width / frame width,
+  applied to each sideline's intercept; everything above a padded sideline is
+  out. One model pass per video gives both the mask and the net line.
+  `CourtDetector` (court_detector_impl.py), its YOLO-based clean-frame
+  extraction, `training/courts/{anchors,clean_frame}.py`, `court.target_time`,
+  the court regression fixtures and their scripts are deleted.
+- **Why:** User request. Over 52 source videos the line model gave a mask on
+  52; the classic detector fell back to the default mask on 8. Where both
+  detected (44), median IoU of the out region was 0.98. The worst disagreements
+  were classic-detector errors (service line or a pickleball line taken as the
+  baseline/sideline).
+- **Effect on v0.6.0 output (4 CV-val videos, CoreML, no test videos):** segment
+  F1 (IoU>=0.5) old -> new 0.902 -> 0.902, 0.757 -> 0.747 (one extra segment),
+  0.825 -> 0.825, 0.795 -> 0.795; mean 0.820 -> 0.817. 0.00-0.31% of 0.2 s
+  frames change rally/no-rally.
+- **Train/serve:** v0.6.0 was trained on classic masks; the runtime now uses
+  line-model masks. Training court caches from the classic detector are
+  recomputed (`detector.kind` check), and the preprocess fingerprint changed,
+  so the next retrain uses the new masks too.

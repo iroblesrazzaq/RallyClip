@@ -215,17 +215,25 @@ def test_netline_manifest_wires_court_geometry_and_crop_pass(tmp_path, monkeypat
     hm = PX_TO_M.tolist()
     seen = {}
 
-    def fake_geometry(video_path, model_path, out_size=None, providers=None):
-        seen["court"] = (model_path, out_size)
-        return {"net_line_px": [[686.0, 600.0], [1234.0, 600.0]], "homography_px_to_m": hm}
+    class FakeCourt:
+        frame_size = (1920, 1080)
 
-    monkeypatch.setattr(court_lines, "compute_court_geometry", fake_geometry)
+        def geometry(self, out_size=None):
+            seen["court_size"] = out_size
+            return {"net_line_px": [[686.0, 600.0], [1234.0, 600.0]], "homography_px_to_m": hm}
+
+    def fake_detect(video_path, model_path, providers=None):
+        seen["court"] = model_path
+        return FakeCourt()
+
+    monkeypatch.setattr(court_lines, "detect_court", fake_detect)
 
     class Pre(DataPreprocessor):
         def __init__(self, **kwargs):
             super().__init__(screen_width=1920, screen_height=1080)
 
-        def compute_court_mask(self, video_path):
+        def compute_court_mask(self, video_path, court=None):
+            seen["mask_court"] = court
             return np.zeros((1080, 1920), np.uint8), None
 
         def _source_frame_shape(self, video_path):
@@ -255,7 +263,8 @@ def test_netline_manifest_wires_court_geometry_and_crop_pass(tmp_path, monkeypat
 
     [(vec, _)] = list(build_feature_stream(request, deps, None, None))
 
-    assert seen["court"] == (str(tmp_path / "court.onnx"), (1920, 1080))
+    assert seen["court"] == str(tmp_path / "court.onnx") and seen["court_size"] == (1920, 1080)
+    assert seen["mask_court"] is not None  # one court pass feeds both the mask and the net line
     assert isinstance(seen["geometry"], CourtGeometry)
     np.testing.assert_allclose(seen["geometry"].px_to_m, PX_TO_M)
     assert seen["crop_window"] == tuple(crop_window)

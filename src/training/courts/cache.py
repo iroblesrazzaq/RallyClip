@@ -5,14 +5,12 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import cv2
 import numpy as np
 
-from preprocessing.court_detector_impl import CourtDetector
-from training.courts.anchors import court_anchor_times
-from training.courts.clean_frame import MiddleAnchoredCourtDetector
+from preprocessing.court_lines import detect_court, padded_sidelines
 from training.paths import pose_courts_dir
 
 logger = logging.getLogger(__name__)
@@ -64,28 +62,42 @@ def _warn_on_video_metadata_mismatch(cache_meta: Dict[str, Any], current_meta: D
             logger.warning("Court cache metadata mismatch for %s: %s != %s", key, cache_meta[key], current_meta[key])
 
 
+# Recorded in each cache's meta; a cache from another detector is recomputed.
+DETECTOR_KIND = "court_lines"
+
+
+def _segment(a, b) -> List[List[float]]:
+    return [[float(a[0]), float(a[1]), float(b[0]), float(b[1])]]
+
+
+def _court_lines(points: Dict[str, Any], width: int, height: int) -> Dict[str, Any]:
+    """Doubles sidelines, near baseline and padded sidelines, in the [[x1, y1, x2, y2]]
+    layout training.viz reads. Empty when a corner is missing."""
+    lines = padded_sidelines(points, width)
+    if lines is None:
+        return {}
+    nl, fl, nr, fr = (points[n] for n in ("near_left", "far_left", "near_right", "far_right"))
+    extended = [
+        [float(value), 0.0, float(value), float(height)] if slope is None
+        else [0.0, float(value), float(width), float(slope * width + value)]
+        for slope, value in lines
+    ]
+    return {
+        "baseline": _segment(nl, nr),
+        "left_doubles_sideline": _segment(nl, fl),
+        "right_doubles_sideline": _segment(nr, fr),
+        "extended_sidelines": extended,
+    }
+
+
 class CourtMaskCache:
-    def __init__(self, model_path: str = "models/yolov8s-pose.pt", target_time: Optional[int] = None) -> None:
+    """Per-video court 'out' mask from the court line model (court_lines.onnx)."""
+
+    def __init__(self, model_path: str) -> None:
         self.model_path = model_path
-        # None => anchor court detection at the MIDDLE of the video, retrying a
-        # few midpoint-centred anchors if the exact middle frame is unusable
-        # (changeover/replay). An explicit int pins a single anchor (regression).
-        self.target_time = target_time
 
     def cache_path(self, data_root: Path, video_path: Path) -> Path:
         return pose_courts_dir(data_root) / f"{video_path.stem}.npz"
-
-    def _anchor_times(self, video_path: Path) -> list:
-        """Anchor times (seconds) to try, middle-first. A pinned target_time is
-        honoured as the only anchor."""
-        if self.target_time is not None:
-            return [float(self.target_time)]
-        return court_anchor_times(_video_metadata(video_path).get("duration"))
-
-    @property
-    def anchor_policy(self):
-        """What the cache meta records: "middle" or the pinned int."""
-        return "middle" if self.target_time is None else int(self.target_time)
 
     def load(self, cache_path: Path, current_video_meta: Optional[Dict[str, Any]] = None) -> Optional[CourtCacheResult]:
         if not cache_path.exists():
@@ -105,44 +117,34 @@ class CourtMaskCache:
             return None
 
     def compute(self, video_path: Path) -> CourtCacheResult:
-        detector = MiddleAnchoredCourtDetector(yolo_model_path=self.model_path)
-        anchors = self._anchor_times(video_path)
-        mask = clean_frame = metadata = None
-        used_anchor = anchors[0]
-        for anchor in anchors:
-            mask, clean_frame, metadata = detector.process_video(str(video_path), target_time=anchor)
-            used_anchor = anchor
-            if bool(metadata.get("court_detection_success")) and mask is not None:
-                break
-            logger.info(
-                "Court detection did not succeed at anchor=%s for %s: %s",
-                anchor, video_path.name, metadata.get("error"),
-            )
-
-        self._inject_line_metadata(detector, metadata, clean_frame)
+        court = detect_court(str(video_path), self.model_path)
+        mask, geometry, error = None, {}, "court model gave no mask"
+        if court is not None:
+            try:
+                geometry = court.geometry()
+                mask = court.out_mask()
+            except Exception as exc:  # a bad court must not abort preprocessing
+                logger.warning("Court geometry failed for %s: %s", video_path.name, exc)
+                court, mask, geometry, error = None, None, {}, f"court geometry failed: {exc}"
+        metadata: Dict[str, Any] = {
+            "court_detection_success": mask is not None,
+            "error": None if mask is not None else error,
+            "points_px": geometry.get("points_px"),
+            "lines_ok": geometry.get("lines_ok"),
+        }
+        if court is not None:
+            metadata.update(_court_lines(geometry["points_px"], *court.frame_size))
         lines = self._extract_lines(metadata)
-        success = bool(metadata.get("court_detection_success")) and mask is not None
+        success = mask is not None
         if not success:
-            logger.warning(
-                "COURT DETECTION FAILED for %s across %d anchor(s) -> mask unavailable",
-                video_path.name, len(anchors),
-            )
+            logger.warning("COURT DETECTION FAILED for %s -> mask unavailable", video_path.name)
 
         meta = {
             "video": _video_metadata(video_path),
-            "detector": {
-                "model_path": self.model_path,
-                "anchor_policy": self.anchor_policy,
-                "target_time": used_anchor,
-            },
-            "heuristics": self._extract_heuristics(metadata, clean_frame),
+            "detector": {"kind": DETECTOR_KIND, "model_path": self.model_path},
             "metadata": metadata,
             "created_at": datetime.utcnow().isoformat() + "Z",
         }
-
-        if not success:
-            mask = None
-
         return CourtCacheResult(success=success, mask=mask, metadata=meta, lines=lines)
 
     def save(self, cache_path: Path, result: CourtCacheResult) -> None:
@@ -168,109 +170,19 @@ class CourtMaskCache:
 
         cached = self.load(cache_path, current_video_meta=current_meta)
         if cached and not force:
-            cached_policy = cached.metadata.get("detector", {}).get("anchor_policy")
-            if cached_policy is None:
-                logger.warning("Court cache %s predates anchor_policy; reusing it as-is", cache_path.name)
+            if cached.metadata.get("detector", {}).get("kind") == DETECTOR_KIND:
                 return cached
-            if cached_policy == self.anchor_policy:
-                return cached
-            logger.info(
-                "Court cache %s was built with anchor %s, want %s; recomputing",
-                cache_path.name, cached_policy, self.anchor_policy,
-            )
+            logger.info("Court cache %s is from the classic detector; recomputing", cache_path.name)
 
         result = self.compute(video_path)
         self.save(cache_path, result)
         return result
 
     def _extract_lines(self, metadata: Dict[str, Any]) -> Optional[np.ndarray]:
-        baseline = metadata.get("baseline")
-        left_line = metadata.get("left_doubles_sideline")
-        right_line = metadata.get("right_doubles_sideline")
-        extended = metadata.get("extended_sidelines")
-
         lines = []
-        for entry in (baseline, left_line, right_line):
-            if entry is not None:
-                lines.extend(entry)
-        if extended:
-            lines.extend(extended)
-        return _safe_cast_lines(lines)
-
-    def _extract_heuristics(self, metadata: Dict[str, Any], clean_frame: np.ndarray) -> Dict[str, Any]:
-        heuristics: Dict[str, Any] = {}
-        image_width = metadata.get("image_width") or (clean_frame.shape[1] if clean_frame is not None else None)
-        if image_width:
-            baseline_width = metadata.get("baseline_width") or 0
-            heuristics["baseline_width_pct"] = float((baseline_width / image_width) * 100)
-            heuristics["full_width_baseline"] = heuristics["baseline_width_pct"] > 98.5
-        return heuristics
-
-    def _inject_line_metadata(self, detector: CourtDetector, metadata: Dict[str, Any], clean_frame: np.ndarray) -> None:
-        if clean_frame is None:
-            return
-        try:
-            horizontal, vertical, right_diag, left_diag = detector.detect_court_lines(clean_frame)
-            merged_horizontal = detector.merge_lines(horizontal, clean_frame.shape, kernel_size=(5, 30))
-            merged_right = detector.merge_lines(right_diag, clean_frame.shape, kernel_size=(2, 2))
-            merged_left = detector.merge_lines(left_diag, clean_frame.shape, kernel_size=(2, 2))
-            baseline = detector.find_baseline(merged_horizontal)
-            left_sideline = detector.process_side_decision_tree(merged_left, baseline, clean_frame.shape[1], "left")
-            right_sideline = detector.process_side_decision_tree(merged_right, baseline, clean_frame.shape[1], "right")
-            metadata.setdefault("baseline", baseline)
-            metadata.setdefault("left_doubles_sideline", left_sideline)
-            metadata.setdefault("right_doubles_sideline", right_sideline)
-            metadata.setdefault("extended_sidelines", self._compute_extended_lines(clean_frame, baseline, left_sideline, right_sideline))
-        except Exception as exc:
-            logger.debug("Failed to inject line metadata: %s", exc)
-
-    @staticmethod
-    def _compute_extended_lines(
-        clean_frame: np.ndarray,
-        baseline: Optional[list],
-        left_sideline: Optional[list],
-        right_sideline: Optional[list],
-    ) -> Optional[list]:
-        if baseline is None or left_sideline is None or right_sideline is None:
-            return None
-
-        BASE_HORIZONTAL_SHIFT = 100
-        screen_width = clean_frame.shape[1]
-        bx1, by1, bx2, by2 = baseline[0]
-        baseline_width = abs(bx2 - bx1)
-        scale_factor = (baseline_width / screen_width) if screen_width else 0.0
-        dynamic_shift = BASE_HORIZONTAL_SHIFT * scale_factor
-
-        lx1, ly1, lx2, ly2 = left_sideline[0]
-        left_slope = (ly2 - ly1) / (lx2 - lx1) if (lx2 - lx1) != 0 else float("inf")
-        left_intercept = ly1 - left_slope * lx1
-
-        rx1, ry1, rx2, ry2 = right_sideline[0]
-        right_slope = (ry2 - ry1) / (rx2 - rx1) if (rx2 - rx1) != 0 else float("inf")
-        right_intercept = ry1 - right_slope * rx1
-
-        if left_slope != float("inf"):
-            left_shifted_intercept = left_intercept - dynamic_shift / np.sqrt(1 + left_slope**2)
-            left_extended = [
-                0,
-                int(left_slope * 0 + left_shifted_intercept),
-                screen_width,
-                int(left_slope * screen_width + left_shifted_intercept),
-            ]
-        else:
-            left_shifted_x = int(lx1 - dynamic_shift)
-            left_extended = [left_shifted_x, 0, left_shifted_x, clean_frame.shape[0]]
-
-        if right_slope != float("inf"):
-            right_shifted_intercept = right_intercept - dynamic_shift / np.sqrt(1 + right_slope**2)
-            right_extended = [
-                0,
-                int(right_slope * 0 + right_shifted_intercept),
-                screen_width,
-                int(right_slope * screen_width + right_shifted_intercept),
-            ]
-        else:
-            right_shifted_x = int(rx1 + dynamic_shift)
-            right_extended = [right_shifted_x, 0, right_shifted_x, clean_frame.shape[0]]
-
-        return [left_extended, right_extended]
+        for key in ("baseline", "left_doubles_sideline", "right_doubles_sideline"):
+            if metadata.get(key) is not None:
+                lines.extend(metadata[key])
+        if metadata.get("extended_sidelines"):
+            lines.extend(metadata["extended_sidelines"])
+        return _safe_cast_lines(lines) if lines else None

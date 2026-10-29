@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import subprocess
 import sys
 import tomllib
@@ -125,6 +126,16 @@ def test_native_backend_spec_bundles_default_artifact_dir_torch_free():
     excludes = spec.split("excludes=[", 1)[1].split("]", 1)[0]
     for name in ("torch", "torchvision", "ultralytics"):
         assert f'"{name}"' in excludes
+
+
+def test_native_backend_spec_drops_only_the_ort_c_api_dylib():
+    """The pybind module links ORT statically, so the C API dylib is unused."""
+    spec = (ROOT / "packaging" / "macos" / "NativeBackend.spec").read_text(encoding="utf-8")
+    pattern = re.search(r're\.fullmatch\(r"([^"]+)"', spec).group(1)
+    assert re.fullmatch(pattern, "libonnxruntime.1.31.1.dylib")
+    for kept in ("onnxruntime_pybind11_state.so", "libonnxruntime_providers_shared.dylib",
+                 "libavcodec.61.19.101.dylib"):
+        assert not re.fullmatch(pattern, kept), kept
 
 
 def _exec_spec_version_block(specpath: str) -> str:

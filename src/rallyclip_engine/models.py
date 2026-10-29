@@ -107,20 +107,15 @@ def build_feature_stream(
     elif deps.apply_pose_device is not None:
         pose_device = deps.apply_pose_device(None, model_path=yolo_weights, set_env=False)
 
-    # Court detection runs a handful of frames; CoreML only accelerates the
-    # pose loop, so keep the preprocessor's YOLO on CPU for that device.
-    court_device = "cpu" if pose_device == "coreml" else pose_device
     pre = deps.DataPreprocessor(
         screen_width=int(request.screen_width),
         screen_height=int(request.screen_height),
         save_court_masks=False,
-        yolo_model_path=yolo_weights,
-        conf=float(request.conf),
-        **({"yolo_device": court_device} if court_device is not None else {}),
     )
     _check(cancel_check)
     _emit(progress_callback, "pose", 1)
-    court_mask, _ = pre.compute_court_mask(str(request.video_path))
+    court = _detect_court(request, feature_cfg, required=slot_mode == "netline")
+    court_mask, _ = pre.compute_court_mask(str(request.video_path), court)
     _emit(progress_callback, "pose", 3)
 
     _check(cancel_check)
@@ -141,8 +136,7 @@ def build_feature_stream(
     src_height, src_width, _ = pre._source_frame_shape(str(request.video_path))
     geometry = None
     if slot_mode == "netline":
-        geometry = _court_geometry(request, feature_cfg, (int(request.screen_width), int(request.screen_height)))
-        _emit(progress_callback, "pose", 3)
+        geometry = _court_geometry(court, (int(request.screen_width), int(request.screen_height)))
     pose_kwargs = {}
     if geometry is not None:
         from extraction.crop_pass import CROP_WINDOW
@@ -203,19 +197,31 @@ def _manifest_feature_pipeline(request: RunRequest) -> dict:
         return {}
 
 
-def _court_geometry(request: RunRequest, feature_cfg: dict, reference_size):
-    """Net line + homography in reference pixels, or None (classic slots fallback)."""
+def _detect_court(request: RunRequest, feature_cfg: dict, required: bool):
+    """One court-model pass (court_lines.CourtDetection), or None without a model or on failure."""
     import logging
 
-    from preprocessing.court_lines import compute_court_geometry
-    from preprocessing.netline_slots import CourtGeometry
+    from preprocessing.court_lines import detect_court
 
     name = feature_cfg.get("court_model_file")
     manifest = _manifest_path(request)
     model = (manifest.parent if manifest else Path(request.model_path).parent) / str(name) if name else None
     if model is None or not model.exists():
-        raise UnsupportedPipelineError(f"slot_mode=netline needs the court model; not found: {model}")
-    data = compute_court_geometry(str(request.video_path), str(model), out_size=reference_size)
+        if required:
+            raise UnsupportedPipelineError(f"slot_mode=netline needs the court model; not found: {model}")
+        logging.warning("No court model in the manifest; using the default court mask.")
+        return None
+    return detect_court(str(request.video_path), str(model))
+
+
+def _court_geometry(court, reference_size):
+    """Net line + homography in reference pixels, or None (classic slots fallback)."""
+    import logging
+
+    from preprocessing.court_lines import netline_geometry
+    from preprocessing.netline_slots import CourtGeometry
+
+    data = netline_geometry(court, reference_size)
     if data is None:
         logging.warning("No court geometry; falling back to classic near/far player slots.")
         return None

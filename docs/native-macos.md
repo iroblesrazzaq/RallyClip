@@ -92,3 +92,46 @@ No signing credentials are supplied to install, compile, or smoke-test steps.
 Developer ID signing applies to the embedded executable and its native libraries
 before the outer app; the DMG is notarized and stapled with the existing scripts.
 The workflow uploads the DMG and SHA-256 checksum.
+
+## Bundle size
+
+Measured 2026-10-29 with a CI-like build venv (`pip install '.[cpu,dev,pack]'`:
+onnxruntime 1.31.1, opencv-python 4.14.0.94, av 18.1.0), sizes in MiB:
+
+| | App | Backend `_internal` | DMG (unsigned) |
+|---|---|---|---|
+| Before | 338.2 | 328.1 | 172.5 |
+| After dropping the ORT C API dylib | 306.9 | 296.7 | 163.2 |
+
+Largest `_internal` entries after the cut: cv2 109.1, models 81.0, av 42.5,
+onnxruntime 38.6, python3.11 7.0, Python.framework 6.7, numpy 6.6.
+
+What is and is not removable:
+
+- **onnxruntime C API dylib (dropped, 31.3 MiB).** `libonnxruntime.<ver>.dylib`
+  ships beside `onnxruntime_pybind11_state.so`, which links ORT statically; no
+  bundled binary links it and the Python package never `dlopen`s it. The spec
+  filters it out of `a.binaries`. Frozen `--cli` output on the golden clip is
+  byte-identical before and after, on both `--yolo-device cpu` and `coreml`.
+- **cv2's FFmpeg (kept).** `cv2.abi3.so` links six libav*/libswscale dylibs
+  directly, and dyld loads all 93 dylibs in `cv2/.dylibs` on `import cv2`,
+  so none can be excluded. `opencv-python-headless` 4.14.0.94 has the same
+  FFmpeg tree and is slightly larger (79 vs 76 MiB of dylibs). The FFmpeg
+  majors differ from PyAV's (avformat 61 vs 62), so the two cannot share one
+  copy. The only route is a source build of OpenCV with `-DWITH_FFMPEG=OFF`
+  (about 75 MiB), which would change the cv2 binary that court masking and
+  homography run on and so needs its own parity check.
+- **Both yolov8n-pose exports (kept).** `--yolo-device auto` resolves to CoreML
+  on Apple Silicon, which runs `yolov8n-pose-544x960-static.onnx`; CPU, and the
+  fallback when the CoreML EP is unavailable, run `yolov8n-pose-960-dynamic.onnx`.
+  `verify_artifact_dir` requires both.
+- **cv2 and the classic `CourtDetector` (kept).** `compute_court_mask` runs on
+  every analysis, and `court_lines.py`/`yolo_onnx_runner.py` use cv2.
+
+`court_lines.onnx` in fp16 (not done; about 28 MiB smaller) would need: an
+fp16 conversion with fp32 I/O (`onnxconverter-common`, `keep_io_types=True`);
+a check that the CPU EP, which `CourtLineModel` uses, does not slow down from
+inserted Casts; court-point accuracy against the court labels, since fp16
+heatmaps move the soft-argmax points; a deliberate golden regeneration if
+segments change; and a new artifact version (manifest SHA, `SHA256SUMS`,
+release zip, `ARTIFACT_TAG`).
