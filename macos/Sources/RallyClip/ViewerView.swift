@@ -22,7 +22,12 @@ struct ViewerView: View {
     @EnvironmentObject var app: AppModel
     @StateObject private var vm: ViewerModel
     @State private var showReset = false
-    init(match: Match, backend: Backend) { _vm = StateObject(wrappedValue: ViewerModel(match: match, backend: backend)) }
+    /// The library's current copy, so a rename shows at once.
+    let match: Match
+    init(match: Match, backend: Backend) {
+        self.match = match
+        _vm = StateObject(wrappedValue: ViewerModel(match: match, backend: backend))
+    }
     var body: some View {
         VStack(spacing: 0) {
             header.padding(20)
@@ -77,6 +82,7 @@ struct ViewerView: View {
             await vm.load()
         }
         .onDisappear { vm.close(); app.canNavigate = nil }
+        .onChange(of: match.name) { _, name in vm.name = name }
         .alert("RallyClip", isPresented: Binding(get: { vm.error != nil }, set: { if !$0 { vm.error = nil } })) {
             Button("OK", role: .cancel) { vm.error = nil }
         } message: { Text(vm.error ?? "") }
@@ -87,7 +93,7 @@ struct ViewerView: View {
     var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(vm.match.name).font(.title2.bold()).lineLimit(1)
+                Text(match.name).font(.title2.bold()).lineLimit(1)
                 Text("\(vm.points.count) points · \(formatTime(vm.pointDuration)) of \(formatTime(vm.total))\(vm.edited ? " · Edited" : "")")
                     .font(.callout).foregroundStyle(.secondary)
             }
@@ -127,35 +133,41 @@ struct ViewerView: View {
         }.buttonStyle(.plain).disabled(vm.loading)
     }
     var timeline: some View {
-        VStack(spacing: 10) {
+        let total = vm.total, shown = vm.window.visible(total: total), zoom = vm.window.zoom(total: total)
+        return VStack(spacing: 10) {
             HStack {
                 Text("MATCH TIMELINE").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
-                Button { vm.zoom = max(1, vm.zoom / 2) } label: { Image(systemName: "minus.magnifyingglass") }.buttonStyle(.plain)
-                Text("\(Int(vm.zoom))×").font(.caption).monospacedDigit()
-                Button { vm.zoom = min(16, vm.zoom * 2) } label: { Image(systemName: "plus.magnifyingglass") }.buttonStyle(.plain)
+                Button { vm.zoomTimeline(by: 0.5) } label: { Image(systemName: "minus.magnifyingglass") }
+                    .buttonStyle(.plain).disabled(zoom <= 1.001).keyboardShortcut("-", modifiers: .command)
+                    .help("Zoom out (⌘−). Pinch or ⌘-scroll on the timeline to zoom at the pointer.").accessibilityLabel("Zoom out")
+                Text(String(format: zoom < 10 ? "%.1f×" : "%.0f×", zoom)).font(.caption).monospacedDigit().frame(minWidth: 40)
+                Button { vm.zoomTimeline(by: 2) } label: { Image(systemName: "plus.magnifyingglass") }
+                    .buttonStyle(.plain).disabled(zoom >= TimelineWindow.maxZoom(total: total) - 0.001).keyboardShortcut("=", modifiers: .command)
+                    .help("Zoom in (⌘+). Pinch or ⌘-scroll on the timeline to zoom at the pointer.").accessibilityLabel("Zoom in")
             }
-            GeometryReader { outer in
-                ScrollView(.horizontal) {
-                    let width = outer.size.width * vm.zoom
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 6).fill(.quaternary)
-                        ForEach(Array(vm.points.enumerated()), id: \.offset) { index, point in
-                            RoundedRectangle(cornerRadius: 3).fill(index == vm.selected ? Color.accentColor : Color.accentColor.opacity(0.4))
-                                .frame(width: max(3, width * point.duration / max(1, vm.total)), height: 24)
-                                .offset(x: width * point.start / max(1, vm.total))
-                        }
-                        Rectangle().fill(.primary).frame(width: 2, height: 38)
-                            .offset(x: min(width - 2, width * vm.sourceTime / max(1, vm.total)))
-                    }.frame(width: width, height: 38)
-                        .contentShape(Rectangle())
-                        .gesture(DragGesture(minimumDistance: 0)
-                            .onChanged { value in vm.seek(value.location.x / width * vm.total, autoplay: false, exact: false) }
-                            .onEnded { value in vm.seek(value.location.x / width * vm.total, autoplay: false) })
+            GeometryReader { geo in
+                let width = max(1, geo.size.width)
+                ZStack {
+                    TimelineCanvas(points: vm.points, selected: vm.selected, time: vm.sourceTime, total: total, window: vm.window)
+                    TimelineInput(
+                        press: { x, clicks in
+                            vm.clickTimeline(point: vm.window.pointIndex(atX: x, width: width, points: vm.points, total: total), clicks: clicks)
+                        },
+                        scrub: { x, done in vm.seek(vm.window.time(at: x / width, total: total), autoplay: false, exact: done) },
+                        zoom: { factor, x in vm.window.zoom(by: factor, anchor: x / width, total: total) },
+                        pan: { dx in vm.window.pan(by: -dx / width * shown.span, total: total) })
                 }
-            }.frame(height: 48).accessibilityLabel("Match timeline")
-            HStack { Text("0:00"); Spacer(); Text(formatTime(vm.total)) }.font(.caption).foregroundStyle(.secondary)
+            }.frame(height: 48).help(vm.editing ? "Click a point to select it for editing." : "Click a point to select it. Double-click to edit it.")
+                .accessibilityElement().accessibilityLabel("Match timeline")
+                .accessibilityValue("\(formatTime(vm.sourceTime)) of \(formatTime(total))")
+            HStack { Text(timelineLabel(shown.start, span: shown.span)); Spacer(); Text(timelineLabel(shown.start + shown.span, span: shown.span)) }
+                .font(.caption).monospacedDigit().foregroundStyle(.secondary)
         }
+    }
+    /// Tenths of a second once less than 20 s is on screen.
+    func timelineLabel(_ seconds: Double, span: Double) -> String {
+        span < 20 && seconds.isFinite ? TimelineWindow.fineLabel(seconds) : formatTime(seconds)
     }
     var pointList: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -176,7 +188,7 @@ struct ViewerView: View {
                                 Text(String(format: "%.1fs", point.duration)).font(.caption).foregroundStyle(.secondary)
                             }.contentShape(Rectangle())
                         }.buttonStyle(.plain)
-                    }.padding(.vertical, 4).listRowBackground(index == vm.selected ? Color.accentColor.opacity(0.14) : Color.clear)
+                    }.padding(.vertical, 4).listRowBackground(index == vm.selected ? Color.rallyGreen.opacity(0.16) : Color.clear)
                 }
             }.listStyle(.plain)
             if vm.points.isEmpty { ContentUnavailableView("No points", systemImage: "tennisball", description: Text("Use Edit Points to add an interval.")) }
@@ -204,11 +216,87 @@ struct ViewerView: View {
                 }.font(.callout)
             }
             HStack {
-                Text("Scrub the full match, select a point, then set its start or end. Times are in source seconds.").font(.caption).foregroundStyle(.secondary)
+                Text("Click a point's bar or card to select it, scrub, then set its start or end. Times are in source seconds.").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Restore Original…") { showReset = true }.disabled(vm.saving)
             }
         }.padding(14).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
             .disabled(vm.saving)  // the save response replaces the points
+    }
+}
+
+/// Draws only the part of the match on screen, so deep zoom costs no more than the full view.
+private struct TimelineCanvas: View {
+    let points: [Point]
+    let selected: Int
+    let time: Double
+    let total: Double
+    let window: TimelineWindow
+    var body: some View {
+        Canvas { context, size in
+            let shown = window.visible(total: total), bar = CGRect(x: 0, y: 0, width: size.width, height: 38)
+            let x = { (t: Double) in CGFloat((t - shown.start) / shown.span) * size.width }
+            context.fill(Path(roundedRect: bar, cornerRadius: 6), with: .color(.secondary.opacity(0.18)))
+            for (index, point) in points.enumerated() where point.end >= shown.start && point.start <= shown.start + shown.span {
+                let left = max(-4, x(point.start)), right = min(size.width + 4, x(point.end))
+                let rect = CGRect(x: left, y: 7, width: max(TimelineWindow.minimumBar, right - left), height: 24)
+                context.fill(Path(roundedRect: rect, cornerRadius: 3),
+                             with: .color(index == selected ? .rallyGreen : .rallyGreen.opacity(0.4)))
+            }
+            if let head = window.playheadX(time, total: total, width: size.width).map({ CGFloat($0) }) {
+                context.fill(Path(CGRect(x: head - 2, y: 0, width: 4, height: 38)), with: .color(.black.opacity(0.45)))
+                context.fill(Path(CGRect(x: head - 1, y: 0, width: 2, height: 38)), with: .color(.rallyBall))
+            }
+            // Where the shown part sits in the whole match, once zoomed in.
+            if shown.span < total {
+                let track = CGRect(x: 0, y: 43, width: size.width, height: 4)
+                context.fill(Path(roundedRect: track, cornerRadius: 2), with: .color(.secondary.opacity(0.15)))
+                let thumb = CGRect(x: CGFloat(shown.start / total) * size.width, y: 43,
+                                   width: max(6, CGFloat(shown.span / total) * size.width), height: 4)
+                context.fill(Path(roundedRect: thumb, cornerRadius: 2), with: .color(.secondary.opacity(0.6)))
+            }
+        }
+    }
+}
+
+/// Mouse, trackpad and wheel input for the timeline. SwiftUI has no scroll-wheel
+/// or pointer-anchored pinch event on macOS 14, so an AppKit view takes them.
+private struct TimelineInput: NSViewRepresentable {
+    /// Mouse down at x, with the click count, before the scrub starts.
+    var press: (CGFloat, Int) -> Void
+    /// x in points; `done` on mouse up, for an exact seek.
+    var scrub: (CGFloat, Bool) -> Void
+    /// factor > 1 zooms in, at x.
+    var zoom: (Double, CGFloat) -> Void
+    /// Content moves right by dx points.
+    var pan: (CGFloat) -> Void
+    func makeNSView(context: Context) -> InputView { InputView() }
+    func updateNSView(_ view: InputView, context: Context) { view.press = press; view.scrub = scrub; view.zoom = zoom; view.pan = pan }
+
+    final class InputView: NSView {
+        var press: ((CGFloat, Int) -> Void)?
+        var scrub: ((CGFloat, Bool) -> Void)?
+        var zoom: ((Double, CGFloat) -> Void)?
+        var pan: ((CGFloat) -> Void)?
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        private func x(_ event: NSEvent) -> CGFloat { min(bounds.width, max(0, convert(event.locationInWindow, from: nil).x)) }
+        override func mouseDown(with event: NSEvent) { press?(x(event), event.clickCount); scrub?(x(event), false) }
+        override func mouseDragged(with event: NSEvent) { scrub?(x(event), false) }
+        override func mouseUp(with event: NSEvent) { scrub?(x(event), true) }
+        override func magnify(with event: NSEvent) { zoom?(1 + event.magnification, x(event)) }
+        override func scrollWheel(with event: NSEvent) {
+            let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
+            // A trackpad reports points; a mouse wheel reports lines.
+            let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 12
+            if event.modifierFlags.contains(.command) {
+                zoom?(exp(Double(abs(dy) >= abs(dx) ? dy : dx) * scale * 0.008), x(event))
+            } else if abs(dx) > abs(dy) {
+                pan?(dx * scale)
+            } else if !event.hasPreciseScrollingDeltas && dy != 0 {
+                pan?(dy * scale)  // a plain wheel scrolls along the timeline
+            } else {
+                super.scrollWheel(with: event)
+            }
+        }
     }
 }

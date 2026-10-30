@@ -2954,6 +2954,23 @@ def library_csv(item_id: str):
     return send_file(str(path), as_attachment=True, download_name=f"{item_id}_segments.csv")
 
 
+@app.route("/api/library/<item_id>", methods=["PATCH"])
+def library_rename(item_id: str):
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or "name" not in payload:
+        return jsonify({"error": "Expected a JSON object with a name."}), 400
+    try:
+        meta = _library_store().rename(item_id, payload["name"])
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except FileNotFoundError:
+        return jsonify({"error": "Unknown library id"}), 404
+    except OSError as exc:
+        logging.warning("Could not rename %s", item_id, exc_info=True)
+        return jsonify({"error": f"Could not rename the match: {exc}"}), 503
+    return jsonify({"id": item_id, "name": meta["name"]}), 200
+
+
 @app.route("/api/library/<item_id>", methods=["DELETE"])
 def library_delete(item_id: str):
     try:

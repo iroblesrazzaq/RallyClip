@@ -24,6 +24,8 @@ public struct Match: Codable, Identifiable, Hashable, Sendable {
     public let point_duration_s: Double
     public let n_segments: Int
     public let created: String
+    /// Seconds since 1970; older libraries may not have it.
+    public let created_ts: Double?
     public let has_edits: Bool
 }
 
@@ -73,6 +75,11 @@ public enum PointMath {
             cursor += p.duration
         }
         return points.last?.end ?? 0
+    }
+
+    /// Where a Points Only seek to `sourceTime` lands: a time in a gap moves to the next point's start.
+    public static func landedTime(at sourceTime: Double, points: [Point]) -> Double {
+        self.sourceTime(at: playbackTime(at: sourceTime, points: points), points: points)
     }
 
     public static func playbackTime(at sourceTime: Double, points: [Point]) -> Double {

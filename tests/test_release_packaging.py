@@ -417,3 +417,19 @@ def test_native_backend_worker_is_signed_with_jit_entitlements():
     entitlements = (ROOT / "packaging" / "macos" / "RallyClip.entitlements").read_text(encoding="utf-8")
     assert "com.apple.security.cs.allow-jit" in entitlements
     assert "com.apple.security.cs.allow-unsigned-executable-memory" in entitlements
+
+
+def test_native_build_compiles_the_green_accent_into_the_app():
+    """System list selection and checkboxes ignore .tint; only the bundle accent colors them."""
+    import json
+
+    script = (ROOT / "scripts" / "native" / "build.sh").read_text(encoding="utf-8")
+    actool = next(line for line in script.replace("\\\n", " ").splitlines() if "xcrun actool" in line)
+    assert "packaging/macos/Assets.xcassets" in actool
+    assert '--compile "$APP/Contents/Resources"' in actool
+    assert "--accent-color AccentColor" in actool
+    assert "'NSAccentColorName': 'AccentColor'" in script
+    colorset = ROOT / "packaging" / "macos" / "Assets.xcassets" / "AccentColor.colorset" / "Contents.json"
+    colors = json.loads(colorset.read_text(encoding="utf-8"))["colors"]
+    assert len(colors) == 2  # light and dark
+    assert any(c.get("appearances") for c in colors)

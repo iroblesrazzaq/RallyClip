@@ -20,6 +20,10 @@ cp "$BIN_DIR/RallyClip" "$APP/Contents/MacOS/RallyClip"
 ditto "$BIN_DIR/RallyClipNative_RallyClip.bundle" "$APP/Contents/Resources/RallyClipNative_RallyClip.bundle"
 ditto build/native-helper-dist/RallyClipBackend "$APP/Contents/Resources/Backend"
 cp docs/rallyclip.icns "$APP/Contents/Resources/RallyClip.icns"
+# The tennis-green accent (the intro screen's green) for selection, checkboxes and buttons.
+xcrun actool packaging/macos/Assets.xcassets --compile "$APP/Contents/Resources" --platform macosx \
+  --minimum-deployment-target 14.0 --accent-color AccentColor \
+  --output-partial-info-plist "$STAGE/assets-info.plist" >/dev/null
 "$PY" - "$ROOT" "$APP" <<'PY'
 import plistlib, sys
 from pathlib import Path
@@ -38,6 +42,7 @@ plist = {
     'NSSupportsAutomaticGraphicsSwitching': True,
     'LSApplicationCategoryType': 'public.app-category.sports',
     'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
+    'NSAccentColorName': 'AccentColor',
 }
 (app / 'Contents/Info.plist').write_bytes(plistlib.dumps(plist))
 PY

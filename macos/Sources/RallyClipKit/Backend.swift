@@ -65,6 +65,11 @@ public actor Backend {
     public func cancel(_ id: String) async throws {
         let _: [String: String] = try await request("api/cancel/\(id)", method: "POST")
     }
+    public func rename(_ id: String, to name: String) async throws {
+        struct Body: Encodable { let name: String }
+        struct Response: Decodable { let name: String }
+        let _: Response = try await request("api/library/\(id)", method: "PATCH", body: JSONEncoder().encode(Body(name: name)))
+    }
     public func delete(_ id: String) async throws {
         let _: [String: String] = try await request("api/library/\(id)", method: "DELETE")
     }
