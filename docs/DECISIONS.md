@@ -605,3 +605,22 @@ data/labels/metric, not optimization.** Do not re-run these:
   line-model masks. Training court caches from the classic detector are
   recomputed (`detector.kind` check), and the preprocess fingerprint changed,
   so the next retrain uses the new masks too.
+
+## 2026-10-30 — Six-bin "decent" limits per boundary: start 2 s / 0.5 s, end 1 s / 3 s
+
+- **What:** `SixBinConfig` gives the decent tier its own limits per boundary. A
+  matched point is decent when the clip starts at most 2 s early or 0.5 s late,
+  and ends at most 1 s early or 3 s late. It was 1.5 s outside and 0.5 s inside
+  on both ends. "good" does not change. The old limits are
+  `segments6.DECENT_V1` (`SixBinConfig(**DECENT_V1)`), for numbers that compare
+  with older reports. `tests/helpers/golden_metrics.py` uses the same limits.
+- **Why:** User request. The old limits were too strict for clip cutting: some
+  extra padding costs a viewer little, but a clip that cuts off the last shot
+  costs more. Point ends are also not clear in the labels (last bounce or dead
+  ball). On the held-out test (v0.8.0-rc1, old limits), the median end error was
+  0.67 s and 1 in 4 ends was more than 1.4 s off, so most "bad segmentation"
+  points failed on the 0.5 s inside end limit.
+- **Effect:** Acceptable rate, six-bin F1 and the training loop's logged six-bin
+  numbers all go up for the same predictions. They do not compare with numbers
+  from before this date. Use `DECENT_V1` for that. The v0.8.0 test decision
+  used the old limits, which were fixed before scoring.

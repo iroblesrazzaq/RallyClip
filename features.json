@@ -102,6 +102,13 @@
       "status": "active",
       "verification": "swift test --package-path macos; $PY scripts/native/smoke.py --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend; interactive native UI QA; Release workflow desktop=native",
       "evidence": "2026-10-27: after review rounds 1-2, 7 Swift tests (uncovered-point guard, long declared duration, re-export, MOV/M4V folder clips) and 10 native API tests pass; release tests lock the native tag/sign/notarize path. 2026-10-07: app builds. Packaged v0.6 import, edit/reset/delete, decoded-frame playback and exact 4s export passed. Delayed audio regression passed after rendering silence via audio mix. Interactive import, save edit and MP4 export passed. Signed CI build pending."
+    },
+    {
+      "id": "clip-metric",
+      "name": "Six-bin decent tier with per-boundary limits (start 2 s early / 0.5 s late, end 1 s early / 3 s late)",
+      "status": "passing",
+      "verification": "PYTHONPATH=src:tests $PY -m pytest -q tests/test_segments6.py",
+      "evidence": "2026-10-30: tests/test_segments6.py 12 passed (each limit at and just past the edge, golden helper agrees, DECENT_V1 still gives the old tiers); default gate 630 passed, 1 skipped, 38 deselected."
     }
   ],
   "active": "native-macos"

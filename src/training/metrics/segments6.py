@@ -24,12 +24,27 @@ BINS = (
 
 @dataclass
 class SixBinConfig:
+    """Tier limits in seconds. "out" = the clip is longer than the point (start early /
+    end late); "in" = the clip cuts into the point (start late / end early).
+
+    Decent has its own limits per boundary (2026-10-30): a clip may start up to 2 s
+    early or 0.5 s late, and end up to 1 s early or 3 s late. Extra padding costs a
+    viewer little; a cut-off shot costs more. The v1 limits (1.5 s out / 0.5 s in on
+    both ends) are DECENT_V1.
+    """
+
     good_out: float = 0.5
     good_in: float = 0.2
-    decent_out: float = 1.5
-    decent_in: float = 0.5
+    decent_start_out: float = 2.0
+    decent_start_in: float = 0.5
+    decent_end_in: float = 1.0
+    decent_end_out: float = 3.0
     bad_seg_iou: float = 0.5
     negligible_iou: float = 0.1
+
+
+# Decent limits before 2026-10-30, for numbers comparable with older reports.
+DECENT_V1 = dict(decent_start_out=1.5, decent_start_in=0.5, decent_end_in=0.5, decent_end_out=1.5)
 
 
 def _iou(a: Interval, b: Interval) -> float:
@@ -38,8 +53,12 @@ def _iou(a: Interval, b: Interval) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def _within(e_start: float, e_end: float, out_tol: float, in_tol: float) -> bool:
-    return (-out_tol <= e_start <= in_tol) and (-in_tol <= e_end <= out_tol)
+def _within(e_start: float, e_end: float, out_tol: float, in_tol: float,
+            end_out: float | None = None, end_in: float | None = None) -> bool:
+    """e_start/e_end = pred - gt. The end limits default to the start limits."""
+    end_out = out_tol if end_out is None else end_out
+    end_in = in_tol if end_in is None else end_in
+    return (-out_tol <= e_start <= in_tol) and (-end_in <= e_end <= end_out)
 
 
 def compute_six_bin(
@@ -105,7 +124,8 @@ def compute_six_bin(
         iou = _iou(pred, gt)
         if _within(e_start, e_end, cfg.good_out, cfg.good_in):
             counts["good"] += 1
-        elif _within(e_start, e_end, cfg.decent_out, cfg.decent_in):
+        elif _within(e_start, e_end, cfg.decent_start_out, cfg.decent_start_in,
+                     cfg.decent_end_out, cfg.decent_end_in):
             counts["decent"] += 1
         elif iou >= cfg.bad_seg_iou:
             counts["bad_segmentation"] += 1

@@ -19,8 +19,11 @@ Interval = Tuple[float, float]
 class SixBinConfig:
     good_out: float = 0.5    # how early a start / how late an end may be (generous side)
     good_in: float = 0.2     # how late a start / how early an end may be (clipping side)
-    decent_out: float = 1.5
-    decent_in: float = 0.5
+    # decent limits per boundary (2026-10-30): start 2 s early / 0.5 s late, end 1 s early / 3 s late
+    decent_start_out: float = 2.0
+    decent_start_in: float = 0.5
+    decent_end_in: float = 1.0
+    decent_end_out: float = 3.0
     bad_seg_iou: float = 0.5
     negligible_iou: float = 0.1
 
@@ -31,9 +34,12 @@ def _iou(a: Interval, b: Interval) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def _within(es: float, ee: float, out_tol: float, in_tol: float) -> bool:
+def _within(es: float, ee: float, out_tol: float, in_tol: float,
+            end_out: float | None = None, end_in: float | None = None) -> bool:
     # es = pred_start - gt_start (negative = early), ee = pred_end - gt_end (positive = late)
-    return (-out_tol <= es <= in_tol) and (-in_tol <= ee <= out_tol)
+    end_out = out_tol if end_out is None else end_out
+    end_in = in_tol if end_in is None else end_in
+    return (-out_tol <= es <= in_tol) and (-end_in <= ee <= end_out)
 
 
 def score_six_bin(pred: List[Interval], gt: List[Interval], cfg: SixBinConfig = SixBinConfig()) -> Dict[str, float]:
@@ -63,7 +69,7 @@ def score_six_bin(pred: List[Interval], gt: List[Interval], cfg: SixBinConfig = 
         es, ee, iou = p[0] - g[0], p[1] - g[1], _iou(p, g)
         if _within(es, ee, cfg.good_out, cfg.good_in):
             bins["good"] += 1
-        elif _within(es, ee, cfg.decent_out, cfg.decent_in):
+        elif _within(es, ee, cfg.decent_start_out, cfg.decent_start_in, cfg.decent_end_out, cfg.decent_end_in):
             bins["decent"] += 1
         elif iou >= cfg.bad_seg_iou:
             bins["bad"] += 1
