@@ -371,26 +371,29 @@ class YOLO:
         if isinstance(source, np.ndarray) and source.ndim == 3:
             source = [source]
         source = list(source)
-        inputs = [
-            letterbox_exact(img, self._static_hw) if self._static_hw is not None else letterbox(img, int(imgsz))
-            for img in source
-        ]
-        preds = []
+
+        def prepare(img):
+            return letterbox_exact(img, self._static_hw) if self._static_hw is not None else letterbox(img, int(imgsz))
+
+        def decode(img, pred, ratio, pad):
+            return Result(*decode_pose(pred, ratio, pad, img.shape[:2], float(conf), float(iou), int(max_det)))
+
+        # One pair (or one image) at a time: prepare, run, decode, so a large batch
+        # never holds more than two letterboxed inputs and raw predictions.
+        results = []
+        done = 0
         if self._pair_session is not None:
             # Whole pairs through the batch-2 session; an odd last image uses the batch-1 one.
-            for i in range(0, len(inputs) - 1, 2):
-                batch = np.concatenate([inputs[i][0], inputs[i + 1][0]])
-                out = self._pair_session.run(None, {self._pair_input_name: batch})[0]
-                preds.extend([out[0:1], out[1:2]])
-        for tensor, _, _ in inputs[len(preds):]:
+            for i in range(0, len(source) - 1, 2):
+                (a, ratio_a, pad_a), (b, ratio_b, pad_b) = prepare(source[i]), prepare(source[i + 1])
+                out = self._pair_session.run(None, {self._pair_input_name: np.concatenate([a, b])})[0]
+                results.append(decode(source[i], out[0:1], ratio_a, pad_a))
+                results.append(decode(source[i + 1], out[1:2], ratio_b, pad_b))
+                done = i + 2
+        for img in source[done:]:
+            tensor, ratio, pad = prepare(img)
             session = self._session or self._open_single()
-            preds.append(session.run(None, {self._input_name: tensor})[0])
-        results = []
-        for img, (_, ratio, pad), pred in zip(source, inputs, preds):
-            boxes, bconf, kpt_xy, kpt_conf = decode_pose(
-                pred, ratio, pad, img.shape[:2], float(conf), float(iou), int(max_det)
-            )
-            results.append(Result(boxes, bconf, kpt_xy, kpt_conf))
+            results.append(decode(img, session.run(None, {self._input_name: tensor})[0], ratio, pad))
         return results
 
     # PoseExtractor calls model.predict(...); some callers use model(...) too.

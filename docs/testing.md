@@ -16,7 +16,7 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-10-29, batch-2 CoreML pose on artifact v0.6.1): **624 passed, 1 skipped, 38 deselected, ~78s**.
+Last known (2026-10-29, batch-2 CoreML pose on artifact v0.6.1): **625 passed, 1 skipped, 38 deselected, ~121s**.
 (2026-10-29, #71 Cursor review fixes: real court line model test with pinned court
 points, GUI defaults vs manifest, seek frame cap: 618 passed, 1 skipped, 38 deselected, ~82s.)
 (2026-10-29, court mask from the court line model, classic detector and its 11 MB court fixtures
