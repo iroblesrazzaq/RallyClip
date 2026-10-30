@@ -2,14 +2,6 @@
 
 RallyClip is an open-source tool for tennis video segmentation. It extracts rally/point intervals from full match footage and outputs a segmented video plus optional CSV timestamps.
 
-The new macOS desktop app uses SwiftUI and AVFoundation for playback, editing,
-and export. It bundles the v0.6 ONNX analysis engine, including the learned court
-and net detector and separate near/far player features. Everything runs locally.
-The original RallyClip logo stays; the interface uses native controls, the system
-font, and the system light/dark appearance.
-
-Native build, development, testing, and signing: [docs/native-macos.md](docs/native-macos.md).
-
 ## To run
 
 **macOS with an M-series chip (M1, M2, M3, …)**
