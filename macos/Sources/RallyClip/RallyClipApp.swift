@@ -76,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 struct SettingsView: View {
     var body: some View {
         Form {
-            LabeledContent("Analysis model", value: "v0.6.1 · court lines + temporal convolution")
+            LabeledContent("Analysis model", value: "v0.8.0 · court lines + temporal convolution")
             LabeledContent("Processing", value: "On this Mac")
             LabeledContent("Playback", value: "Native AVFoundation")
             Button("Show Saved Matches in Finder") {

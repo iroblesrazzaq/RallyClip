@@ -16,7 +16,8 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-10-29, batch-2 CoreML pose on artifact v0.6.1): **625 passed, 1 skipped, 38 deselected, ~121s**.
+Last known (2026-10-30, artifact v0.8.0, new golden): **625 passed, 1 skipped, 38 deselected, ~87s**.
+(2026-10-29, batch-2 CoreML pose on artifact v0.6.1: 625 passed, 1 skipped, 38 deselected, ~121s.)
 (2026-10-29, #71 Cursor review fixes: real court line model test with pinned court
 points, GUI defaults vs manifest, seek frame cap: 618 passed, 1 skipped, 38 deselected, ~82s.)
 (2026-10-29, court mask from the court line model, classic detector and its 11 MB court fixtures
@@ -63,8 +64,11 @@ Bundle.module mutant; passes on the fix.
 PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_cli_golden_parity.py
 ```
 
-Last known (2026-10-29, batch-2 CoreML pose, v0.6.1 artifact, golden unchanged): with
-`tests/test_court_model.py` and `tests/test_coreml_static_export.py`, **14 passed, 22.4s**.
+Last known (2026-10-30, v0.8.0 artifact, golden regenerated): with
+`tests/test_court_model.py`, `tests/test_coreml_static_export.py`, `tests/test_release_packaging.py` and
+`tests/test_artifact_fetch.py`, **47 passed, ~25s**.
+(2026-10-29, batch-2 CoreML pose, v0.6.1 artifact, golden unchanged: with
+`tests/test_court_model.py` and `tests/test_coreml_static_export.py`, 14 passed, 22.4s.)
 (2026-10-29, line-model court mask, v0.6.0 golden unchanged: 1 passed, 15.2s.)
 (2026-10-27, v0.6.0 golden: 1 passed, 16.1s.) Boundaries compared at 0.5s tolerance;
 byte-exact only holds on the machine+env the golden was generated on. ubuntu/windows
