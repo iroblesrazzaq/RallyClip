@@ -4,12 +4,12 @@ import re
 from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
 root = Path(SPECPATH).resolve().parents[1]
-artifact = root / "models/rallyclip_v0.6.1"
+artifact = root / "models/rallyclip_v0.8.0"
 a = Analysis(
     [str(root / "src/gui/native_backend.py")],
     pathex=[str(root / "src")],
     datas=[
-        (str(artifact), "models/rallyclip_v0.6.1"),
+        (str(artifact), "models/rallyclip_v0.8.0"),
         (str(root / "src/preprocessing/default_court_mask.png"), "preprocessing"),
         (str(root / "src/gui/frontend"), "gui/frontend"),
         (str(root / "docs/rallyclip_favicon_transparent2.png"), "docs"),

@@ -23,7 +23,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = REPO_ROOT / "scripts"
-MODEL_ONNX = REPO_ROOT / "models" / "rallyclip_v0.6.1" / "model.onnx"
+MODEL_ONNX = REPO_ROOT / "models" / "rallyclip_v0.8.0" / "model.onnx"
 
 pytest.importorskip("playwright.sync_api")
 pytest.importorskip("requests")
@@ -43,7 +43,7 @@ pytestmark = [
     pytest.mark.slow,
     pytest.mark.skipif(
         not MODEL_ONNX.exists(),
-        reason="shipped ONNX artifact missing (models/rallyclip_v0.6.1/model.onnx)",
+        reason="shipped ONNX artifact missing (models/rallyclip_v0.8.0/model.onnx)",
     ),
 ]
 

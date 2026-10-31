@@ -605,3 +605,22 @@ data/labels/metric, not optimization.** Do not re-run these:
   line-model masks. Training court caches from the classic detector are
   recomputed (`detector.kind` check), and the preprocess fingerprint changed,
   so the next retrain uses the new masks too.
+
+## 2026-10-30 — Ship v0.8.0: retrained classifier, 5 s merge gap
+
+- **What:** New default artifact `rallyclip_v0.8.0`. The classifier and scaler
+  are retrained on the cleaned labels (flagged windows removed), 300-epoch
+  cosine run on all 33 non-test videos, checkpoint at epoch 35. Pose, court
+  model and features are byte-identical to v0.6.1. Decode now merges two
+  points less than 5 s apart (`merge_gap_sec` 0.0 -> 5.0).
+- **Why:** Held-out test (5 videos, scored once, on rc1 = this model with
+  merge gap 0, v1 six-bin limits): F1 0.432 vs v0.6.0 0.389, delta CI95
+  [+0.027, +0.071], better on 5/5 videos. Epoch 35 = best pooled CV F1 of the
+  same recipe over 5 folds. The 300/700-epoch runs showed no double descent.
+- **Merge gap:** swept on CV only (1-9 s, then 4-7 s by 0.5 s), six-bin limits
+  of PR #76. F1 is flat from 4 to 5.5 s; 5 s is best: 0.564 -> 0.572 (+0.8).
+  It removes split points (fewer false positives) at a small recall cost. The
+  user chose F1 (not recall-weighted F2, where no gap helps) and 5 s. The test
+  was not scored again with the gap.
+- **Rejected:** a later epoch from the long runs (lower pooled CV F1);
+  picking the gap on test; F2 as the selection metric.

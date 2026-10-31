@@ -59,7 +59,7 @@ def resolve_yolo_model_path(config: Dict[str, Any]) -> str:
     return str(Path(model_dir) / model_path.name)
 
 
-DEFAULT_COURT_MODEL_PATH = "models/rallyclip_v0.6.1/court_lines.onnx"
+DEFAULT_COURT_MODEL_PATH = "models/rallyclip_v0.8.0/court_lines.onnx"
 
 
 def resolve_court_model_path(config: Dict[str, Any]) -> str:
