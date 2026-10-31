@@ -63,7 +63,7 @@ CLI, training, and extra install notes live in [`docs/ENVIRONMENT.md`](docs/ENVI
 The current public stable desktop release is `v0.5.0`. The native v0.6 desktop
 is being prepared on `feat/native-macos`; this branch's release workflow builds,
 signs, and notarizes it using the existing Apple credentials. The verified v0.6
-[model artifact](https://github.com/iroblesrazzaq/RallyClip/releases/tag/artifact-rallyclip_v0.6.0)
+[model artifact](https://github.com/iroblesrazzaq/RallyClip/releases/tag/artifact-rallyclip_v0.8.0)
 is available for source and CI builds.
 
 ## Stuff I'm thinking about

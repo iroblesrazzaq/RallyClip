@@ -105,8 +105,19 @@ class PoseExtractor:
             from extraction.yolo_onnx_runner import YOLO as OnnxYOLO
 
             model_arg, providers = self._resolve_onnx_session(yolo_arg)
+            pair_path = self._pair_onnx_sibling(model_arg) if self.device == "coreml" else None
             try:
-                self.model = OnnxYOLO(model_arg, providers=providers)
+                try:
+                    self.model = (
+                        OnnxYOLO(model_arg, providers=providers, pair_model_path=pair_path)
+                        if pair_path else OnnxYOLO(model_arg, providers=providers)
+                    )
+                except Exception as exc:
+                    if not pair_path:
+                        raise
+                    # The batch-2 file is only a speed-up: keep CoreML without it.
+                    logging.warning("POSE: batch-2 pose session failed (%s); running frame and crop one at a time.", exc)
+                    self.model = OnnxYOLO(model_arg, providers=providers)
             except Exception as exc:
                 if providers is None:
                     raise  # the CPU reference path failing is a real error
@@ -224,6 +235,16 @@ class PoseExtractor:
             )
         self.device = "cpu"
         return dynamic_path, None
+
+    @staticmethod
+    def _pair_onnx_sibling(static_path: str) -> Optional[str]:
+        """The batch-2 export of a static model (x-static.onnx -> x-static-b2.onnx), if present.
+
+        Its name does not end in -static.onnx, so _static_onnx_sibling never picks it."""
+        if not str(static_path).lower().endswith("-static.onnx"):
+            return None
+        pair = str(static_path)[: -len(".onnx")] + "-b2.onnx"
+        return pair if os.path.isfile(pair) else None
 
     @staticmethod
     def _static_onnx_sibling(dynamic_path: str) -> Optional[str]:
@@ -395,9 +416,15 @@ class PoseExtractor:
             nonlocal batch_frames, batch_positions
             if not batch_frames:
                 return
-            results = _predict(batch_frames)
             crop_results = None
-            if crop_window is not None:
+            if crop_window is None:
+                results = _predict(batch_frames)
+            elif getattr(self.model, "runs_pairs", False):
+                # Each frame next to its crop, so every pair is one batch-2 call.
+                both = _predict([img for f in batch_frames for img in (f, crop_frame(f, crop_window))])
+                results, crop_results = both[0::2], both[1::2]
+            else:
+                results = _predict(batch_frames)
                 crop_results = _predict([crop_frame(f, crop_window) for f in batch_frames])
             for i, res in enumerate(results):
                 pos = batch_positions[i]

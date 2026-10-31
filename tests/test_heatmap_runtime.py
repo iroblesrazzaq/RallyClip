@@ -239,6 +239,39 @@ def test_heatmap_model_offsets_timestamps_by_request_start_time(tmp_path, monkey
     assert csv_text.splitlines()[1] == "13.000,14.000"
 
 
+def _shipped_decode_params() -> dict:
+    from runtime.defaults import DEFAULT_ARTIFACT_DIR
+
+    manifest = Path(__file__).resolve().parents[1] / DEFAULT_ARTIFACT_DIR / "manifest.json"
+    return json.loads(manifest.read_text(encoding="utf-8"))["postprocess"]["params"]
+
+
+@pytest.mark.parametrize("merge_gap_sec,expected_rows", [(None, 1), (0.0, 2)])
+def test_shipped_merge_gap_joins_points_3s_apart(tmp_path, monkeypatch, merge_gap_sec, expected_rows):
+    """Two 5 s points 3 s apart: the shipped manifest (merge_gap_sec 5.0) gives one row."""
+    params = _shipped_decode_params()
+    assert params["merge_gap_sec"] == 5.0
+    if merge_gap_sec is not None:
+        params = {**params, "merge_gap_sec": merge_gap_sec}
+    n = 80
+    point = np.full(n, 0.05, dtype=np.float32)
+    point[5:30] = 0.95  # 1.0-5.8 s, then a 3 s gap (frames 30..44)
+    point[45:70] = 0.95
+    start = np.zeros(n, dtype=np.float32)
+    start[[5, 45]] = 0.95
+    end = np.zeros(n, dtype=np.float32)
+    end[[29, 69]] = 0.95
+    _install_fakes(monkeypatch, np.stack([point, start, end], axis=0))
+
+    result = build_analysis_model(_make_request(tmp_path), _spec(tmp_path, params), _fake_deps()).run()
+
+    assert len(result.intervals_sec) == expected_rows
+    assert result.intervals_sec[0][0] == pytest.approx(5 / FPS, abs=0.4)
+    assert result.intervals_sec[-1][1] == pytest.approx(69 / FPS, abs=0.4)
+    rows = (tmp_path / "out" / "match_segments.csv").read_text(encoding="utf-8").splitlines()[1:]
+    assert len(rows) == expected_rows
+
+
 def test_heatmap_model_segments_video_from_intervals(tmp_path, monkeypatch):
     n = 16
     point = np.full(n, 0.1, dtype=np.float32)
