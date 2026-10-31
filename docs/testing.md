@@ -16,8 +16,10 @@ equivalent alternative; `.venv-train` is what was verified 2026-07-03.)
 PYTHONPATH=src:tests $PY -m pytest -q -m "not slow and not e2e" -p no:cacheprovider
 ```
 
-Last known (2026-10-30, artifact v0.8.0, new golden): **625 passed, 1 skipped, 38 deselected, ~87s**.
+Last known (2026-10-30, artifact v0.8.0 merged with main after #74): **629 passed, 1 skipped, 38 deselected, ~116s**.
 (2026-10-29, batch-2 CoreML pose on artifact v0.6.1: 625 passed, 1 skipped, 38 deselected, ~121s.)
+(2026-10-29, v0.7.2 UI branch with the library rename route, no local v0.6 artifacts:
+601 passed, 19 skipped, 38 deselected, ~38s.)
 (2026-10-29, #71 Cursor review fixes: real court line model test with pinned court
 points, GUI defaults vs manifest, seek frame cap: 618 passed, 1 skipped, 38 deselected, ~82s.)
 (2026-10-29, court mask from the court line model, classic detector and its 11 MB court fixtures
@@ -41,7 +43,8 @@ Last known (2026-10-27): exit 0 with `.venv-train`.
 
 ## Native macOS
 
-`swift test --package-path macos`: **12 passed** on 2026-10-29 (5 on 2026-10-27), including a
+`swift test --package-path macos`: **26 passed** on 2026-10-29 (12 before the v0.7.2 UI work, 5 on 2026-10-27): timeline zoom
+window (anchor, 1 s limit, pan, reveal, off-screen playhead, hour labels, bar click hit test, Points Only gap seek) and library sort/drag order, plus a
 synthetic camera-boundary composition/export/frame-content test, mixed-rotation rejection, a point end just past the footage, only touched clips opened, and the intro schedule. Swift requires
 normal host access to its caches and media services.
 

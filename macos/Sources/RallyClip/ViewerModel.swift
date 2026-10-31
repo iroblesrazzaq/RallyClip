@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 @MainActor
 final class ViewerModel: ObservableObject {
     let match: Match
+    /// Follows a rename in the library; used for export file names.
+    var name: String
     let backend: Backend
     let player = AVPlayer()
     @Published var points: [Point] = []
@@ -23,7 +25,7 @@ final class ViewerModel: ObservableObject {
     @Published var exportProgress: Double?
     @Published var exportLabel = "Exporting video"
     @Published var selectedForExport: Set<Int> = []
-    @Published var zoom = 1.0
+    @Published var window = TimelineWindow()
     @Published var notice: String?
     private var savedPoints: [Point] = []
     private var playbackPoints: [Point] = []
@@ -43,7 +45,7 @@ final class ViewerModel: ObservableObject {
     var hasChanges: Bool { points != savedPoints }
 
     init(match: Match, backend: Backend) {
-        self.match = match; self.backend = backend
+        self.match = match; self.backend = backend; name = match.name
         player.automaticallyWaitsToMinimizeStalling = true
         observer = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.05, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor [weak self] in
@@ -53,6 +55,7 @@ final class ViewerModel: ObservableObject {
                 self.sourceTime = self.pointOnly && !self.editing
                     ? PointMath.sourceTime(at: time, points: self.playbackPoints) : time
                 self.playing = self.player.rate > 0
+                if self.playing { self.window.reveal(self.sourceTime, total: self.total) }
                 if !self.editing, let index = self.points.firstIndex(where: { self.sourceTime >= $0.start && self.sourceTime < $0.end }) {
                     self.selected = index
                 }
@@ -103,8 +106,12 @@ final class ViewerModel: ObservableObject {
         guard time.isFinite else { return }
         seekGeneration += 1; let ticket = seekGeneration
         let source = min(total, max(0, time))
-        if loading { pendingSeek = (source, autoplay); sourceTime = source; return }
+        if loading { window.reveal(source, total: total); pendingSeek = (source, autoplay); sourceTime = source; return }
         let target = pointOnly && !editing ? PointMath.playbackTime(at: source, points: playbackPoints) : source
+        // In Points Only a time in a gap lands at the next point; keep that on screen. A drag step
+        // reveals the time under the pointer, so the window does not jump while scrubbing.
+        let landed = pointOnly && !editing ? PointMath.landedTime(at: source, points: playbackPoints) : source
+        window.reveal(exact ? landed : source, total: total)
         let resume = autoplay ?? playing
         if !resume { player.pause(); playing = false }
         let tolerance = exact ? CMTime.zero : CMTime(seconds: 0.5, preferredTimescale: 600)
@@ -115,6 +122,18 @@ final class ViewerModel: ObservableObject {
             }
         }
         sourceTime = source
+    }
+    /// A click on a point's timeline bar selects it, the same as its card; a double-click also opens Edit Points.
+    /// A click off every bar keeps the selection, so a trim can scrub past the point.
+    func clickTimeline(point index: Int?, clicks: Int) {
+        guard let index, points.indices.contains(index), !saving else { return }
+        selected = index
+        if clicks >= 2, !editing, !loading, exportProgress == nil { enterEdit() }
+    }
+    /// The +/- buttons: keep the playhead in place when it is on screen, else the middle.
+    func zoomTimeline(by factor: Double) {
+        let at = window.fraction(of: sourceTime, total: total)
+        window.zoom(by: factor, anchor: (0...1).contains(at) ? at : 0.5, total: total)
     }
     func togglePlay() {
         seekGeneration += 1
@@ -169,7 +188,7 @@ final class ViewerModel: ObservableObject {
         points.remove(at: selected); selected = min(selected, max(0, points.count - 1)); selectedForExport = []
     }
     func exportCSV() {
-        let panel = NSSavePanel(); panel.nameFieldStringValue = "\(match.name)_points.csv"; panel.allowedContentTypes = [.commaSeparatedText]
+        let panel = NSSavePanel(); panel.nameFieldStringValue = "\(name)_points.csv"; panel.allowedContentTypes = [.commaSeparatedText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             let text = "start_time,end_time\n" + points.map { String(format: "%.3f,%.3f", $0.start, $0.end) }.joined(separator: "\n") + "\n"
@@ -185,7 +204,7 @@ final class ViewerModel: ObservableObject {
             let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true; panel.prompt = "Export points here"
             guard panel.runModal() == .OK, let url = panel.url else { return }; destination = url
         } else {
-            let panel = NSSavePanel(); panel.allowedContentTypes = [.mpeg4Movie]; panel.nameFieldStringValue = "\(match.name)_\(selectedOnly ? "highlight" : "points").mp4"
+            let panel = NSSavePanel(); panel.allowedContentTypes = [.mpeg4Movie]; panel.nameFieldStringValue = "\(name)_\(selectedOnly ? "highlight" : "points").mp4"
             guard panel.runModal() == .OK, let url = panel.url else { return }; destination = url
         }
         exportProgress = 0; exportLabel = "Exporting video"

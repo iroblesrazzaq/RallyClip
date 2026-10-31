@@ -93,6 +93,24 @@ final class AppModel: ObservableObject {
         guard let id = jobID, let backend else { return }
         Task { do { try await backend.cancel(id) } catch { self.error = error.localizedDescription } }
     }
+    func rename(_ match: Match) {
+        let alert = NSAlert()
+        alert.messageText = "Rename Match"
+        let field = NSTextField(string: match.name)
+        field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename"); alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name != match.name else { return }
+        Task {
+            do {
+                try await backend?.rename(match.id, to: name)
+                try await reload()
+            } catch { self.error = error.localizedDescription }
+        }
+    }
     func delete(_ match: Match) {
         let alert = NSAlert()
         alert.messageText = "Delete “\(match.name)”?"

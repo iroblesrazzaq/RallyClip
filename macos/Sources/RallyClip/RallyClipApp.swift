@@ -23,7 +23,7 @@ struct RallyClipApp: App {
                 else { WelcomeView { withAnimation(.easeInOut(duration: 0.3)) { welcomeSeen = true } } }
             }.environmentObject(model)
                 .frame(minWidth: 1050, minHeight: 700)
-                .tint(Color(red: 0.22, green: 0.68, blue: 0.52))
+                .tint(.rallyGreen)
                 .task {
                     delegate.model = model
                     NSApplication.shared.windows.first(where: { $0.identifier?.rawValue == "main" })?.delegate = delegate

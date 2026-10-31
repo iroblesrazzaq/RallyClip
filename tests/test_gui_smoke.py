@@ -1137,3 +1137,41 @@ def test_segment_edits_invalidate_lazy_export(tmp_path, monkeypatch):
     assert not (item_dir / "export.mp4").exists()
     assert client.get("/api/library/match-1/video").status_code == 200
     assert calls == [[(1.0, 3.0)], [(2.0, 6.0)], [(1.0, 3.0)]]
+
+
+def test_library_rename_updates_meta_and_rejects_bad_names(tmp_path, monkeypatch):
+    from gui import app as gui_app
+
+    library = tmp_path / "library"
+    item_dir = library / "match-1"
+    item_dir.mkdir(parents=True)
+    (item_dir / "source.mp4").write_bytes(b"full video")
+    (item_dir / "meta.json").write_text('{"name": "Match 1", "created_ts": 5, "n_segments": 3}', encoding="utf-8")
+    monkeypatch.setattr(gui_app, "LIBRARY_DIR", library)
+    client = gui_app.app.test_client()
+
+    renamed = client.patch("/api/library/match-1", json={"name": "  Finals\nvs Lee  "})
+    assert renamed.status_code == 200
+    assert renamed.get_json() == {"id": "match-1", "name": "Finals vs Lee"}
+    meta = json.loads((item_dir / "meta.json").read_text(encoding="utf-8"))
+    assert meta == {"name": "Finals vs Lee", "created_ts": 5, "n_segments": 3}  # other fields kept
+    assert [p.name for p in item_dir.iterdir() if p.name.endswith(".tmp")] == []
+    assert client.get("/api/library").get_json()["items"][0]["name"] == "Finals vs Lee"
+
+    for bad in ({"name": "   "}, {"name": 7}, {"name": "x" * 201}, {}, None):
+        assert client.patch("/api/library/match-1", json=bad).status_code == 400, bad
+    assert json.loads((item_dir / "meta.json").read_text(encoding="utf-8"))["name"] == "Finals vs Lee"
+    assert client.patch("/api/library/no-such", json={"name": "A"}).status_code == 404
+    assert client.patch("/api/library/..", json={"name": "A"}).status_code in (400, 404)
+
+    # An unreadable meta.json is left as it is, not replaced by {"name": ...}.
+    for broken in ('{"name": "Match 1", "duration_s": 6', "[1, 2]", b"\xff\xfe"):
+        if isinstance(broken, bytes):
+            (item_dir / "meta.json").write_bytes(broken)
+        else:
+            (item_dir / "meta.json").write_text(broken, encoding="utf-8")
+        before = (item_dir / "meta.json").read_bytes()
+        response = client.patch("/api/library/match-1", json={"name": "Lost"})
+        assert response.status_code == 503, broken
+        assert "not changed" in response.get_json()["error"]
+        assert (item_dir / "meta.json").read_bytes() == before

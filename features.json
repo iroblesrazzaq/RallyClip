@@ -111,6 +111,13 @@
       "evidence": "2026-10-30: held-out test (5 videos, once, merge gap 0) six-bin F1 0.432 vs v0.6.0 0.389, delta CI95 [+0.027, +0.071], 5/5 wins. CV pooled F1 (new limits) 0.564 at gap 0, 0.572 at gap 5 s. ONNX parity vs the PyTorch checkpoint 2.86e-06. Golden regenerated: 4.867-23.466 -> 4.992-23.471."
     },
     {
+      "id": "native-ui-zoom-library-theme",
+      "name": "Native timeline zoom (pinch, cmd+scroll, +/- buttons, 1 s limit, also in Edit Points); click a point bar to select it, double-click to edit it; library rename and sort (date processed, name, custom drag order); green tennis accent",
+      "status": "active",
+      "verification": "swift test --package-path macos; PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_gui_smoke.py -k rename; interactive native UI QA",
+      "evidence": "2026-10-29: 26 Swift tests pass (14 new: Points Only gap-seek reveal, TimelineWindow anchor/limits/pan/reveal/playhead/hour labels/bar hit test with slop and zoom, LibraryOrder date/name/custom/move, Match decode without created_ts). PATCH /api/library/<id> rename test passes (an unreadable meta.json is left untouched, 503); default gate 601 passed, 19 skipped. build.sh compiles the AccentColor asset catalog with actool (locked by a test_release_packaging test; 26 passed). Interactive UI QA not yet done."
+    },
+    {
       "id": "native-macos",
       "name": "SwiftUI macOS desktop with original logo, native continuous playback, point editing, v0.6 analysis and AVFoundation exports",
       "status": "active",
