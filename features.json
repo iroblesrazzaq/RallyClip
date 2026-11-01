@@ -113,17 +113,17 @@
     {
       "id": "native-ui-zoom-library-theme",
       "name": "Native timeline zoom (pinch, cmd+scroll, +/- buttons, 1 s limit, also in Edit Points); click a point bar to select it, double-click to edit it; library rename and sort (date processed, name, custom drag order); green tennis accent",
-      "status": "active",
+      "status": "passing",
       "verification": "swift test --package-path macos; PYTHONPATH=src:tests $PY -m pytest -q -p no:cacheprovider tests/test_gui_smoke.py -k rename; interactive native UI QA",
-      "evidence": "2026-10-29: 26 Swift tests pass (14 new: Points Only gap-seek reveal, TimelineWindow anchor/limits/pan/reveal/playhead/hour labels/bar hit test with slop and zoom, LibraryOrder date/name/custom/move, Match decode without created_ts). PATCH /api/library/<id> rename test passes (an unreadable meta.json is left untouched, 503); default gate 601 passed, 19 skipped. build.sh compiles the AccentColor asset catalog with actool (locked by a test_release_packaging test; 26 passed). Interactive UI QA not yet done."
+      "evidence": "2026-10-29: 26 Swift tests pass (14 new: Points Only gap-seek reveal, TimelineWindow anchor/limits/pan/reveal/playhead/hour labels/bar hit test with slop and zoom, LibraryOrder date/name/custom/move, Match decode without created_ts). PATCH /api/library/<id> rename test passes (an unreadable meta.json is left untouched, 503); default gate 601 passed, 19 skipped. build.sh compiles the AccentColor asset catalog with actool (locked by a test_release_packaging test; 26 passed). Interactive UI QA not yet done. 2026-11-01: interactive UI QA on the published v0.8.0 DMG done by the user (passed)."
     },
     {
       "id": "native-macos",
       "name": "SwiftUI macOS desktop with original logo, native continuous playback, point editing, v0.6 analysis and AVFoundation exports",
-      "status": "active",
+      "status": "passing",
       "verification": "swift test --package-path macos; $PY scripts/native/smoke.py --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend; interactive native UI QA; Release workflow desktop=native",
-      "evidence": "2026-10-27: after review rounds 1-2, 7 Swift tests (uncovered-point guard, long declared duration, re-export, MOV/M4V folder clips) and 10 native API tests pass; release tests lock the native tag/sign/notarize path. 2026-10-07: app builds. Packaged v0.6 import, edit/reset/delete, decoded-frame playback and exact 4s export passed. Delayed audio regression passed after rendering silence via audio mix. Interactive import, save edit and MP4 export passed. Signed CI build pending."
+      "evidence": "2026-10-27: after review rounds 1-2, 7 Swift tests (uncovered-point guard, long declared duration, re-export, MOV/M4V folder clips) and 10 native API tests pass; release tests lock the native tag/sign/notarize path. 2026-10-07: app builds. Packaged v0.6 import, edit/reset/delete, decoded-frame playback and exact 4s export passed. Delayed audio regression passed after rendering silence via audio mix. Interactive import, save edit and MP4 export passed. Signed CI build pending. 2026-10-31: Release workflow on tag v0.8.0 built, signed and notarized the DMG; downloaded DMG hash matches its .sha256, stapler validate ok, Gatekeeper accepts (Notarized Developer ID). 2026-11-01: interactive QA on the installed v0.8.0 app done by the user (passed)."
     }
   ],
-  "active": "native-macos"
+  "active": null
 }
