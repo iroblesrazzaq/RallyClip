@@ -122,7 +122,7 @@
       "name": "SwiftUI macOS desktop with original logo, native continuous playback, point editing, v0.6 analysis and AVFoundation exports",
       "status": "active",
       "verification": "swift test --package-path macos; $PY scripts/native/smoke.py --backend dist/native/RallyClip.app/Contents/Resources/Backend/RallyClipBackend; interactive native UI QA; Release workflow desktop=native",
-      "evidence": "2026-10-27: after review rounds 1-2, 7 Swift tests (uncovered-point guard, long declared duration, re-export, MOV/M4V folder clips) and 10 native API tests pass; release tests lock the native tag/sign/notarize path. 2026-10-07: app builds. Packaged v0.6 import, edit/reset/delete, decoded-frame playback and exact 4s export passed. Delayed audio regression passed after rendering silence via audio mix. Interactive import, save edit and MP4 export passed. Signed CI build pending."
+      "evidence": "2026-11-23: 27 Swift tests passed. The 60 fps SDR test export used HEVC and retained approximately 60 fps. The 30 fps SDR test export kept H.264. 2026-10-27: after review rounds 1-2, 7 Swift tests (uncovered-point guard, long declared duration, re-export, MOV/M4V folder clips) and 10 native API tests pass; release tests lock the native tag/sign/notarize path. 2026-10-07: app builds. Packaged v0.6 import, edit/reset/delete, decoded-frame playback and exact 4s export passed. Delayed audio regression passed after rendering silence via audio mix. Interactive import, save edit and MP4 export passed. Signed CI build pending."
     }
   ],
   "active": "native-macos"
