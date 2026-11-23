@@ -4,7 +4,7 @@ import XCTest
 @testable import RallyClipKit
 
 final class CompositionTests: XCTestCase {
-    func clip(at url: URL, color: UInt8, transform: CGAffineTransform = .identity) async throws {
+    func clip(at url: URL, color: UInt8, transform: CGAffineTransform = .identity, frameRate: Int32 = 30) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 48
@@ -15,7 +15,7 @@ final class CompositionTests: XCTestCase {
         ])
         input.transform = transform
         writer.add(input); XCTAssertTrue(writer.startWriting()); writer.startSession(atSourceTime: .zero)
-        for index in 0..<60 {
+        for index in 0..<(2 * Int(frameRate)) {
             while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(2)) }
             var buffer: CVPixelBuffer?
             XCTAssertEqual(CVPixelBufferCreate(nil, 64, 48, kCVPixelFormatType_32BGRA, nil, &buffer), kCVReturnSuccess)
@@ -23,7 +23,7 @@ final class CompositionTests: XCTestCase {
             CVPixelBufferLockBaseAddress(pixel, [])
             memset(CVPixelBufferGetBaseAddress(pixel), Int32(color), CVPixelBufferGetDataSize(pixel))
             CVPixelBufferUnlockBaseAddress(pixel, [])
-            XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: 30)))
+            XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: frameRate)))
         }
         input.markAsFinished(); await writer.finishWriting()
         XCTAssertEqual(writer.status, .completed, "\(String(describing: writer.error))")
@@ -46,6 +46,9 @@ final class CompositionTests: XCTestCase {
         let asset = AVURLAsset(url: export)
         let duration = try await asset.load(.duration)
         XCTAssertEqual(duration.seconds, 1.5, accuracy: 0.05)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let formats = try await XCTUnwrap(tracks.first).load(.formatDescriptions)
+        XCTAssertEqual(formats.first?.mediaSubType.rawValue, kCMVideoCodecType_H264)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
         let first = try await generator.image(at: CMTime(seconds: 0.2, preferredTimescale: 600)).image
@@ -64,6 +67,24 @@ final class CompositionTests: XCTestCase {
         XCTAssertEqual(replaced.seconds, 1.0, accuracy: 0.05)
         let left = try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.hasPrefix(".rallyclip-") }
         XCTAssertEqual(left, [])
+    }
+
+    func testHighFrameRateExportUsesHEVC() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let input = root.appendingPathComponent("60fps.mp4")
+        try await clip(at: input, color: 50, frameRate: 60)
+        let output = root.appendingPathComponent("export.mp4")
+        let source = Source(path: input.path, start: 0, duration: 2)
+        try await VideoExporter().export(sources: [source], points: [Point(start: 0.25, end: 1.25)], to: output) { _ in }
+
+        let asset = AVURLAsset(url: output)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+        let (formats, frameRate) = try await track.load(.formatDescriptions, .nominalFrameRate)
+        XCTAssertEqual(formats.first?.mediaSubType.rawValue, kCMVideoCodecType_HEVC)
+        XCTAssertEqual(frameRate, 60, accuracy: 1)
     }
 
     func testOnlyClipsThePointsTouchAreOpened() async throws {

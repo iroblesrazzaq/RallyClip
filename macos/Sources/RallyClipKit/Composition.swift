@@ -5,6 +5,12 @@ import Foundation
 /// repeated seeks of an independently buffered HTTP video element.
 public enum CompositionBuilder {
     public static func build(sources: [Source], points: [Point]) async throws -> AVMutableComposition {
+        let (composition, _) = try await build(sources: sources, points: points, forExport: false)
+        return composition
+    }
+
+    fileprivate static func build(sources: [Source], points: [Point], forExport: Bool) async throws
+        -> (composition: AVMutableComposition, prefersHEVC: Bool) {
         let composition = AVMutableComposition()
         guard let video = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
               let audio = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
@@ -18,6 +24,7 @@ public enum CompositionBuilder {
         var assets: [AVURLAsset] = []
         defer { withExtendedLifetime(assets) {} }
         var loaded: [(Source, AVAssetTrack, AVAssetTrack?, CMTimeRange?)] = []
+        var prefersHEVC = false
         // Open only the clips a point touches: one point of a long folder match needs one or two.
         for source in sources where intervals.contains(where: { min($0.end, source.end) > max($0.start, source.start_s) }) {
             try Task.checkCancellation()
@@ -29,6 +36,11 @@ public enum CompositionBuilder {
             assets.append(asset)
             guard let track = try await asset.loadTracks(withMediaType: .video).first else {
                 throw RallyError.message("No video track in \(url.lastPathComponent).")
+            }
+            if forExport && !prefersHEVC {
+                let (characteristics, frameRate) = try await track.load(.mediaCharacteristics, .nominalFrameRate)
+                // Allow for timestamp rounding in nominal 30 fps footage.
+                prefersHEVC = characteristics.contains(.containsHDRVideo) || frameRate > 30.5
             }
             let sound = try await asset.loadTracks(withMediaType: .audio).first
             let soundRange = try await sound?.load(.timeRange)
@@ -78,7 +90,7 @@ public enum CompositionBuilder {
         else if CMTimeRangeGetEnd(audio.timeRange) < cursor {
             audio.insertEmptyTimeRange(CMTimeRange(start: CMTimeRangeGetEnd(audio.timeRange), end: cursor))
         }
-        return composition
+        return (composition, prefersHEVC)
     }
 }
 
@@ -89,9 +101,11 @@ public actor VideoExporter {
     public func export(sources: [Source], points: [Point], to destination: URL,
                        progress: @escaping @Sendable (Double) -> Void) async throws {
         guard !points.isEmpty else { throw RallyError.message("Select at least one point to export.") }
-        let composition = try await CompositionBuilder.build(sources: sources, points: points)
+        let (composition, prefersHEVC) = try await CompositionBuilder.build(sources: sources, points: points, forExport: true)
         try Task.checkCancellation()
-        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
+        let preset = prefersHEVC ? AVAssetExportPresetHEVCHighestQuality : AVAssetExportPresetHighestQuality
+        guard let session = AVAssetExportSession(asset: composition, presetName: preset),
+              session.supportedFileTypes.contains(.mp4) else {
             throw RallyError.message("This footage cannot be exported.")
         }
         let temporary = destination.deletingLastPathComponent().appendingPathComponent(".rallyclip-\(UUID().uuidString).mp4")
